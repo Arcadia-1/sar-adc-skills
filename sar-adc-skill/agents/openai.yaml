@@ -1,0 +1,7 @@
+interface:
+  display_name: "SAR ADC Design"
+  short_description: "Engineering guide for SAR ADC architecture and design"
+  default_prompt: "Use $sar-adc-skill to analyze a SAR ADC design problem, compare architectural choices, or derive first-order design budgets."
+
+policy:
+  allow_implicit_invocation: true

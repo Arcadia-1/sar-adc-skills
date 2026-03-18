@@ -1,0 +1,174 @@
+{
+  "skill_name": "sar-adc-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I am starting a 10-bit 100 MS/s SAR ADC design from scratch. Give me a practical design flow from target specs to block-level decisions, including what I should budget before discussing transistor sizes.",
+      "expected_output": "Should follow the design-playbook flow: clarify specs, derive first-order budgets such as full swing, LSB, quantization noise, kT/C noise, comparator noise, timing margin, then choose architecture and identify dominant limiters before giving circuit-level advice.",
+      "files": [
+        "references/02-design-playbook.md",
+        "references/01-course-outline.md"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Explain SAR ADC operation using the residue-voltage viewpoint instead of the usual threshold-comparison story. I want an intuitive but technically correct explanation.",
+      "expected_output": "Should explain that SAR conversion is binary search on residue, describe sampled differential input minus CDAC correction, mention charge redistribution and normalized residue movement, and preferably use the residue-based architecture framing recovered from the image-heavy chapters.",
+      "files": [
+        "references/01-course-outline.md",
+        "references/06-image-derived-notes.md"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "My ENOB stopped improving when I increased my SAR ADC resolution from 8 bits to 10 bits. How should I think about quantization noise, kT/C noise, and comparator noise?",
+      "expected_output": "Should explain that increasing nominal bits does not guarantee higher ENOB, break down quantization noise, sampling kT/C noise, and comparator noise, and describe how to size CDAC and comparator noise budgets before expecting ENOB improvement.",
+      "files": [
+        "references/03-nonidealities-and-budgeting.md"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "How should I choose between top-plate sampling and bottom-plate sampling in a SAR ADC if my main concern is linearity?",
+      "expected_output": "Should compare top-plate and bottom-plate sampling, explain the role of input-dependent charge injection and clock feedthrough, mention the extra timing complexity of bottom-plate sampling, and conclude that bottom-plate sampling is generally stronger for linearity-sensitive designs.",
+      "files": [
+        "references/04-sampling-redundancy-and-timing.md"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "I keep hearing that asynchronous SAR is faster than synchronous SAR. Explain the real timing difference and what timing paths I actually need to check.",
+      "expected_output": "Should explain fixed per-bit windows versus dynamically shared conversion time, state that async logic is a state-sequenced timing loop rather than just a faster clock style, and explicitly mention comparator delay, Valid generation, reset delay, logic delay, and DAC settling as timing checks.",
+      "files": [
+        "references/04-sampling-redundancy-and-timing.md",
+        "references/06-image-derived-notes.md"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Can you explain how the async SAR logic should sequence comparator clocking and CDAC updates? I want the event flow, not generic digital-design advice.",
+      "expected_output": "Should describe the event-driven async logic flow: initialize/reset on sampling, start first comparison, detect comparator output, close comparator, latch bit result, update CDAC control, detect comparator reset, decrement step, and re-assert comparator clock if bits remain. Should mention that the logic owns comparator clocking.",
+      "files": [
+        "references/06-image-derived-notes.md"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "What is a sane way to set up SAR ADC full-swing and FFT simulation? I sometimes see clipping before the theoretical full-scale range.",
+      "expected_output": "Should explain that true usable full swing must be identified before FFT analysis, recommend driving near but below full scale, mention around 90 percent full scale as a practical setup, and explain that top-plate parasitics and capacitive division can cause early clipping.",
+      "files": [
+        "references/03-nonidealities-and-budgeting.md"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "How should I think about PVT and Monte Carlo for a SAR ADC without becoming absurdly pessimistic?",
+      "expected_output": "Should distinguish local versus global variation, explain why mechanically stacking worst-case corners and local Monte Carlo can be overly pessimistic, mention the usefulness of global-only corners such as SSG or FFG when available, and relate margining to yield and product strategy.",
+      "files": [
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "How should I think about metastability and BER in a high-speed SAR ADC? Is there any real substitute for giving the comparator more time?",
+      "expected_output": "Should connect BER to metastability, mention MTF intuition, state that more time reduces metastability exponentially, explain why loading latch nodes or adding detection circuitry can backfire, and note why async SAR often behaves better than sync SAR in this regard.",
+      "files": [
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "I need a behavioral starting point for a SAR ADC verification setup. What Verilog-A assets already exist in this skill, and how are they meant to be used?",
+      "expected_output": "Should point to the bundled Verilog-A assets for CDAC, comparator, sync logic, async logic, and top-level SAR, explain that they should be extended instead of rewritten from scratch, and mention that the image-derived material shows how these models are intended to be used in Cadence testbench and ENOB-oriented verification flow.",
+      "files": [
+        "SKILL.md",
+        "references/06-image-derived-notes.md"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Why does a CDAC-based SAR ADC usually replace an explicit sample-and-hold plus standalone DAC structure? I want the practical reason, not just the block diagram answer.",
+      "expected_output": "Should explain that CDACs merge sampling and DAC adjustment into one structure, reduce architectural overhead, and become the practical default in fully differential SAR ADCs because of charge-redistribution operation and implementation efficiency.",
+      "files": [
+        "references/01-course-outline.md",
+        "references/06-image-derived-notes.md"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "How should I think about switching schemes in a SAR ADC if I care about common-mode movement, switching energy, and implementation burden?",
+      "expected_output": "Should explain that switching is an architectural choice, compare conventional, monotonic, Vcm-based, and bidirectional options at a high level, and mention the practical constraints on common-mode drivers and switch behavior.",
+      "files": [
+        "references/04-sampling-redundancy-and-timing.md"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "I am trying to decide whether redundancy is worth adding to my SAR ADC. What real design pain does it relieve?",
+      "expected_output": "Should explain redundancy in practical terms: relaxing intermediate-decision precision, easing settling pressure, helping with timing margin, offset or mismatch tolerance, and in some cases reducing reference-recovery stress.",
+      "files": [
+        "references/04-sampling-redundancy-and-timing.md"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "For a moderate-bandwidth SAR ADC, which noise terms should I check first, and which ones can often be treated as secondary?",
+      "expected_output": "Should prioritize quantization noise, sampling kT/C noise, and comparator noise for low-to-mid-bandwidth cases, while noting that jitter becomes critical at higher input frequency and that distortion should be managed below the noise floor when possible.",
+      "files": [
+        "references/03-nonidealities-and-budgeting.md",
+        "references/01-course-outline.md"
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "I have a high-input-frequency SAR ADC use case. How do I know when clock jitter becomes a real system limit?",
+      "expected_output": "Should mention aperture-jitter noise, provide the standard SNR-jitter relationship, and explain that jitter becomes a direct ceiling at high input frequency even if the core quantization and comparator-noise budgets look acceptable.",
+      "files": [
+        "references/03-nonidealities-and-budgeting.md",
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "Why is a SAR ADC comparator described as a clocked decision element rather than just a static comparator, and why do fire and reset matter so much?",
+      "expected_output": "Should describe the comparator as a clocked dynamic decision block, explain the role of fire and reset, and note that incomplete reset can corrupt the next comparison through memory effect or bad initial conditions.",
+      "files": [
+        "references/01-course-outline.md"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "What should I check around the reference path in a practical SAR ADC, and how do I choose between a big decap approach and a reference buffer?",
+      "expected_output": "Should discuss reference stability and recovery, compare decap versus reference-buffer strategies, mention area versus power tradeoffs, and note possible ringing with package inductance for large decaps.",
+      "files": [
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "How should I reason about the input path of a SAR ADC when the source is not a very strong driver?",
+      "expected_output": "Should discuss source impedance, settling in the sampling window, when an input buffer or THA is needed, anti-alias filtering, and amplitude/common-mode matching for the input signal.",
+      "files": [
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "What is the practical difference between saying an ADC is noise-limited and saying it is distortion-limited, and which one should a good SAR ADC usually be?",
+      "expected_output": "Should explain the distinction between noise and distortion in SNDR, state that a good design is usually intended to be noise-limited rather than distortion-limited, and explain why pushing distortion below the noise floor is a common design objective.",
+      "files": [
+        "references/03-nonidealities-and-budgeting.md",
+        "references/01-course-outline.md"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "I want to explain the difference between a teaching-level SAR ADC model and a shippable product-level ADC. What extra system concerns should I mention?",
+      "expected_output": "Should explain that a shippable ADC requires system closure beyond the core, including full swing, timing margin, reference recovery, sampling linearity, PVT coverage, BER, supply design, clock quality, input drive, and peripheral integration.",
+      "files": [
+        "references/01-course-outline.md",
+        "references/05-pvt-metastability-and-system.md"
+      ]
+    }
+  ]
+}

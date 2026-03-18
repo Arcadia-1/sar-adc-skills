@@ -1,0 +1,16 @@
+.venv/
+.agents/
+
+# Python cache / local tooling
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# One-off local helper scripts
+extract_text.py
+
+# Raw source materials
+raw_materials/
