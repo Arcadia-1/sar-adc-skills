@@ -1,6 +1,17 @@
 ---
 name: sar-adc-skill
-description: Use this skill for SAR ADC architecture, CDAC operation, switching schemes, comparator design, sync or async SAR logic, top-plate or bottom-plate sampling, noise and ENOB budgeting, redundancy, PVT, metastability, peripheral design, and Verilog-A modeling for SAR ADCs.
+description: >
+  Use this skill for SAR ADC system design and all its key building blocks.
+  Covers: SAR ADC architecture, CDAC operation and switching schemes, sync/async
+  SAR logic, top-plate vs bottom-plate sampling, noise and ENOB budgeting,
+  redundancy, PVT, metastability, peripheral design, and Verilog-A modeling.
+  Also covers the core analog submodules needed for a complete SAR ADC:
+  StrongArm dynamic comparator (topology, noise, offset, sizing), bootstrapped
+  sampling switch (circuit operation, Ron flatness, sizing), and LDO regulator
+  for clean ADC supply (topology, PSRR, compensation, sizing).
+  Includes the SAR_11B_ZZS taped-out 11-bit reference design (TSMC 28nm HPC+).
+  Use for any question about SAR ADC design from specs to first-order block
+  decisions, submodule sizing guidance, or reference design lookup.
 ---
 
 # SAR ADC Skill
@@ -24,6 +35,26 @@ Use only the minimum reference needed for the user task:
   Use for design flow, full swing, quantization noise, kT/C, comparator noise, switching choices, top-plate versus bottom-plate sampling, and redundancy.
 - `references/robustness-and-system.md`
   Use for PVT, Monte Carlo interpretation, metastability, BER, reference strategy, input path, supply design, and shippable-product concerns.
+
+- `references/comparator.md`
+  Use for StrongArm dynamic comparator topology, four operating phases, transistor
+  sizing, noise (probit method, σ formula), offset sources, speed/power/noise
+  trade-offs, and FOM.
+
+- `references/bootstrap_switch.md`
+  Use for bootstrapped sampling switch topology, gate voltage derivation, transistor
+  roles, sizing rules (CB ≥ 5×Cgg), Ron flatness, clock feedthrough, and comparison
+  to plain NMOS/CMOS switch.
+
+- `references/ldo.md`
+  Use for LDO supply design in SAR ADC context: PMOS-pass topology, Miller
+  compensation, sizing from specs, loop gain/PSRR/noise formulas, and
+  compensation trade-offs.
+
+- `references/sar-adc-11b-zzs.md`
+  Use for the taped-out 11-bit fully differential SAR ADC reference design:
+  TSMC 28nm HPC+, 0.9V, bootstrap switch, CDAC unit cap 200 aF, StrongArm
+  comparator, async logic. Module reference table and quick sizing lookup.
 
 ## Default Workflow
 
@@ -69,7 +100,7 @@ Use these as starting points for behavioral verification and system integration.
 - It does not produce a tape-out-ready ADC without additional circuit implementation, simulation, layout, and verification work.
 - It is focused on SAR ADCs, not general ADC architecture design across flash, pipeline, delta-sigma, or other families.
 - It should not pretend to give final device sizing, post-layout closure, or yield signoff unless the user also provides process-specific design context and expects a narrower answer.
-- If the user needs concrete transistor-level circuit implementation, device sizing, or dedicated block-design workflow, direct them to search for a more specialized skill in the [`analog-circuit-skills` repository](https://github.com/Arcadia-1/analog-circuit-skills), especially for blocks such as comparators, bootstrap switches, or other analog building blocks.
+- For transistor-level device sizing in a specific PDK, consult the `spectre` or `virtuoso` skills alongside the submodule references in this skill.
 
 ### Expected Design Depth
 
