@@ -1,6 +1,6 @@
 # sar-adc-skills
 
-Claude Code skill for SAR ADC design — from system-level architecture to transistor-level implementation and verification.
+SAR ADC design knowledge base for agentic IC design — from system-level architecture to transistor-level implementation and verification.
 
 ## What This Skill Covers
 
@@ -22,14 +22,14 @@ Every module reference includes a **"How to Verify"** section with Spectre testb
 
 ## Quick Start
 
-Install as a Claude Code skill:
+Install as a skill for your AI coding agent:
 
 ```bash
-# Symlink into your project's .claude/skills/
+# Symlink into your project's skills directory
 ln -s /path/to/sar-adc-skills/sar-adc-skill .claude/skills/sar-adc
 ```
 
-The skill triggers on SAR ADC design questions — architecture, CDAC switching, comparator noise, bootstrap sampling, async logic, simulation setup, or ENOB analysis.
+The skill activates on SAR ADC design questions — architecture, CDAC switching, comparator noise, bootstrap sampling, async logic, simulation setup, or ENOB analysis.
 
 ## Repository Layout
 
