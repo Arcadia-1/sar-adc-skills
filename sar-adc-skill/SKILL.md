@@ -10,8 +10,10 @@ description: >
   sampling switch (circuit operation, Ron flatness, sizing), and LDO regulator
   for clean ADC supply (topology, PSRR, compensation, sizing).
   Includes the SAR_11B_ZZS taped-out 11-bit reference design (TSMC 28nm HPC+).
+  Also covers Spectre simulation setup, ENOB/SNDR measurement with ADCToolbox,
+  and a phased verification flow (behavioral → hybrid → full transistor-level).
   Use for any question about SAR ADC design from specs to first-order block
-  decisions, submodule sizing guidance, or reference design lookup.
+  decisions, submodule sizing guidance, simulation/verification, or reference design lookup.
 ---
 
 # SAR ADC Skill
@@ -51,10 +53,24 @@ Use only the minimum reference needed for the user task:
   compensation, sizing from specs, loop gain/PSRR/noise formulas, and
   compensation trade-offs.
 
+- `references/sar-logic.md`
+  Use for SAR logic implementation: full conversion timing, sync vs async state
+  machine, async latch chain (L5_LATCH_CELL transistor roles, NOR3/NAND2 control
+  logic, ENB chain), complementary pass-gate DAC switch polarity convention,
+  DFF output latching, and Verilog-A behavioral model correspondence. Based on
+  the taped-out SAR_11B_ZZS (TSMC 28nm HPC+).
+
 - `references/sar-adc-11b-zzs.md`
   Use for the taped-out 11-bit fully differential SAR ADC reference design:
   TSMC 28nm HPC+, 0.9V, bootstrap switch, CDAC unit cap 200 aF, StrongArm
   comparator, async logic. Module reference table and quick sizing lookup.
+
+- `references/simulation-and-verification.md`
+  Use for SAR ADC Spectre simulation setup: coherent sampling, input signal
+  conventions, sync vs async clocking, strobe resampling, ENOB/SNDR/SFDR
+  extraction with ADCToolbox, debugging common failures (comparator polarity,
+  bus ordering, charge injection, sampling alignment), differential vs
+  single-ended CDAC tradeoffs, and the phased verification flow.
 
 ## Default Workflow
 
