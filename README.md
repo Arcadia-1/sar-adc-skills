@@ -16,7 +16,7 @@ Claude Code skill for SAR ADC design — from system-level architecture to trans
 | Top-level integration: module connectivity, signal flow, cross-connections | `integration.md` |
 | Spectre simulation: coherent sampling, strobe, ADCToolbox, per-block verification | `simulation-and-verification.md` |
 | LDO regulator for clean ADC supply | `ldo.md` |
-| SAR_11B_ZZS taped-out reference design (TSMC 28nm, 11-bit, 250 MS/s) | `sar-adc-11b-zzs.md` |
+| Taped-out 11-bit reference design with full module hierarchy and sizing | `sar-adc-11b-zzs.md` |
 
 Every module reference includes a **"How to Verify"** section with Spectre testbench setup, analysis commands, metric extraction, and pass/fail criteria.
 
@@ -58,11 +58,11 @@ The skill supports the full design chain:
 
 1. **Specs to budgets** — ENOB target to noise/timing allocation
 2. **Architecture** — fully differential, charge-redistribution CDAC, dynamic comparator, async/sync SAR
-3. **Circuit implementation** — transistor topologies, sizing guidelines, PDK-aware examples (TSMC 28nm)
+3. **Circuit implementation** — transistor topologies, sizing guidelines, silicon-proven examples
 4. **Integration** — module connectivity, polarity conventions, differential cross-connections
 5. **Verification** — per-block (PSS+Pnoise, THD, DNL/INL, timing) and full-ADC (ENOB, SNDR, SFDR)
 
-Includes a taped-out 11-bit reference design (SAR_11B_ZZS) with complete module hierarchy, transistor sizing, and simulation parameters.
+Includes a taped-out 11-bit reference design with complete module hierarchy, transistor sizing, and simulation parameters.
 
 ## Related Repositories
 
