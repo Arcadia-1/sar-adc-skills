@@ -1,0 +1,69 @@
+// =============================================================================
+// Process-Independent SerDes Clocking & RX TB — PSIJ & Supply-Noise PSRR
+// =============================================================================
+// Injects a calibrated sinusoidal supply ripple (`v_rip_pp` @ `f_rip`, default
+// `50 mVpp` @ `100 MHz`) on `VDD_NOISY` shared by:
+//   1. Half-rate 5 GHz clock distribution (`dut_clk_dist`) -> extracts coherent
+//      clock-edge Time Interval Error (TIE) amplitude and Power-Supply-Induced
+//      Jitter sensitivity `PSIJ [ps/mV]` & `[mUI/mV]` (referenced to 10 Gb/s UI).
+//   2. RX CTLE + VGA front end (`dut_ctle_vga`) with AC-grounded differential
+//      inputs -> extracts coherent transient supply-to-differential rejection
+//      `PSRR_tran [dB]` at `f_rip` AND wideband AC `PSRR(f)` (`10 MHz..10 GHz`).
+//
+// DUT interface contracts:
+//   subckt dut_clk_dist CKI_P CKI_N CKQ_P CKQ_N VDCD_CAL VIQ_CAL VDD VSS \
+//       CK0 CK90 CK180 CK270
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    vcm_rx=0.5 \
+    f_clk=5G \
+    f_rip=100M \
+    v_rip_pp=50m \
+    t_stop=55n \
+    temp_c=27
+
+// Noisy supply with both transient sine ripple and 1 V AC excitation for PSRR(f)
+VSUP (VDD_NOISY 0) vsource dc=vdd type=sine freq=f_rip ampl=(0.5*v_rip_pp) mag=1.0
+VGND (VSS       0) vsource dc=0   type=dc
+
+// --- Path 1: Half-Rate 5 GHz Clock Distribution (PSIJ) ---
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=-90
+VDCD  (VDCD_CAL VSS) vsource dc=0 type=dc
+VIQ   (VIQ_CAL  VSS) vsource dc=0 type=dc
+
+I_CLK (CKI_P CKI_N CKQ_P CKQ_N VDCD_CAL VIQ_CAL VDD_NOISY VSS \
+       CK0 CK90 CK180 CK270) dut_clk_dist
+
+// --- Path 2: RX CTLE + VGA with Shorted Differential Inputs (PSRR) ---
+VINP (RX_INP   VSS) vsource dc=vcm_rx type=dc
+VINN (RX_INN   VSS) vsource dc=vcm_rx type=dc
+VBST (VBOOST   VSS) vsource dc=0      type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0      type=dc
+
+I_CTLE (RX_INP RX_INN VBOOST VOFF_CAL VDD_NOISY VSS CTLE_OUTP CTLE_OUTN) dut_ctle_vga
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Wideband AC supply-to-differential PSRR(f)
+ac ac start=10M stop=10G dec=20
+
+// Coherent transient PSIJ (5 full ripple cycles after 5 ns skip) & PSRR_tran
+tran tran stop=t_stop errpreset=conservative maxstep=1p
+
+save VDD_NOISY CK0 CK90 CTLE_OUTP CTLE_OUTN
+saveOptions options save=selected

@@ -1,0 +1,54 @@
+// =============================================================================
+// Process-Independent SerDes TX TB — 20-80% t_r/t_f, P/N Skew, V_cm,ac & SNDR
+// =============================================================================
+// Drives a 10 Gb/s PRBS-7 stream through `dut_tx` into matched 50-ohm loads and
+// extracts IEEE 802.3 Clause 93/120 transmitter signoff metrics:
+//   - 20-80% differential rise & fall times `t_r_ps`, `t_f_ps`
+//   - Intra-pair P/N timing skew `pn_skew_ps`
+//   - AC common-mode noise `vcm_ac_rms_mv` & `vcm_ac_pp_mv`
+//   - Exact Linear-Fit Pulse Response `p(k)` (least-squares against PRBS-7 bits),
+//     peak `p_max_mv`, linear-fit residual `e_rms_mv`, and `SNDR_TX [dB]`!
+//
+// DUT interface contract:
+//   subckt dut_tx INP INN CLK VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    vdd=1.0 \
+    bit_rate=10G \
+    z0=50 \
+    n_ui=300 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Shift TX clock by 0.5 UI relative to PRBS generator for clean race-free setup/hold
+VCLK_GEN (CLK_GEN 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0      rise=4p fall=4p width=(0.5*ui - 4p)
+VCLK_TX  (CLK_TX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.5*ui rise=4p fall=4p width=(0.5*ui - 4p)
+
+I_PRBS (CLK_GEN VSS DINP DINN BIT_MON) va_prbs_gen mode=0 v_swing=0.8 v_cm=0.5 t_rf=8p r_src=1
+I_TX   (DINP DINN CLK_TX VDD VSS OUTP OUTN) dut_tx
+
+RLP (OUTP VSS) resistor r=z0
+RLN (OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=1p
+
+save BIT_MON OUTP OUTN CLK_TX
+saveOptions options save=selected

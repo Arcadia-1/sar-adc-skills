@@ -37,17 +37,19 @@ spectre +preset=ax +mt=4 -format psfascii -raw raw_ax +log sim.log tb_cdr_jtol.s
 
 ## 2. Bundled Process-Independent Spectre X Testbench Suites (`assets/tb/`)
 
-All 10 suites (`28` executable `.scs` testbench decks + `channel_diff_lossy.scs` + `channel_synth_causal.s4p`) run cleanly under **Spectre X `+preset=cx`** and **`+preset=ax`** with zero PDK dependencies and zero-dependency Python analyzers backed by [`common/psf_utils.py`](../../../common/psf_utils.py):
+All 10 suites (`35` executable `.scs` testbench decks + `channel_diff_lossy.scs` + `channel_synth_causal.s4p`) run cleanly under **Spectre X `+preset=cx`** and **`+preset=ax`** with zero PDK dependencies and zero-dependency Python analyzers backed by [`common/psf_utils.py`](../../../common/psf_utils.py):
 
 1. **Channel (`assets/tb/channel/`):**
    - [`tb_channel_sp_tdr.scs`](../assets/tb/channel/tb_channel_sp_tdr.scs) + `analyze_channel.py sp` / `tdr`: 4-port differential `SDD21`, `SDD11`, and TDR `Z_TDR(t)` on causal passive [`channel_diff_lossy.scs`](../assets/tb/channel/channel_diff_lossy.scs).
    - [`tb_channel_sbr_eye.scs`](../assets/tb/channel/tb_channel_sbr_eye.scs) + `analyze_channel.py sbr_eye`: exact 1-UI SBR cursors (`h_-1, h0, h1..h5`, PDA eye) and PRBS-7 folded eye height & width.
    - [`tb_channel_nport_s4p.scs`](../assets/tb/channel/tb_channel_nport_s4p.scs) + `analyze_channel.py nport_s4p`: Spectre X `nport` (`interp=bbspice passivity=fit_enforce`) `sp` + SBR causality check (`|h_-2|/h0`) + PRBS-7 eye on bundled analytically-generated passive causal [`channel_synth_causal.s4p`](../assets/tb/channel/channel_synth_causal.s4p).
    - [`tb_channel_xtalk_fext_next.scs`](../assets/tb/channel/tb_channel_xtalk_fext_next.scs) + `analyze_channel.py xtalk`: victim vs. asynchronous PRBS-9 FEXT/NEXT aggressors quantifying eye height/width loss, quiet-victim FEXT/NEXT mVrms/mVpp, and AC coupling dB.
+   - [`tb_channel_blw_cid.scs`](../assets/tb/channel/tb_channel_blw_cid.scs) + `analyze_channel.py blw_cid`: 10 Gb/s CID stress burst (`va_prbs_gen mode=3`) through `dut_channel` + series AC-coupling `C_ac` quantifying baseline wander `blw_peak_mv`/`blw_pct` vs. analytical RC droop (`rel_err_pct < 5%`) and pre- vs. post-CID eye closure.
 2. **TX & FFE (`assets/tb/tx_ffe/`):**
    - [`tb_tx_s11.scs`](../assets/tb/tx_ffe/tb_tx_s11.scs) + `analyze_tx_ffe.py s11`: 2-port AC-coupled differential TX output return loss `SDD11(f)`.
    - [`tb_dc_termination.scs`](../assets/tb/tx_ffe/tb_dc_termination.scs) + `analyze_tx_ffe.py dc_term`: output swing sweep verifying `R_term(V) = dV/dI` accuracy vs. `50 ohm` and flatness across swing.
    - [`tb_tx_ffe_channel.scs`](../assets/tb/tx_ffe/tb_tx_ffe_channel.scs) + `analyze_tx_ffe.py eye`: 4-tap TX FFE driving `channel_diff_lossy.scs`.
+   - [`tb_tx_cm_skew_sndr.scs`](../assets/tb/tx_ffe/tb_tx_cm_skew_sndr.scs) + `analyze_tx_ffe.py cm_sndr`: 20–80% differential `t_r`/`t_f`, intra-pair P/N skew, AC common-mode noise `V_cm,ac`, and IEEE 802.3 Clause 93/120 linear-fit pulse `p(k)` & `SNDR_TX`.
 3. **CTLE, VGA & Offset Cal (`assets/tb/ctle_vga/`):**
    - [`tb_ctle_ac_noise.scs`](../assets/tb/ctle_vga/tb_ctle_ac_noise.scs) + `analyze_ctle_vga.py ac_noise`: differential AC peaking, `f_peak`, `-3 dB` BW, and shaped output RMS noise.
    - [`tb_ctle_channel_ac.scs`](../assets/tb/ctle_vga/tb_ctle_channel_ac.scs) + `analyze_ctle_vga.py channel_ac`: combined `H_ch(f) * H_ctle(f)` DC-to-Nyquist flatness & over-peaking check.
@@ -58,6 +60,7 @@ All 10 suites (`28` executable `.scs` testbench decks + `channel_diff_lossy.scs`
    - [`tb_slicer_hys_vtf.scs`](../assets/tb/slicer_dfe/tb_slicer_hys_vtf.scs) + `analyze_slicer_dfe.py vtf`: bidirectional triangle sweep extracting `V_th,up`, `V_th,dn`, static offset, and dynamic hysteresis.
    - [`tb_slicer_noise_tran.scs`](../assets/tb/slicer_dfe/tb_slicer_noise_tran.scs) + `analyze_slicer_dfe.py noise_tran`: 300-cycle fixed-overdrive transient-noise sensitivity extracting probit `sigma_n_mvrms` and `BER = 1e-12` half-eye margin (verified with real BSIM4 `trannoise`).
    - [`tb_slicer_clk2q_setup_hold.scs`](../assets/tb/slicer_dfe/tb_slicer_clk2q_setup_hold.scs) + `analyze_slicer_dfe.py clk2q_sh`: 8-point overdrive sweep (`100 mV..0.5 mV`) extracting `Clk-to-Q`, `tau_regen [ps]`, and 21-step Setup/Hold timing margin.
+   - [`tb_slicer_kickback.scs`](../assets/tb/slicer_dfe/tb_slicer_kickback.scs) + `analyze_slicer_dfe.py kickback`: standalone and half-rate interleaved (`CLK_EVEN`/`CLK_ODD`) CM/diff input kickback peaks and settled Odd -> Even neighbor residual (verified on both `va_slicer_cml.va` and BSIM4 StrongARM).
    - [`tb_dfe_3tap_eye.scs`](../assets/tb/slicer_dfe/tb_dfe_3tap_eye.scs) + `analyze_slicer_dfe.py dfe_eye`: closed-loop 3-tap DFE opening a severely closed post-cursor ISI eye with `0` bit errors.
 5. **Sign-Sign LMS Adaptation (`assets/tb/sslms/`):**
    - [`tb_sslms_adapt.scs`](../assets/tb/sslms/tb_sslms_adapt.scs) + `analyze_sslms.py --mode dfe`: live concurrent PRBS-9 adaptation of VGA gain + 3-tap DFE coefficients (`h1, h2, h3`) with `DONE` freeze verification.
@@ -69,12 +72,16 @@ All 10 suites (`28` executable `.scs` testbench decks + `channel_diff_lossy.scs`
    - [`tb_bbpd_transfer.scs`](../assets/tb/cdr/tb_bbpd_transfer.scs) + `analyze_cdr.py bbpd`: vernier phase sweep across `[-0.46 UI, +0.47 UI]` verifying early/late Bang-Bang polarity and metastability dead zone.
    - [`tb_pi_linearity.scs`](../assets/tb/cdr/tb_pi_linearity.scs) + `analyze_cdr.py pi`: 65-step full-$2\pi$ PI code sweep extracting step size, monotonicity, DNL, and INL `[LSB / mUI / deg]`.
    - [`tb_cdr_jtol.scs`](../assets/tb/cdr/tb_cdr_jtol.scs) + `analyze_cdr.py jtol`: closed-loop 2nd-order Bang-Bang PI CDR tracking SJ-modulated PRBS-7 extracting tracking error, `|JTF(f_sj)|`, and 0-BER JTOL pass/fail.
+   - [`tb_cdr_ppm_wrap.scs`](../assets/tb/cdr/tb_cdr_ppm_wrap.scs) + `analyze_cdr.py ppm_wrap`: closed-loop `+1000 ppm` frequency-offset tracking verifying `FREQ_MON` convergence, `>= 2` clean $2\pi$ PI wraparounds, max wrap phase glitch, and `0` post-lock bit errors.
+   - [`tb_cdr_jtol_mask.scs`](../assets/tb/cdr/tb_cdr_jtol_mask.scs) + `analyze_cdr.py jtol_mask`: 4-frequency `alter` SJ mask sweep (`5/20/60/150 MHz`, `1.20..0.25 UIpp`) extracting per-point JTF magnitude/phase, `-3 dB` JTF corner, and `jtol_all_pass`.
 8. **PAM4 Signaling & DFE (`assets/tb/pam4/`):**
    - [`tb_pam4_tx_rlm_eye.scs`](../assets/tb/pam4/tb_pam4_tx_rlm_eye.scs) + `analyze_pam4.py tx_rlm`: exact IEEE 802.3 RLM (`>= 0.95` check), level symmetry, and lower/mid/upper 3-eye heights & widths.
    - [`tb_pam4_dfe_ber.scs`](../assets/tb/pam4/tb_pam4_dfe_ber.scs) + `analyze_pam4.py dfe_ber`: PAM4 TX -> lossy channel -> 3-threshold slicer + 1-tap PAM4 DFE verifying 3-eye opening and `0` symbol/Gray-bit errors.
+   - [`tb_pam4_link_top.scs`](../assets/tb/pam4/tb_pam4_link_top.scs) + `analyze_pam4.py link_top`: end-to-end 10 Gbaud (`20 Gb/s`) PAM4 link (`TX FFE -> 0.55 m Channel -> CTLE -> 1-Tap DFE`) extracting stage-by-stage 3-eye progression, TX RLM, and `0`-SER / `0`-BER.
 9. **Clocking & Jitter Bathtub (`assets/tb/clocking_jitter/`):**
    - [`tb_clk_dcd_iq_skew.scs`](../assets/tb/clocking_jitter/tb_clk_dcd_iq_skew.scs) + `analyze_clocking_jitter.py dcd_iq`: 5 GHz half-rate 4-phase clock DCD (`%`/`ps`) and 90-degree I/Q skew (`deg`/`ps`) before vs. after calibration.
    - [`tb_tx_jitter_bathtub.scs`](../assets/tb/clocking_jitter/tb_tx_jitter_bathtub.scs) + `analyze_clocking_jitter.py bathtub`: full TX jitter decomposition (`DCD`, `DDJ`, `SJ`, unbiased ANOVA `RJ_rms`) and Dual-Dirac bathtub `BER = 1e-12` eye width extrapolation.
+   - [`tb_psij_supply_noise.scs`](../assets/tb/clocking_jitter/tb_psij_supply_noise.scs) + `analyze_clocking_jitter.py psij`: sinusoidal `VDD` ripple (`50 mVpp @ 100 MHz`) + AC PSRR sweep extracting clock `PSIJ [ps/mV, mUI/mV]` and RX CTLE `PSRR_tran` / wideband `PSRR(f)`.
 10. **End-to-End Full Link (`assets/tb/link_top/`):**
     - [`tb_serdes_link_top.scs`](../assets/tb/link_top/tb_serdes_link_top.scs) + `analyze_link_top.py`: full `TX FFE -> 0.85 m Long-Reach Channel (-24 dB @ 5 GHz) -> RX CTLE -> 3-Tap DFE -> Slicer` stage-by-stage eye progression and `0`-BER verification.
 
@@ -88,4 +95,5 @@ All 10 suites (`28` executable `.scs` testbench decks + `channel_diff_lossy.scs`
 - **Forgotten `strobeoutput=strobeonly` filtering:** In `tb_slicer_hys_vtf.scs`, `tb_slicer_noise_tran.scs`, and `tb_ctle_linearity_p1db.scs`, Spectre appends off-grid `t = 0` and `t = t_stop` points; always pass traces through `extract_uniform_strobe()` and enforce `strobedelay < strobeperiod`.
 - **Short PRBS pattern hiding long-tail ISI:** PRBS-7 (`127 UI`) is great for fast block checks; always sign off final equalizers and SS-LMS loops on PRBS-9 (`511 UI`) or longer (`PRBS-15` / worst-case lone-bit patterns) so long-run DC wander and correlated tap leakage are exposed.
 - **T-coil mutual-inductor dot polarity:** Series-aiding (`+k` with `L1 (IN MID)` and `L2 (MID OUT)`) puts `-M` in the center tap for constant-resistance matching; flipping `k` negative collapses both `S11` (from `-125 dB` to `-0.5 dB`) and bandwidth (`2.83x` to `1.56x`)!
-- **PAM4 & CDR negative signoff checks:** Always run fault-injection sanity checks — mismatched PAM4 `rlm_err` dropping `RLM < 0.95`, excess CDR SJ breaking the Bang-Bang slew limit (`bit_errors > 0`), and large CTLE swing hitting `P1dB` compression — to prove your verification harness actually catches real failures.
+- **AC-coupling DC-op pre-charge:** In AC-coupled transient decks (`tb_channel_blw_cid.scs`), a non-zero TX differential voltage at `t = 0` pre-charges `C_ac` during DC operating point and biases the entire transient (`va_prbs_gen.va mode=3` starts balanced at `0 V` differential DC to avoid this!).
+- **PAM4 & CDR negative signoff checks:** Always run fault-injection sanity checks — mismatched PAM4 `rlm_err` dropping `RLM < 0.95`, excess CDR `ppm_offset` or SJ breaking lock (`bit_errors > 0`), TX skew/clipping degrading `SNDR_TX` & `V_cm,ac`, undersized `C_ac` collapsing post-CID eyes, and large CTLE swing hitting `P1dB` compression — to prove your verification harness actually catches real failures.

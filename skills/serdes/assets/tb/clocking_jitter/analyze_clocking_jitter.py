@@ -4,6 +4,7 @@
 Usage:
   python analyze_clocking_jitter.py dcd_iq <psf_dir> [--f-clk 5e9] [--vdd 1.0]
   python analyze_clocking_jitter.py bathtub <psf_dir> [--ui 100e-12] [--f-sj 50e6] [--t-skip 5e-9]
+  python analyze_clocking_jitter.py psij <psf_dir> [--f-clk 5e9] [--f-rip 100e6] [--ui 100e-12] [--t-skip 5e-9] [--vdd 1.0]
 """
 
 from __future__ import annotations
@@ -236,6 +237,87 @@ def analyze_bathtub(psf_dir: Path, *, ui: float, f_sj: float, t_skip: float) -> 
     }
 
 
+def analyze_psij(
+    psf_dir: Path, *, f_clk: float, f_rip: float, ui: float, t_skip: float, vdd: float
+) -> dict[str, object]:
+    f_tr = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f_tr)
+    t = d["time"]
+    vdd_w = d["VDD_NOISY"]
+    ck0 = d["CK0"]
+    v_ctle = d["CTLE_OUTP"] - d["CTLE_OUTN"]
+
+    m = t >= t_skip
+    tm = t[m]
+    if len(tm) < 50:
+        raise RuntimeError("Insufficient transient samples after t_skip for PSIJ analysis")
+
+    def fit_tone_amp(t_vec: np.ndarray, y_vec: np.ndarray, freq: float) -> float:
+        w = 2.0 * math.pi * freq * t_vec
+        A = np.column_stack([np.ones_like(t_vec), np.cos(w), np.sin(w)])
+        coeff, _, _, _ = np.linalg.lstsq(A, y_vec, rcond=None)
+        return float(math.hypot(float(coeff[1]), float(coeff[2])))
+
+    # 1. Supply ripple amplitude on VDD_NOISY
+    v_rip_amp_v = fit_tone_amp(tm, vdd_w[m], f_rip)
+    v_rip_pp_mv = 2.0 * v_rip_amp_v * 1e3
+
+    # 2. Clock path PSIJ: coherent TIE amplitude at f_rip on CK0 rising edges
+    r_edges = np.asarray(
+        [x for x in crossings(t, ck0, 0.5 * vdd, direction="rising") if x >= t_skip],
+        dtype=float,
+    )
+    if len(r_edges) < 20:
+        raise RuntimeError(f"Insufficient CK0 rising edges ({len(r_edges)}) for PSIJ extraction")
+    k_idx = np.arange(len(r_edges), dtype=float)
+    slope_t, intercept_t = np.polyfit(k_idx, r_edges, 1)
+    tie_ps = (r_edges - (intercept_t + slope_t * k_idx)) * 1e12
+    tie_amp_ps = fit_tone_amp(r_edges, tie_ps, f_rip)
+    tie_pp_ps = 2.0 * tie_amp_ps
+    tie_rms_ps = float(np.sqrt(np.mean(tie_ps**2)))
+
+    psij_ps_per_mv = tie_pp_ps / max(v_rip_pp_mv, 1e-9)
+    psij_mui_per_mv = (psij_ps_per_mv / (ui * 1e12)) * 1e3
+
+    # 3. RX CTLE path PSRR (coherent transient at f_rip)
+    ctle_amp_v = fit_tone_amp(tm, v_ctle[m], f_rip)
+    ctle_pp_mv = 2.0 * ctle_amp_v * 1e3
+    supply_gain = ctle_pp_mv / max(v_rip_pp_mv, 1e-9)
+    psrr_tran_db = -20.0 * math.log10(max(supply_gain, 1e-12))
+
+    res: dict[str, object] = {
+        "f_clk_ghz": f_clk / 1e9,
+        "f_rip_mhz": f_rip / 1e6,
+        "v_rip_pp_mv": float(v_rip_pp_mv),
+        "n_clk_edges": int(len(r_edges)),
+        "tie_psij_amp_ps": float(tie_amp_ps),
+        "tie_psij_pp_ps": float(tie_pp_ps),
+        "tie_rms_ps": float(tie_rms_ps),
+        "psij_ps_per_mv": float(psij_ps_per_mv),
+        "psij_mui_per_mv": float(psij_mui_per_mv),
+        "ctle_out_rip_pp_mv": float(ctle_pp_mv),
+        "ctle_supply_gain_v_per_v": float(supply_gain),
+        "ctle_psrr_tran_db": float(psrr_tran_db),
+    }
+
+    # 4. Optional wideband AC PSRR(f)
+    try:
+        f_ac = find_single(psf_dir, ["ac.ac", "*.ac.ac", "*.ac"])
+        dac = parse_psf_ascii(f_ac)
+        freq = np.real(dac["freq"])
+        log_f = np.log10(freq)
+        v_sup_ac = np.maximum(np.abs(dac["VDD_NOISY"]), 1e-15)
+        v_diff_ac = np.abs(dac["CTLE_OUTP"] - dac["CTLE_OUTN"])
+        psrr_ac_db = -20.0 * np.log10(np.maximum(v_diff_ac / v_sup_ac, 1e-12))
+        res["ctle_psrr_ac_100mhz_db"] = float(np.interp(math.log10(100e6), log_f, psrr_ac_db))
+        res["ctle_psrr_ac_1ghz_db"] = float(np.interp(math.log10(1e9), log_f, psrr_ac_db))
+        res["ctle_psrr_ac_5ghz_db"] = float(np.interp(math.log10(5e9), log_f, psrr_ac_db))
+        res["ctle_psrr_ac_worst_db"] = float(np.min(psrr_ac_db))
+    except FileNotFoundError:
+        pass
+    return res
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes Clocking & Jitter Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -251,11 +333,28 @@ def main(argv: list[str] | None = None) -> int:
     p_bt.add_argument("--f-sj", type=float, default=50e6)
     p_bt.add_argument("--t-skip", type=float, default=5.0e-9)
 
+    p_ps = sub.add_parser("psij")
+    p_ps.add_argument("psf_dir", type=Path)
+    p_ps.add_argument("--f-clk", type=float, default=5e9)
+    p_ps.add_argument("--f-rip", type=float, default=100e6)
+    p_ps.add_argument("--ui", type=float, default=100e-12)
+    p_ps.add_argument("--t-skip", type=float, default=5.0e-9)
+    p_ps.add_argument("--vdd", type=float, default=1.0)
+
     args = ap.parse_args(argv)
     if args.mode == "dcd_iq":
         res: object = analyze_dcd_iq(args.psf_dir, f_clk=args.f_clk, vdd=args.vdd)
-    else:
+    elif args.mode == "bathtub":
         res = analyze_bathtub(args.psf_dir, ui=args.ui, f_sj=args.f_sj, t_skip=args.t_skip)
+    else:
+        res = analyze_psij(
+            args.psf_dir,
+            f_clk=args.f_clk,
+            f_rip=args.f_rip,
+            ui=args.ui,
+            t_skip=args.t_skip,
+            vdd=args.vdd,
+        )
     print(json.dumps(res, indent=2))
     return 0
 

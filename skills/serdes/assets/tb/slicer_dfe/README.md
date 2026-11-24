@@ -9,13 +9,14 @@ Process-independent Spectre X (`+preset=cx` / `+preset=ax`) decks and analyzer f
 | `tb_slicer_hys_vtf.scs` | Bidirectional triangle-ramp VTF sweep (`strobeoutput=strobeonly`) | `v_th_up_mv`, `v_th_dn_mv`, `offset_mv`, `hysteresis_mv`, `out_swing_diff_mv` |
 | `tb_slicer_noise_tran.scs` | 300-cycle fixed-overdrive noise sensitivity `tran` (probit CDF inversion) | `p_one`, `z_probit`, `sigma_n_mvrms`, `ber_1e12_half_eye_mv` |
 | `tb_slicer_clk2q_setup_hold.scs` | 8-point overdrive sweep (`100 mV..0.5 mV`) + 21-step Setup & Hold timing sweep | `clk2q_100mv_ps`, `clk2q_0p5mv_ps`, `tau_regen_ps`, `t_setup_min_pass_ps`, `t_hold_min_pass_ps`, `aperture_window_ps` |
+| `tb_slicer_kickback.scs` | Single & half-rate interleaved (`CLK_EVEN`/`CLK_ODD`) input kickback through finite `R_src || C_src` | `cm_kickback_peak_mv`, `diff_kickback_peak_mv`, `next_ui_*_residual_mv`, `neighbor_diff_residual_mv`, `even/odd_decision_ok` |
 | `tb_dfe_3tap_eye.scs` | Closed-loop 3-tap DFE canceling a closed post-cursor ISI eye (`10 Gb/s` PRBS-7) | `before_dfe_eye` vs. `after_dfe_eye` (height/width), `bit_latency_ui`, `bit_errors` |
-| `analyze_slicer_dfe.py` | Standalone PSF ASCII analyzer (`vtf`, `noise_tran`, `dfe_eye`, `clk2q_sh`) | JSON summary |
+| `analyze_slicer_dfe.py` | Standalone PSF ASCII analyzer (`vtf`, `noise_tran`, `dfe_eye`, `clk2q_sh`, `kickback`) | JSON summary |
 
 ## DUT Interface Contracts
 
 ```spectre
-// Clocked slicer / CML or StrongARM latch (tb_slicer_hys_vtf.scs, tb_slicer_noise_tran.scs, tb_slicer_clk2q_setup_hold.scs)
+// Clocked slicer / CML or StrongARM latch (tb_slicer_hys_vtf.scs, tb_slicer_noise_tran.scs, tb_slicer_clk2q_setup_hold.scs, tb_slicer_kickback.scs)
 subckt dut_slicer INP INN CLK VDD VSS DOUTP DOUTN
     // instantiate your transistor slicer (or wrap ../../va/va_slicer_cml.va)
 ends dut_slicer

@@ -1,0 +1,76 @@
+// =============================================================================
+// Process-Independent End-to-End 10 Gbaud (20 Gb/s) PAM4 Link Top-Level TB
+// =============================================================================
+// Verifies the complete PAM4 wireline equalization chain over a severe lossy
+// causal `mtline` channel (`ch_len = 0.55 m`, ~ -16 dB @ 5 GHz, completely
+// closing all 3 PAM4 eyes before RX equalization!):
+//   Gray PRBS-7 PAM4 Gen -> 3-Tap PAM4 TX FFE -> Causal Lossy Channel
+//                        -> RX CTLE + VGA -> 1-Tap PAM4 DFE + 3-Threshold Slicer
+//
+// Extracts stage-by-stage 3-eye progression (`tx_pam4`, `ch_pam4`, `ctle_pam4`,
+// `dfe_pam4`), TX & DFE IEEE 802.3 RLM, and latency-aligned 0-SER / 0-BER!
+//
+// DUT interface contracts:
+//   subckt dut_pam4_tx   INP INN CLK VDD VSS OUTP OUTN
+//   subckt dut_pam4_ctle INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+//   subckt dut_pam4_dfe  INP INN CLK H1 VREF VDD VSS SUMP SUMN SYM_OUT MSB_OUT LSB_OUT
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+include "../channel/channel_diff_lossy.scs"
+ahdl_include "../../va/va_pam4_gen.va"
+
+parameters \
+    vdd=1.0 \
+    baud_rate=10G \
+    ch_len=0.55 \
+    vboost=0.0 \
+    v_ref_dfe=0.376 \
+    h1_dfe=0.0665 \
+    t_clk_rx_off=56p \
+    n_sym=320 \
+    temp_c=27
+
+parameters \
+    ui=1/baud_rate \
+    t_stop=n_sym*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VBST (VBOOST   VSS) vsource dc=vboost    type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0         type=dc
+VH1  (H1       VSS) vsource dc=h1_dfe    type=dc
+VRF  (VREF     VSS) vsource dc=v_ref_dfe type=dc
+
+VCLK_GEN (CLK_GEN 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0            rise=5p fall=5p width=(0.5*ui - 5p)
+VCLK_TX  (CLK_TX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.5*ui       rise=5p fall=5p width=(0.5*ui - 5p)
+VCLK_RX  (CLK_RX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=t_clk_rx_off rise=5p fall=5p width=(0.5*ui - 5p)
+
+// 1. Gray-coded PRBS-7 PAM4 source
+I_GEN  (CLK_GEN VSS DINP DINN SYM_TX) va_pam4_gen \
+    mode=0 vth=0.5*vdd v_swing=0.90 v_cm=0.50 rlm_err=0.0 t_rf=10p r_src=1
+
+// 2. 3-Tap PAM4 TX FFE Driver
+I_TX   (DINP DINN CLK_TX VDD VSS TXP TXN) dut_pam4_tx
+
+// 3. Causal Passive Lossy Differential Channel (~ -16 dB @ 5 GHz)
+I_CH   (TXP TXN RXP RXN VSS) channel_diff_lossy ch_len=ch_len
+
+// 4. RX CTLE + VGA Front End (provides matched 50-ohm differential input termination)
+I_CTLE (RXP RXN VBOOST VOFF_CAL VDD VSS EQP EQN) dut_pam4_ctle
+
+// 5. 3-Threshold PAM4 Slicer + 1-Tap PAM4 DFE + Gray Decoder
+I_DFE  (EQP EQN CLK_RX H1 VREF VDD VSS SUMP SUMN SYM_RX MSB_RX LSB_RX) dut_pam4_dfe
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=4p
+
+save SYM_TX TXP TXN RXP RXN EQP EQN SUMP SUMN SYM_RX MSB_RX LSB_RX CLK_RX
+saveOptions options save=selected

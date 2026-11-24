@@ -180,6 +180,48 @@
       "prompt": "How do I quantify differential RX front-end mode conversion (SDD11, SCD11, SCD21, SDC21) under ESD/termination mismatch AND channel FEXT/NEXT crosstalk eye degradation in Spectre X?",
       "expected_output": "Should point to assets/tb/tcoil/tb_rx_frontend_sdd11_scd21.scs (analyze_tcoil.py --mode rx_frontend extracting SDD11, SCD11, SCD21, SDC21) and assets/tb/channel/tb_channel_xtalk_fext_next.scs (analyze_channel.py xtalk comparing isolated vs. asynchronous PRBS-9 FEXT/NEXT victim eye loss, quiet-victim RMS/pp noise, and AC coupling dB).",
       "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/tcoil/tb_rx_frontend_sdd11_scd21.scs", "assets/tb/channel/tb_channel_xtalk_fext_next.scs"]
+    },
+    {
+      "id": 31,
+      "prompt": "How do I verify that a Type-II 2nd-order PI-based digital CDR tracks a +1000 ppm TX frequency offset cleanly across multiple 2*pi Phase Interpolator wraparounds in Spectre X?",
+      "expected_output": "Should show that delta_ppm = (1/(1 + freq_acc/N_codes) - 1)*1e6, note +1000 ppm at 10 Gb/s slips 1 UI every 100 ns (>= 2 full 64-code wraps over 350 ns), check max phase glitch across 2*pi wrap boundaries and 0 post-lock bit errors, and point to assets/tb/cdr/tb_cdr_ppm_wrap.scs and analyze_cdr.py ppm_wrap.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/cdr/tb_cdr_ppm_wrap.scs", "assets/tb/cdr/analyze_cdr.py"]
+    },
+    {
+      "id": 32,
+      "prompt": "How do I run a multi-frequency OIF/IEEE-style CDR JTOL mask sweep in a single Spectre X run to measure both low-frequency tracking and the -3 dB JTF bandwidth rolloff?",
+      "expected_output": "Should recommend using Spectre alter statements to sweep decreasing SJ amplitudes across increasing frequencies (5/20/60/150 MHz, 1.20..0.25 UIpp), verifying |JTF| ~ 0 dB in-band, |JTF| < -3 dB above corner, and 0 bit errors at all points via assets/tb/cdr/tb_cdr_jtol_mask.scs and analyze_cdr.py jtol_mask.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/cdr/tb_cdr_jtol_mask.scs", "assets/tb/cdr/analyze_cdr.py"]
+    },
+    {
+      "id": 33,
+      "prompt": "How do I quantify Power-Supply-Induced Jitter (PSIJ in ps/mV and mUI/mV) on a half-rate SerDes clock tree alongside wideband RX CTLE supply-to-differential PSRR in Spectre X?",
+      "expected_output": "Should inject sinusoidal supply ripple on VDD shared by dut_clk_dist and AC-grounded dut_ctle_vga, extract coherent clock-edge TIE amplitude to compute PSIJ = TIE_pp/V_rip_pp [ps/mV] and [mUI/mV], extract both coherent transient PSRR and wideband AC PSRR(f) (noting CTLE peaking degrades high-frequency PSRR), and point to assets/tb/clocking_jitter/tb_psij_supply_noise.scs and analyze_clocking_jitter.py psij.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/clocking_jitter/tb_psij_supply_noise.scs", "assets/va/va_clk_dcd_iq.va", "assets/va/va_ctle_vga.va"]
+    },
+    {
+      "id": 34,
+      "prompt": "Explain the IEEE 802.3 Clause 93/120 TX Linear-Fit Pulse Response p(k) and SNDR_TX calculation, and how to measure 20-80% t_r/t_f, intra-pair P/N skew, and AC common-mode noise V_cm,ac in Spectre X.",
+      "expected_output": "Should define least-squares fit y ~= X*p against the known PRBS-7 stream and SNDR_TX = 10*log10(p_max^2 / e_rms^2), note how TX FFE + output saturation degrades SNDR_TX while P/N skew generates V_cm,ac spikes, and point to assets/tb/tx_ffe/tb_tx_cm_skew_sndr.scs, analyze_tx_ffe.py cm_sndr, and assets/va/va_tx_ffe_4tap.va.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/tx_ffe/tb_tx_cm_skew_sndr.scs", "assets/va/va_tx_ffe_4tap.va"]
+    },
+    {
+      "id": 35,
+      "prompt": "How do I simulate and quantify SerDes slicer input kickback and half-rate interleaved Odd-to-Even neighbor corruption in Spectre X?",
+      "expected_output": "Should drive standalone and half-rate interleaved (CLK_EVEN / CLK_ODD shifted by 0.5*T_clk) slicers through finite R_src || C_src with P/N mismatch, note asymmetric evaluate discharge vs. reset precharge prevents kickback cancellation at 50% duty cycle, measure peak CM/diff kickback and settled residual before the neighbor's sampling edge, and reference assets/tb/slicer_dfe/tb_slicer_kickback.scs, analyze_slicer_dfe.py kickback, and assets/va/va_slicer_cml.va.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/slicer_dfe/tb_slicer_kickback.scs", "assets/va/va_slicer_cml.va"]
+    },
+    {
+      "id": 36,
+      "prompt": "How do I verify a full end-to-end 10 Gbaud (20 Gb/s) PAM4 link combining 3-tap TX FFE, a lossy causal channel, RX CTLE, and a 1-tap PAM4 DFE in Spectre X?",
+      "expected_output": "Should explain partitioning light TX FFE (preserving RLM >= 0.95), linear RX CTLE (flattening broadband loss without compressing outer levels), and 1-tap PAM4 DFE (canceling residual h1), tracking stage-by-stage 3-eye progression and Gray-decoded 0-SER/0-BER via assets/tb/pam4/tb_pam4_link_top.scs and analyze_pam4.py link_top.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/pam4/tb_pam4_link_top.scs", "assets/tb/pam4/analyze_pam4.py"]
+    },
+    {
+      "id": 37,
+      "prompt": "Write the analytical AC-coupling Baseline Wander (BLW) droop equation under a long CID burst, explain the Spectre t=0 DC-op cap pre-charge trap, and show how to verify BLW and post-CID eye closure.",
+      "expected_output": "Should give V_droop = V_0*(1 - exp(-T_cid/(2*Z_0*C_ac))), warn that non-zero differential TX DC at t=0 pre-charges C_ac during Spectre DC operating point (prevented by balanced 0 V differential DC in va_prbs_gen.va mode=3), and reference assets/tb/channel/tb_channel_blw_cid.scs, analyze_channel.py blw_cid, and assets/va/va_prbs_gen.va.",
+      "files": ["references/cdr-pam4-and-clocking.md", "references/simulation-and-verification.md", "assets/tb/channel/tb_channel_blw_cid.scs", "assets/va/va_prbs_gen.va"]
     }
   ]
 }

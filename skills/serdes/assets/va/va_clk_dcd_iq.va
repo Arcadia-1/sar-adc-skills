@@ -14,6 +14,9 @@
 //   - DCD injects an exact slicing threshold offset `dv = v_in_amp * sin(pi*dcd_eff/100)`
 //     shifting duty cycle of all four phases to `50% + dcd_eff%` without coupling
 //     into the rising-edge I/Q spacing (orthogonally calibratable!).
+//   - Optional Power-Supply-Induced Jitter (PSIJ) `k_psij_ps_per_v` [ps/V] shifts
+//     all four output phases coherently with supply ripple `V(VDD, VSS) - vdd`
+//     (default 0.0 preserves ideal-supply behavior).
 
 `include "constants.vams"
 `include "disciplines.vams"
@@ -39,12 +42,15 @@ parameter real dcd_pct     = 5.0    from (-25.0:25.0); // injected duty-cycle di
 parameter real iq_skew_deg = 6.0    from (-45.0:45.0); // injected I/Q quadrature phase error [deg]
 parameter real k_dcd_cal   = 10.0   from (0.1:200.0);  // DCD calibration gain [% / V] on VDCD_CAL
 parameter real k_iq_cal    = 12.0   from (0.1:360.0);  // I/Q calibration gain [deg / V] on VIQ_CAL
-parameter real v_lim       = 0.08   from (0.01:2.0);   // buffer limiting threshold [V]
-parameter real tau_out     = 3e-12  from (0.5e-12:inf);// output buffer rise/fall pole [s]
-parameter real r_out       = 50.0   from (1.0:1e6);    // output drive impedance [ohm]
+parameter real v_lim           = 0.08   from (0.01:2.0);   // buffer limiting threshold [V]
+parameter real tau_out         = 3e-12  from (0.5e-12:inf);// output buffer rise/fall pole [s]
+parameter real r_out           = 50.0   from (1.0:1e6);    // output drive impedance [ohm]
+parameter real k_psij_ps_per_v = 0.0;                      // optional PSIJ delay sensitivity [ps/V] (e.g. 120 = 0.12 ps/mV; 0 = off)
+parameter real f_clk_nom       = 5.0e9  from (1e6:1e12);   // nominal clock freq [Hz] for quadrature PSIJ phase shift
 
 electrical n_i, n_q;
-real dcd_eff, iq_eff, dphi, dv_dcd, v_i, v_q, v_q_rot, yi, yq;
+real dcd_eff, iq_eff, dphi, dv_dcd, v_i, v_q, v_i_d, v_q_d, v_q_rot, yi, yq;
+real dt_psij, phi_psij;
 
 analog begin
     dcd_eff = dcd_pct - k_dcd_cal * V(VDCD_CAL, VSS);
@@ -57,9 +63,19 @@ analog begin
 
     v_i     = V(CKI_P, CKI_N);
     v_q     = V(CKQ_P, CKQ_N);
-    v_q_rot = cos(dphi) * v_q - sin(dphi) * v_i;
+    if (k_psij_ps_per_v != 0.0) begin
+        // Higher VDD reduces CMOS buffer delay (negative dt_psij -> earlier clock edge)
+        dt_psij  = -1.0e-12 * k_psij_ps_per_v * (V(VDD, VSS) - vdd);
+        phi_psij = `M_TWO_PI * f_clk_nom * dt_psij;
+        v_i_d    =  cos(phi_psij) * v_i + sin(phi_psij) * v_q;
+        v_q_d    = -sin(phi_psij) * v_i + cos(phi_psij) * v_q;
+    end else begin
+        v_i_d    = v_i;
+        v_q_d    = v_q;
+    end
+    v_q_rot = cos(dphi) * v_q_d - sin(dphi) * v_i_d;
 
-    yi = 0.5 * vdd * tanh((v_i + dv_dcd) / v_lim);
+    yi = 0.5 * vdd * tanh((v_i_d + dv_dcd) / v_lim);
     yq = 0.5 * vdd * tanh((v_q_rot + dv_dcd) / v_lim);
 
     I(n_i, VSS) <+ (V(n_i, VSS) - yi) + tau_out * ddt(V(n_i, VSS));

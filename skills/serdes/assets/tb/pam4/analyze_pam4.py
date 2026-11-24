@@ -4,6 +4,7 @@
 Usage:
   python analyze_pam4.py tx_rlm <psf_dir> [--ui 100e-12] [--t-skip 2.5e-9]
   python analyze_pam4.py dfe_ber <psf_dir> [--ui 100e-12] [--t-skip 5.0e-9] [--vdd 1.0]
+  python analyze_pam4.py link_top <psf_dir> [--ui 100e-12] [--t-skip 6.0e-9] [--vdd 1.0]
 """
 
 from __future__ import annotations
@@ -245,6 +246,78 @@ def analyze_dfe_ber(psf_dir: Path, *, ui: float, t_skip: float, vdd: float) -> d
     }
 
 
+def analyze_link_top(psf_dir: Path, *, ui: float, t_skip: float, vdd: float) -> dict[str, object]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f)
+    t = d["time"]
+    v_tx = d["TXP"] - d["TXN"]
+    v_ch = d["RXP"] - d["RXN"]
+    v_ctle = d["EQP"] - d["EQN"]
+    v_dfe = d["SUMP"] - d["SUMN"]
+    sym_tx_w = d["SYM_TX"]
+    sym_rx_w = d["SYM_RX"]
+    msb_rx_w = d["MSB_RX"]
+    lsb_rx_w = d["LSB_RX"]
+    clk_rx = d["CLK_RX"]
+
+    tx_m = pam4_eye_and_rlm(t, v_tx, ui_s=ui, t_skip=t_skip)
+    ch_m = pam4_eye_and_rlm(t, v_ch, ui_s=ui, t_skip=t_skip)
+    ctle_m = pam4_eye_and_rlm(t, v_ctle, ui_s=ui, t_skip=t_skip)
+    dfe_m = pam4_eye_and_rlm(t, v_dfe, ui_s=ui, t_skip=t_skip)
+
+    rx_edges = [te for te in crossings(t, clk_rx, 0.5 * vdd, direction="rising") if te >= t_skip]
+    t_rx_s = np.asarray([te + 0.50 * ui for te in rx_edges if te + 0.50 * ui < float(t[-1])], dtype=float)
+    t_tx_s = np.arange(t_skip + 0.50 * ui, float(t[-1]) - 0.50 * ui, ui)
+
+    tx_sym = np.clip(np.rint(np.interp(t_tx_s, t, sym_tx_w)).astype(int), 0, 3)
+    rx_sym = np.clip(np.rint(np.interp(t_rx_s, t, sym_rx_w)).astype(int), 0, 3)
+    rx_msb = (np.interp(t_rx_s, t, msb_rx_w) >= 0.5 * vdd).astype(int)
+    rx_lsb = (np.interp(t_rx_s, t, lsb_rx_w) >= 0.5 * vdd).astype(int)
+
+    n_min = min(len(tx_sym), len(rx_sym))
+    best_ser = n_min
+    best_lag = 0
+    best_ber = 2 * n_min
+
+    for lag in range(-5, 65):
+        if lag >= 0:
+            a, b = tx_sym[: n_min - lag], rx_sym[lag:n_min]
+            rm, rl = rx_msb[lag:n_min], rx_lsb[lag:n_min]
+        else:
+            a, b = tx_sym[-lag:n_min], rx_sym[: n_min + lag]
+            rm, rl = rx_msb[: n_min + lag], rx_lsb[: n_min + lag]
+        if len(a) < 20:
+            continue
+        ser = int(np.sum(a != b))
+        if ser < best_ser:
+            best_ser = ser
+            best_lag = lag
+            tx_m_b = np.array([_GRAY_BITS[int(s)][0] for s in a], dtype=int)
+            tx_l_b = np.array([_GRAY_BITS[int(s)][1] for s in a], dtype=int)
+            best_ber = int(np.sum(tx_m_b != rm) + np.sum(tx_l_b != rl))
+
+    sym_checked = max(n_min - abs(best_lag), 1)
+    return {
+        "tx_pam4": tx_m,
+        "ch_pam4": ch_m,
+        "ctle_pam4": ctle_m,
+        "dfe_pam4": dfe_m,
+        "tx_rlm": float(tx_m["rlm"]),
+        "dfe_rlm": float(dfe_m["rlm"]),
+        "symbol_latency_ui": int(best_lag),
+        "symbols_checked": int(sym_checked),
+        "symbol_errors": int(best_ser),
+        "bits_checked": int(2 * sym_checked),
+        "bit_errors": int(best_ber),
+        "link_pass": bool(
+            best_ser == 0
+            and best_ber == 0
+            and bool(dfe_m["all_3_eyes_open"])
+            and bool(tx_m["rlm_pass"])
+        ),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes PAM4 Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -260,11 +333,19 @@ def main(argv: list[str] | None = None) -> int:
     p_df.add_argument("--t-skip", type=float, default=5.0e-9)
     p_df.add_argument("--vdd", type=float, default=1.0)
 
+    p_lt = sub.add_parser("link_top")
+    p_lt.add_argument("psf_dir", type=Path)
+    p_lt.add_argument("--ui", type=float, default=100e-12)
+    p_lt.add_argument("--t-skip", type=float, default=10.0e-9)
+    p_lt.add_argument("--vdd", type=float, default=1.0)
+
     args = ap.parse_args(argv)
     if args.mode == "tx_rlm":
         res: object = analyze_tx_rlm(args.psf_dir, ui=args.ui, t_skip=args.t_skip)
-    else:
+    elif args.mode == "dfe_ber":
         res = analyze_dfe_ber(args.psf_dir, ui=args.ui, t_skip=args.t_skip, vdd=args.vdd)
+    else:
+        res = analyze_link_top(args.psf_dir, ui=args.ui, t_skip=args.t_skip, vdd=args.vdd)
     print(json.dumps(res, indent=2))
     return 0
 

@@ -37,6 +37,15 @@ $$\left.\frac{d\phi_{\text{CDR}}}{dt}\right|_{\max} = \frac{D_T \cdot k_p}{N_{\t
 
 Exceeding this slew limit collapses JTF gain and causes cycle slipping and burst bit errors. Verify locked tracking error, $|H_{\text{JTF}}(f_{\text{sj}})|$, and 0-BER JTOL pass/fail with [`assets/tb/cdr/tb_cdr_jtol.scs`](../assets/tb/cdr/tb_cdr_jtol.scs).
 
+### 1.4 Frequency-Offset (`ppm`) Tracking, $2\pi$ PI Wraparound & Multi-Frequency JTOL Mask
+Real plesiochronous serial links operate with independent TX and RX reference crystals (`±100` to `±1000 ppm` offset, or spread-spectrum clocking SSC). In a Type-II PI-based CDR:
+- **Exact `FREQ_MON` conversion:** When the TX runs at $f_{\text{tx}} = f_{\text{ref}}(1 + \Delta_{\text{ppm}}\times 10^{-6})$, the nested frequency accumulator settles to `freq_acc` [PI codes / UI] satisfying:
+
+$$\Delta_{\text{ppm}} = \left(\frac{1}{1 + \text{freq\_acc} / N_{\text{codes}}} - 1\right)\times 10^6$$
+
+- **Seamless $2\pi$ PI wraparound:** Tracking $+1000\;\text{ppm}$ at $10\;\text{Gb/s}$ slips $1\;\text{UI}$ every $100\;\text{ns}$, forcing continuous $0 \leftrightarrow N_{\text{codes}}$ ($2\pi$) quadrant wraparounds. Any sign flip, dead code, or missing step at the $2\pi$ boundary creates a periodic phase glitch and burst errors. Verify `FREQ_MON` convergence (`ppm_err_pct`), wrap count (`n_wraps >= 2`), max phase glitch across wraps, and `0` post-lock bit errors with [`assets/tb/cdr/tb_cdr_ppm_wrap.scs`](../assets/tb/cdr/tb_cdr_ppm_wrap.scs) (`analyze_cdr.py ppm_wrap`).
+- **Multi-frequency OIF/IEEE JTOL mask:** A single-frequency JTOL check cannot prove both low-frequency tracking ($A_{\text{pp}} > 1\;\text{UI}$, requiring $|H_{\text{JTF}}| \approx 0\;\text{dB}$) AND high-frequency jitter filtering ($|H_{\text{JTF}}| < -3\;\text{dB}$ above the loop corner while the static eye absorbs residual SJ). Run the 4-point Spectre `alter` mask sweep (`5/20/60/150 MHz`, `1.20..0.25 UIpp`) in [`assets/tb/cdr/tb_cdr_jtol_mask.scs`](../assets/tb/cdr/tb_cdr_jtol_mask.scs) (`analyze_cdr.py jtol_mask`) to extract full `JTF(f)` magnitude/phase rolloff, `-3 dB` JTF bandwidth, and `jtol_all_pass`.
+
 ---
 
 ## 2. PAM4 Signaling: Gray Coding, IEEE 802.3 RLM & 1-Tap PAM4 DFE
@@ -57,6 +66,9 @@ Verify TX RLM, level symmetry, and lower/middle/upper 3-eye heights & widths wit
 
 ### 2.3 3-Threshold PAM4 Slicer & 1-Tap PAM4 DFE
 A PAM4 receiver slices the summer output $V_{\text{sum}}$ simultaneously against three thresholds $\big\{-\frac{2}{3}V_{\text{ref}},\; 0,\; +\frac{2}{3}V_{\text{ref}}\big\}$, where $V_{\text{ref}} \approx h_0$ is the received outer-level peak, and subtracts proportional post-cursor feedback $s_{k-1} \cdot h_1$ with $s_{k-1} \in \{-1, -\frac{1}{3}, +\frac{1}{3}, +1\}$. Because each PAM4 half-eye is only $h_0 / 3$, even moderate post-cursor ISI ($h_1 / h_0 \approx 0.30$) closes all three eyes before DFE; canceling $h_1$ opens all three eyes simultaneously with zero symbol and Gray-decoded bit errors. Verify with [`assets/tb/pam4/tb_pam4_dfe_ber.scs`](../assets/tb/pam4/tb_pam4_dfe_ber.scs) and [`assets/va/va_pam4_dfe_slicer.va`](../assets/va/va_pam4_dfe_slicer.va).
+
+### 2.4 End-to-End 10 Gbaud (`20 Gb/s`) PAM4 Link Equalization Partition
+Over long-reach channels ($\approx -16\;\text{dB}$ at Nyquist, `0.55 m` causal `mtline`), a 1-tap DFE alone cannot cancel broadband roll-off and multi-UI tails, so PAM4 links combine **light TX FFE** (pre-cursor cancellation preserving $\text{RLM} \ge 0.95$) + **linear RX CTLE** (broadband loss flattening without compressing outer levels!) + **1-tap PAM4 DFE** (canceling residual $h_1$ noiselessly). Verify stage-by-stage 3-eye progression (`tx_pam4 -> ch_pam4 -> ctle_pam4 -> dfe_pam4`), TX RLM, and `0`-SER / Gray-decoded `0`-BER with [`assets/tb/pam4/tb_pam4_link_top.scs`](../assets/tb/pam4/tb_pam4_link_top.scs) (`analyze_pam4.py link_top`).
 
 ---
 
@@ -81,6 +93,11 @@ Under the Dual-Dirac model with transition density $\rho_T \approx 0.5$ ($Q(\tex
 $$\text{TJ}(\text{BER}) = \text{DJ}_{\delta\delta} + 2\,Q(\text{BER})\,\sigma_{\text{RJ}}, \qquad \text{EW}(\text{BER}) = \max\big(T_{\text{UI}} - \text{TJ}(\text{BER}),\; 0\big)$$
 
 Verify full decomposition and bathtub curves across $\text{BER} = 10^{-3}\text{..}10^{-12}$ with [`assets/tb/clocking_jitter/tb_tx_jitter_bathtub.scs`](../assets/tb/clocking_jitter/tb_tx_jitter_bathtub.scs).
+
+### 3.3 Power-Supply-Induced Jitter (`PSIJ`) & RX Supply Rejection (`PSRR`)
+Switching noise on shared SerDes supply rails modulates both CMOS clock-buffer propagation delay (`PSIJ` in $\text{ps/mV}$ or $\text{mUI/mV}$) and RX differential eye amplitude (`PSRR` in $\text{dB}$):
+- **Clock PSIJ:** For sinusoidal ripple $V_{\text{rip,pp}}$ at $f_{\text{rip}}$ on `VDD`, extract coherent clock-edge TIE amplitude $\Delta t_{\text{TIE,pp}}$ to compute $\text{PSIJ} = \Delta t_{\text{TIE,pp}} / V_{\text{rip,pp}}\;[\text{ps/mV}]$. High-speed CMOS clock spines typically target $< 0.1\text{–}0.2\;\text{ps/mV}$ or dedicated LDO regulation.
+- **RX CTLE PSRR:** Supply noise coupled into a CTLE input/tail is amplified by the CTLE peaking transfer function near Nyquist, making high-frequency `PSRR(5 GHz)` significantly worse than DC/low-frequency PSRR! Measure coherent transient `PSIJ`, transient `PSRR_tran`, and wideband AC `PSRR(f)` (`10 MHz..10 GHz`) simultaneously with [`assets/tb/clocking_jitter/tb_psij_supply_noise.scs`](../assets/tb/clocking_jitter/tb_psij_supply_noise.scs) (`analyze_clocking_jitter.py psij`).
 
 ---
 
@@ -112,3 +129,25 @@ Adjacent differential lanes couple asymmetrically across connectors, vias, and B
 - **NEXT** (Near-End Crosstalk from a local TX aggressor into an adjacent RX) is NOT attenuated by the long channel loss and often dominates high-density long-reach links!
 - **FEXT** (Far-End Crosstalk co-propagating with the victim) scales with edge rate ($dV/dt$) and channel dispersion.
 - Always run crosstalk aggressors on **uncorrelated PRBS-9 patterns with slightly offset asynchronous clocks** so worst-case phase alignment is sampled across the victim eye. Quantify isolated vs. coupled eye loss and FEXT/NEXT RMS/dB levels with [`assets/tb/channel/tb_channel_xtalk_fext_next.scs`](../assets/tb/channel/tb_channel_xtalk_fext_next.scs).
+
+### 4.6 IEEE 802.3 Clause 93/120 TX Linear-Fit `SNDR_TX`, P/N Skew & AC Common-Mode Noise
+High-speed TX signoff extends beyond return loss (`SDD11`) to waveform linearity and differential symmetry:
+- **Intra-pair P/N timing skew (`t_skew_pn`):** Even $4\text{–}15\;\text{ps}$ mismatch between `OUTP` and `OUTN` pre-driver paths converts every differential edge into an AC common-mode spike $V_{\text{cm,ac}}(t) = \frac{1}{2}(V_{\text{OUTP}} + V_{\text{OUTN}}) - V_{\text{cm,dc}}$ (radiating EMI and triggering RX common-mode-to-differential conversion `SDC21`).
+- **Linear-Fit Pulse Response $p(k)$ & `SNDR_TX`:** Solve the oversampled least-squares fit $y \approx X p$ of the TX PRBS-7 waveform against the known bipolar bit sequence $x[n] \in \{-1, +1\}$ across $N_p$ taps (`12 UI` at `16x` oversampling). With peak linear-fit pulse $p_{\max} = \max|p(k)|$ and fit residual RMS $\sigma_e = \text{rms}(y - Xp)$:
+
+$$\text{SNDR}_{\text{TX}} = 10\log_{10}\!\left(\frac{p_{\max}^2}{\sigma_e^2 + \sigma_n^2}\right) \quad [\text{dB}]$$
+
+  When TX FFE is active, output driver compression (`v_clip_tx`) distorts peak transition levels relative to de-emphasized runs, directly degrading `SNDR_TX` below IEEE 802.3 targets ($\ge 27\text{–}32.5\;\text{dB}$). Verify 20–80% $t_r/t_f$, `pn_skew_ps`, `vcm_ac_rms_mv`/`pp_mv`, $p(k)$ cursors, and `sndr_tx_db` with [`assets/tb/tx_ffe/tb_tx_cm_skew_sndr.scs`](../assets/tb/tx_ffe/tb_tx_cm_skew_sndr.scs) (`analyze_tx_ffe.py cm_sndr`).
+
+### 4.7 Slicer Input Kickback & Half-Rate Interleaved Neighbor Corruption
+Dynamic StrongARM and clocked CML slicers inject charge back into their input nodes `(INP, INN)` through input-pair $C_{gs}/C_{gd}$ when internal tail/drain nodes discharge rapidly on `CLK` rising and precharge more slowly on `CLK` falling. Driven through a finite CTLE/VGA source impedance ($R_{\text{src}} \parallel C_{\text{src}}$):
+- **Single-slicer kickback:** Creates a large common-mode glitch and—under any P/N capacitance or $R_{\text{src}}$ mismatch, or data-dependent latch regeneration—a differential kickback pulse decaying with $\tau_{\text{src}} = R_{\text{src}}(C_{\text{src}} + C_{\text{in}})$.
+- **Half-rate interleaved coupling (`Odd -> Even`):** Because evaluate discharge is much faster than reset precharge, Even and Odd kickbacks on a shared input node do **not** cancel even at $50\%$ duty cycle! If $\tau_{\text{src}}$ is too large relative to $0.5\,T_{\text{clk}}$ (`1 UI`), the Odd slicer's kickback residual corrupts the Even slicer's sampling aperture. Quantify standalone and interleaved kickback peaks plus settled neighbor residuals with [`assets/tb/slicer_dfe/tb_slicer_kickback.scs`](../assets/tb/slicer_dfe/tb_slicer_kickback.scs) (`analyze_slicer_dfe.py kickback`, verified on both behavioral `va_slicer_cml.va` and transistor-level BSIM4 StrongARM).
+
+### 4.8 AC-Coupled Baseline Wander (`BLW`) Under Long CID Bursts
+Series AC-coupling capacitors ($C_{\text{ac}}$ on both P and N lines) isolate TX vs. RX DC common-mode voltages but form a high-pass filter with exact differential time constant $\tau_{\text{ac}} = (R_{\text{src}} + R_{\text{rx}}) C_{\text{ac}} = 2 Z_0 C_{\text{ac}}$. During a long run of $N_{\text{cid}}$ Consecutive Identical Digits (`T_cid = N_cid * UI`), the differential voltage droops exponentially:
+
+$$V_{\text{droop}} = V_0 \left(1 - e^{-T_{\text{cid}} / (2 Z_0 C_{\text{ac}})}\right)$$
+
+Immediately when alternating transitions resume, the DC baseline is shifted by $-V_{\text{droop}}$, closing the vertical eye margin relative to a fixed $0\;\text{V}$ slicer threshold by $2 V_{\text{droop}}$ (and collapsing the eye completely if $C_{\text{ac}}$ is undersized!).
+> **Spectre DC-Op AC-Coupling Pitfall:** If a stimulus generator outputs a non-zero static differential voltage ($\pm V_0$) during the `t = 0` DC operating point, Spectre pre-charges `C_ac` to that bogus DC voltage at `t = 0`, corrupting the entire transient! Always hold differential output at balanced `0 V` during DC operating point (`va_prbs_gen.va mode=3` does this automatically while preserving `V_cm,tx - V_cm,rx`). Verify `blw_peak_mv`, analytical RC agreement (`rel_err_pct < 5%`), and pre- vs. post-CID eye closure with [`assets/tb/channel/tb_channel_blw_cid.scs`](../assets/tb/channel/tb_channel_blw_cid.scs) (`analyze_channel.py blw_cid`).

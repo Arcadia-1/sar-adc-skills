@@ -12,7 +12,8 @@ Process-independent Spectre X (`+preset=cx` / `+preset=ax`) decks and analyzer f
 | `tb_channel_sbr_eye.scs` | Simultaneous 1-UI isolated pulse SBR + PRBS-7 eye `tran` (`10 Gb/s`) | Pre/main/post cursors (`h_-1, h0, h1..h5`), PDA eye height, TX/RX eye height `[mV]` & width `[UI/ps]` |
 | `tb_channel_nport_s4p.scs` | Spectre X `nport` (`interp=bbspice passivity=fit_enforce`) `sp` + SBR causality check + PRBS-7 eye on `channel_synth_causal.s4p` | `SDD21`/`SDD11`, pre-cursor causality ratio (`h_-2/h0`), SBR PDA eye, folded eye |
 | `tb_channel_xtalk_fext_next.scs` | Victim + asynchronous PRBS-9 FEXT/NEXT aggressors (`ac` coupling + `tran` eye comparison) | `isolated_eye` vs. `xtalk_eye`, eye loss `[mV / % / ps]`, `fext/next_rms_mv`, `fext/next_5ghz_db` |
-| `analyze_channel.py` | Standalone PSF ASCII analyzer (`sp`, `tdr`, `sbr_eye`, `nport_s4p`, `xtalk`) | JSON summary |
+| `tb_channel_blw_cid.scs` | 10 Gb/s CID stress burst (`mode=3`) through `dut_channel` + series `C_ac` + RX bias | `blw_peak_mv`, `blw_pct`, analytical RC `rel_err_pct`, `post_cid_dc_shift_mv`, pre vs. post-CID eye height |
+| `analyze_channel.py` | Standalone PSF ASCII analyzer (`sp`, `tdr`, `sbr_eye`, `nport_s4p`, `xtalk`, `blw_cid`) | JSON summary |
 
 ## DUT Interface Contract
 

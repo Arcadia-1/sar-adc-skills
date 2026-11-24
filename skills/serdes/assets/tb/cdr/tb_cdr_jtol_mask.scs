@@ -1,0 +1,88 @@
+// =============================================================================
+// Process-Independent SerDes CDR TB — Multi-Frequency JTOL Mask & JTF Rolloff
+// =============================================================================
+// Sweeps a closed-loop 10 Gb/s Type-II Bang-Bang PI CDR across 4 OIF/IEEE-style
+// sinusoidal jitter (SJ) mask points in a single Spectre X run using `alter`:
+//   - Point 0 (`tran_f0`):   5 MHz, 1.20 UIpp (in-band tracking > 1 UI!)
+//   - Point 1 (`tran_f1`):  20 MHz, 0.70 UIpp (mid-band tracking)
+//   - Point 2 (`tran_f2`):  60 MHz, 0.40 UIpp (near JTF bandwidth corner)
+//   - Point 3 (`tran_f3`): 150 MHz, 0.25 UIpp (above -3 dB JTF corner, high-freq floor)
+//
+// Extracts per frequency point:
+//   - Jitter Transfer Function magnitude `|JTF(f)|` [dB] & phase lag [deg]
+//   - Tracking RMS & peak phase error [mUI]
+//   - Latency-aligned bit errors & JTOL pass/fail (`jtol_all_pass`)
+//   - Interpolated `-3 dB` JTF loop bandwidth estimate (`jtf_bw_3db_mhz`)
+//
+// DUT interface contracts:
+//   subckt dut_bbpd     INP INN CLKP CLKN VDD VSS UP DN DOUT
+//   subckt dut_cdr_loop UP DN CLK VDD VSS VCODE FREQ_MON
+//   subckt dut_pi       CKI_P CKI_N CKQ_P CKQ_N VCODE VDD VSS CLKP CLKN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_phase_interp.va"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    bit_rate=10G \
+    n_codes=64 \
+    f_sj=5M \
+    a_sj_uipp=1.20 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Shared ideal 10 GHz quadrature reference clocks
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=-90
+
+// Calibrated TX sinusoidal jitter modulator (0.5*a_sj_uipp * n_codes peak PI codes)
+VSJ (SJ_CODE VSS) vsource dc=0 type=sine freq=f_sj ampl=(0.5*a_sj_uipp*n_codes)
+I_TX_PI (CKI_P CKI_N CKQ_P CKQ_N SJ_CODE VDD VSS TX_CLKP TX_CLKN) va_phase_interp \
+    vdd=vdd n_codes=n_codes inl_amp=0.0 dnl_amp=0.0 tau_out=3p
+
+// SJ-modulated 10 Gb/s PRBS-7 data stream
+I_PRBS (TX_CLKP VSS DATA_P DATA_N TX_BIT) va_prbs_gen \
+    mode=0 v_swing=0.8 v_cm=0.5 t_rf=15p r_src=50
+RL_P   (DATA_P VSS) resistor r=50
+RL_N   (DATA_N VSS) resistor r=50
+
+// Closed-loop 2nd-order Bang-Bang PI CDR
+I_BBPD (DATA_P DATA_N RX_CLKP RX_CLKN VDD VSS UP DN RX_DOUT) dut_bbpd
+I_LF   (UP DN RX_CLKP VDD VSS RX_VCODE FREQ_MON) dut_cdr_loop
+I_PI   (CKI_P CKI_N CKQ_P CKQ_N RX_VCODE VDD VSS RX_CLKP RX_CLKN) dut_pi
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Point 0: 5 MHz, 1.20 UIpp (40 ns lock + 2.0 SJ cycles = 440 ns)
+tran_f0 tran stop=440n errpreset=moderate maxstep=5p
+
+// Point 1: 20 MHz, 0.70 UIpp (40 ns lock + 4.0 SJ cycles = 240 ns)
+alt_f1 alter param=f_sj      value=20M
+alt_a1 alter param=a_sj_uipp value=0.70
+tran_f1 tran stop=240n errpreset=moderate maxstep=5p
+
+// Point 2: 60 MHz, 0.40 UIpp (40 ns lock + 6.0 SJ cycles = 140 ns)
+alt_f2 alter param=f_sj      value=60M
+alt_a2 alter param=a_sj_uipp value=0.40
+tran_f2 tran stop=140n errpreset=moderate maxstep=5p
+
+// Point 3: 150 MHz, 0.25 UIpp (40 ns lock + 12.0 SJ cycles = 120 ns)
+alt_f3 alter param=f_sj      value=150M
+alt_a3 alter param=a_sj_uipp value=0.25
+tran_f3 tran stop=120n errpreset=moderate maxstep=5p
+
+save TX_BIT RX_DOUT TX_CLKP RX_CLKP SJ_CODE RX_VCODE FREQ_MON
+saveOptions options save=selected
