@@ -8,12 +8,17 @@ description: >
   metastability, reference/input/supply paths, and Verilog-A behavioral
   modeling (4-bit tutorial and 10-bit non-ideality-injectable models). Also
   covers core analog submodules and ready-to-run process-independent Spectre
-  testbenches for every SAR ADC block: dynamic comparators (StrongARM &
-  Miyahara, PSS+PNOISE/delay/trannoise/offset/FoM), bootstrapped sampling
-  switches, CDAC (static DNL/INL & settling), SAR logic (timing & race), and
-  full SAR ADC (coherent FFT & ramp DNL/INL), plus power-delivery LDO guidance
-  integrated with the standalone `ldo` skill. Use for any SAR ADC design,
-  sizing budget, submodule analysis, debugging, or Spectre verification task.
+  testbenches (20 decks) for every SAR ADC block and signoff check: dynamic
+  comparators (StrongARM & Miyahara, PSS+PNOISE/delay/trannoise/offset/kickback/FoM),
+  bootstrapped sampling switches, CDAC (static DNL/INL, settling, sub-radix-2
+  redundancy & foreground weight calibration), SAR logic (timing & race), and
+  full SAR ADC signoff (coherent FFT, ramp DNL/INL, two-tone IMD2/IMD3, VREF
+  droop/decap, transient-noise FFT + grounded histogram, dynamic PSRR & CMRR,
+  input driver & AA RC settling, 4-frequency ERBW & aperture jitter, and
+  4-channel TI-SAR mismatch & digital calibration), plus power-delivery LDO
+  guidance integrated with the standalone `ldo` skill. Use for any SAR ADC
+  design, sizing budget, submodule analysis, debugging, or Spectre verification
+  task.
 ---
 
 # SAR ADC Skill
@@ -72,24 +77,29 @@ For design questions, follow this order:
 ### Process-Independent Spectre Testbenches (`assets/tb/`)
 Every fundamental SAR ADC building block has standalone Spectre decks and a zero-dependency Python PSF ASCII analyzer — plug in your own `models_corner.scs` + `dut_subckt.scs` (or smoke-test using the repo-root `common/models_generic_bsim4.scs`):
 
-- Shared `common/` (repo root) — `psf_utils.py` (standalone real + complex PSF ASCII parser, `extract_uniform_strobe`, coherent FFT, endpoint DNL/INL) and `models_generic_bsim4.scs` (synthetic foundry-free BSIM4 smoke model card)
-- `assets/tb/comparator/` — `tb_cmp_pss_pnoise.scs` (`harms=100`, `autotstab=yes`, `noisetype=sampled`, `pm0 jitterevent`), `tb_cmp_delay.scs`, `tb_cmp_trannoise.scs`, `tb_cmp_offset.scs` + `cmp_bisect.va`, `run_cmp_tb.py`
+- Shared `common/` (repo root) — `psf_utils.py` (standalone real + complex PSF ASCII parser, `extract_uniform_strobe`, coherent single-tone & two-tone FFT, endpoint DNL/INL) and `models_generic_bsim4.scs` (synthetic foundry-free BSIM4 smoke model card)
+- `assets/tb/comparator/` — `tb_cmp_pss_pnoise.scs` (`harms=100`, `autotstab=yes`, `noisetype=sampled`, `pm0 jitterevent`), `tb_cmp_delay.scs`, `tb_cmp_trannoise.scs`, `tb_cmp_offset.scs` + `cmp_bisect.va`, `tb_cmp_kickback.scs` (high-Z CDAC kickback), `analyze_cmp_kickback.py`, `run_cmp_tb.py`
 - `assets/tb/bootstrap/` — `tb_boot_ron_sweep.scs` (clocked flying-cap `Ron(VIN)` sweep), `tb_boot_tran_linearity.scs` (coherent Nyquist sampling FFT), `analyze_bootstrap.py`
-- `assets/tb/cdac/` — `tb_cdac_static_dnl_inl.scs` (512-state transfer sweep), `tb_cdac_settling.scs` (MSB 0.5-LSB settling), `analyze_cdac.py`
+- `assets/tb/cdac/` — `tb_cdac_static_dnl_inl.scs` (512-state transfer sweep), `tb_cdac_settling.scs` (MSB 0.5-LSB settling), `tb_cdac_mismatch_redundancy.scs` (sub-radix-2 redundancy recovery & foreground weight calibration), `analyze_cdac.py`
 - `assets/tb/sar_logic/` — `tb_sar_logic_timing.scs` (4-frame closed-loop timing & near-metastable stress), `analyze_sar_logic.py`
-- `assets/tb/adc_top/` — `tb_sar_adc_fft.scs` (coherent ENOB/SNDR/SFDR/THD), `tb_sar_adc_ramp_dnl.scs` (ramp DNL/INL & usable full-swing check), `analyze_adc_top.py`
+- `assets/tb/adc_top/` — `tb_sar_adc_fft.scs` (coherent ENOB/SNDR/SFDR/THD), `tb_sar_adc_ramp_dnl.scs` (ramp DNL/INL & usable full-swing check), `tb_sar_adc_twotone_imd.scs` (near-Nyquist two-tone IMD2/IMD3), `tb_sar_adc_vref_droop.scs` (reference buffer droop & decap recovery), `tb_sar_adc_trannoise_fft.scs` (trannoise FFT + grounded-input histogram), `tb_sar_adc_psrr_cmrr.scs` (dynamic supply ripple PSRR & input Vcm CMRR), `tb_sar_adc_input_driver.scs` (driver/AA RC kickback settling), `tb_sar_adc_erbw_jitter.scs` (4-frequency ERBW & aperture jitter inversion), `tb_ti_sar_mismatch.scs` (4-channel TI-SAR mismatch spurs & foreground O/G/skew calibration), `analyze_adc_top.py`
 - For ADC power-delivery LDO verification (`dc_reg_dropout`, `stb`, `psrr_zout_noise`, `load_line_tran`), use the dedicated [`skills/ldo/`](../ldo/SKILL.md) skill (`../ldo/assets/tb/`).
 
 ### Verilog-A Behavioral Library (`assets/va/`)
 Extend these Spectre-verified behavioral models for Phase 1–3 verification instead of rewriting from scratch (see `assets/va/README.md`):
 
 **10-bit & non-ideality-injectable behavioral models (`assets/va/behavioral_10b/`):**
-- `assets/va/behavioral_10b/va_cmp_dynamic.va` — dynamic comparator with `vos`, Gaussian `vnoise_rms`, and logarithmic regeneration/metastability delay
-- `assets/va/behavioral_10b/va_cdac_10b_diff.va` — 10-bit differential CDAC (Vcm-based or monotonic, `c_par_ratio`, `dm_msb`, 1-pole `tau_settle`)
+- `assets/va/behavioral_10b/va_cmp_dynamic.va` — dynamic comparator with `vos`, Gaussian `vnoise_rms`, logarithmic regeneration/metastability delay, optional `c_kb_p`/`c_kb_n` kickback caps, and `cmrr_v_per_v`
+- `assets/va/behavioral_10b/va_cdac_10b_diff.va` — 10-bit differential CDAC (Vcm-based or monotonic, `c_par_ratio`, `dm_msb`, 1-pole `tau_settle`, optional `vnoise_ktc_rms`, `psrr_v_per_v`/`psrr_gain_per_v`, `cmrr_v_per_v`)
+- `assets/va/behavioral_10b/va_cdac_10b_redundant.va` — 11-trial sub-radix-2 redundant 10-bit differential CDAC (`+56 LSB` MSB margin, per-cap mismatch `dm10_pct..dm1_pct`, injectable `v_msb_err`)
 - `assets/va/behavioral_10b/va_sar_logic_10b_async.va` — 10-bit self-timed async SAR logic with `EOC` completion stop and glitch-free latched `DOUT[9:0]`
+- `assets/va/behavioral_10b/va_sar_logic_11b_red.va` — 11-trial async SAR logic companion for `va_cdac_10b_redundant.va` exposing raw decision word `RAW_CODE` (`0..2047`)
 - `assets/va/behavioral_10b/va_dac_10b_diff.va` — 10-bit ideal mid-rise differential reconstruction DAC (`AOUT` + exact integer `CODE`)
-- `assets/va/behavioral_10b/va_bootstrap_sw.va` — bootstrapped (`mode=0`) vs. plain NMOS (`mode=1`) sampling switch
+- `assets/va/behavioral_10b/va_bootstrap_sw.va` — bootstrapped (`mode=0`) vs. plain NMOS (`mode=1`) sampling switch with optional `t_jitter_rms`, `psrr_v_per_v`, and `cmrr_v_per_v`
 - `assets/va/behavioral_10b/va_code_ramp_10b.va` — 10-bit static code sweep generator for CDAC DNL/INL tests
+- `assets/va/behavioral_10b/va_vref_buffer.va` — reference buffer (`r_out`, `r_hf`, `f_bw`) + optional bondwire (`l_bond`) & on-chip decoupling (`c_decap`, `r_esr`)
+- `assets/va/behavioral_10b/va_input_driver.va` — finite-bandwidth, slew-limited analog input buffer (`f_bw`, `r_out`, `i_max`) for input-path co-simulation
+- `assets/va/behavioral_10b/va_clk_jitter.va` — causal Gaussian falling-edge sampling aperture jitter injector (`t_jitter_rms`)
 
 **4-bit tutorial baseline models (`assets/va/tutorial_4b/`):**
 - `assets/va/tutorial_4b/L2_cdac_4b_ideal.va`, `assets/va/tutorial_4b/L2_comparator_ideal.va`, `assets/va/tutorial_4b/L2_logic_4b_sync.va`, `assets/va/tutorial_4b/L3_logic_4b_async.va`, `assets/va/tutorial_4b/_va_dac_4b.va`, `assets/va/tutorial_4b/_va_dac_4b_se.va`, `assets/va/tutorial_4b/sar_4b_se_ideal.va`

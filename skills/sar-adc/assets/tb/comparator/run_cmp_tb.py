@@ -337,6 +337,7 @@ def stage_and_run_case(
         "delay": "tb_cmp_delay.scs",
         "trannoise": "tb_cmp_trannoise.scs",
         "offset": "tb_cmp_offset.scs",
+        "kickback": "tb_cmp_kickback.scs",
     }
     src_tb = TB_DIR / tb_map[test]
     deck_txt = patch_deck(src_tb.read_text(), params, latch_p=latch_p, latch_n=latch_n)
@@ -369,6 +370,18 @@ def stage_and_run_case(
             tclk=tclk,
             n_warmup=int(params.get("n_warmup", "2")),
             n_cycles=int(params.get("n_cycles", "300")),
+        )
+    if test == "kickback":
+        if str(TB_DIR) not in sys.path:
+            sys.path.insert(0, str(TB_DIR))
+        from analyze_cmp_kickback import analyze_kickback
+
+        return analyze_kickback(
+            raw_dir,
+            vdd=vdd,
+            vref=_eng_to_float(params.get("vref", params.get("vdd", "0.8"))),
+            n_bits=int(params.get("n_bits", "10")),
+            vidin=_eng_to_float(params.get("vidin", "1m")),
         )
     return analyze_offset(raw_dir)
 

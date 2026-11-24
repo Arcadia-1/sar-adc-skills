@@ -1,0 +1,55 @@
+// Process-independent behavioral SAR ADC reference buffer & decoupling network
+//
+// Models realistic reference-path dynamics during CDAC charge redistribution:
+//   - Closed-loop DC output resistance (r_out) rising to open-loop high-frequency
+//     output impedance (r_hf) above loop recovery bandwidth (f_bw)
+//   - Optional package/bondwire series inductance (l_bond) & damping resistance (r_bond)
+//   - On-chip decoupling capacitance (c_decap) with series ESR (r_esr)
+//
+// Set r_out=1m, r_hf=1m, l_bond=0, c_decap=10n for a stiff ideal reference baseline.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_vref_buffer(
+    input  electrical VREF_IN,
+    inout  electrical VREF_OUT,
+    input  electrical VSS
+);
+
+parameter real r_out   = 5.0   from (0:inf);   // DC closed-loop output resistance [ohm]
+parameter real r_hf    = 50.0  from (0:inf);   // high-frequency output resistance [ohm]
+parameter real f_bw    = 50M   from (0:inf);   // buffer recovery bandwidth [Hz]
+parameter real l_bond  = 0.0   from [0:inf);   // package/bondwire inductance [H]
+parameter real r_bond  = 0.05  from (0:inf);   // bondwire series resistance [ohm]
+parameter real c_decap = 50p   from [0:inf);   // on-chip decoupling cap at VREF_OUT [F]
+parameter real r_esr   = 0.2   from (0:inf);   // decoupling capacitor ESR [ohm]
+
+electrical n_src, n_buf, n_bond, n_esr;
+branch (n_buf, n_bond) br_r, br_l;
+
+real r_diff, l_bw, r_b_eff;
+
+analog begin
+    // Ideal buffered reference potential
+    V(n_src, VSS) <+ V(VREF_IN, VSS);
+
+    // DC output resistance r_out in series with (r_hf - r_out) || L_bw
+    // giving Z_buf(s) = r_out + (r_hf - r_out) * s / (s + 2*pi*f_bw)
+    I(n_src, n_buf) <+ V(n_src, n_buf) / r_out;
+
+    r_diff = (r_hf > r_out) ? (r_hf - r_out) : 1.0;
+    l_bw   = (r_hf > r_out) ? (r_diff / (`M_TWO_PI * f_bw)) : 0.0;
+    I(br_r) <+ V(br_r) / r_diff;
+    V(br_l) <+ l_bw * ddt(I(br_l));
+
+    // Optional package/bondwire series RL to on-chip VREF_OUT
+    r_b_eff = (l_bond > 0.0) ? r_bond : 1e-6;
+    V(n_bond, VREF_OUT) <+ r_b_eff * I(n_bond, VREF_OUT) + l_bond * ddt(I(n_bond, VREF_OUT));
+
+    // On-chip decoupling capacitor with ESR (topology-invariant across alter sweeps)
+    I(VREF_OUT, n_esr) <+ V(VREF_OUT, n_esr) / r_esr;
+    I(n_esr, VSS)      <+ c_decap * ddt(V(n_esr, VSS)) + 1e-12 * V(n_esr, VSS);
+end
+
+endmodule

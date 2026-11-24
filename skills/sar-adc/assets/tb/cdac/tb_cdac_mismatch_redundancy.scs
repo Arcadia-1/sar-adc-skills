@@ -1,0 +1,137 @@
+// =============================================================================
+// Process-Independent CDAC Testbench — Sub-Radix-2 Redundancy & Weight Calibration
+// =============================================================================
+// Exercises an 11-trial sub-radix-2 redundant 10-bit differential CDAC
+// (nominal weights W[10:1] = {232, 128, 72, 40, 22, 12, 6, 4, 2, 1}, +56 LSB
+// MSB redundancy) in closed-loop conversion to verify BOTH:
+//   1. `tran_ideal`    : ideal matched weights baseline (ENOB/SFDR/INL)
+//   2. `tran_red_err`  : injected MSB decision error (`v_msb_err = 35 mV`,
+//                        ~20 LSB inside +/-56 LSB redundancy) -> full ENOB/SFDR
+//      `tran_ramp_red` : full-scale ramp with `v_msb_err = 35 mV` -> 0 missing codes!
+//   3. `tran_mismatch` : realistic capacitor mismatch (`dm10..dm7 = +3.0%, -2.2%,
+//                        +1.8%, -1.5%`) + MSB error -> uncalibrated INL/SFDR
+//                        collapse, then Python foreground least-squares digital
+//                        weight calibration recovers INL < 0.25 LSB & SFDR > +20 dB!
+//
+// DUT interface contract (11-trial redundant differential CDAC):
+//   subckt dut_cdac_red VIP VIN CLKS \
+//       DCTRLP10 DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+//       DCTRLN10 DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+//       VCP VCN VDD VSS
+//   (Behavioral runs wrap `va_cdac_10b_redundant.va` using top-level parameters
+//    `dm10_pct..dm7_pct` and `v_msb_err` so `alter` statements sweep them directly.)
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+ahdl_include "../../va/behavioral_10b/va_cdac_10b_redundant.va"
+ahdl_include "../../va/behavioral_10b/va_cmp_dynamic.va"
+ahdl_include "../../va/behavioral_10b/va_sar_logic_11b_red.va"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    fs=50M \
+    duty_track=0.20 \
+    n_settle=4 \
+    n_fft=256 \
+    m_bin=19 \
+    n_fft_mm=512 \
+    m_bin_mm=29 \
+    n_ramp=2048 \
+    a_sine=0.90 \
+    a_ramp=0.0 \
+    dm10_pct=0.0 \
+    dm9_pct=0.0 \
+    dm8_pct=0.0 \
+    dm7_pct=0.0 \
+    v_msb_err=0.0 \
+    v_msb_err_inj=35m \
+    dm10_inj=3.0 \
+    dm9_inj=-2.2 \
+    dm8_inj=1.8 \
+    dm7_inj=-1.5 \
+    v_msb_err_mm=20m \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    fin_256=fs*m_bin/n_fft \
+    fin_512=fs*m_bin_mm/n_fft_mm \
+    fin=fin_256 \
+    t_stop_256=(n_settle+n_fft+1)*ts \
+    t_stop_512=(n_settle+n_fft_mm+1)*ts \
+    t_settle_r=n_settle*ts \
+    t_ramp=n_ramp*ts \
+    t_stop_ramp=t_settle_r+t_ramp+2*ts
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+// Selectable coherent sine (`a_sine`) or linear ramp (`a_ramp`) stimulus
+VRAMP_U (RAMP_U 0) vsource type=pwl wave=[ \
+    0                   -1 \
+    t_settle_r          -1 \
+    (t_settle_r+t_ramp)  1 \
+    t_stop_ramp          1 ]
+VSIN_P  (VIP_S 0) vsource type=sine sinedc=vcm ampl=0.5*a_sine*vref  freq=fin
+VSIN_N  (VIN_S 0) vsource type=sine sinedc=vcm ampl=-0.5*a_sine*vref freq=fin
+ERAMP_P (VIP VIP_S RAMP_U 0) vcvs gain=0.5*a_ramp*vref
+ERAMP_N (VIN VIN_S RAMP_U 0) vcvs gain=-0.5*a_ramp*vref
+
+I0 (VIP VIN CLKS \
+    DCTRLP10 DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN10 DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    VCP VCN VDD VSS) dut_cdac_red
+
+I_CMP (CMPCK VCN VCP DCMPN DCMPP) va_cmp_dynamic \
+    vdd=vdd td_min=35p tau_regen=12p td_rst=25p
+
+I_LOG (CLKS DCMPP DCMPN CMPCK EOC \
+    DOUT10 DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    DCTRLP10 DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN10 DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    RAW_CODE) va_sar_logic_11b_red vdd=vdd
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Ideal matched redundant CDAC baseline
+tran_ideal tran stop=t_stop_256 errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 2) Redundancy recovery: inject +35 mV (~20 LSB) MSB decision error
+alt_red_err alter param=v_msb_err value=v_msb_err_inj
+tran_red_err tran stop=t_stop_256 errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 2b) Ramp with +35 mV MSB error to prove 0 missing codes across full 10-bit range
+alt_r_s0 alter param=a_sine value=0.0
+alt_r_r1 alter param=a_ramp value=1.02
+tran_ramp_red tran stop=t_stop_ramp errpreset=moderate \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 3) Capacitor mismatch + MSB error for foreground digital weight calibration (512 pts)
+alt_m_s1  alter param=a_sine    value=0.90
+alt_m_r0  alter param=a_ramp    value=0.0
+alt_m_fin alter param=fin       value=fin_512
+alt_m_10  alter param=dm10_pct  value=dm10_inj
+alt_m_9   alter param=dm9_pct   value=dm9_inj
+alt_m_8   alter param=dm8_pct   value=dm8_inj
+alt_m_7   alter param=dm7_pct   value=dm7_inj
+alt_m_err alter param=v_msb_err value=v_msb_err_mm
+
+tran_mismatch tran stop=t_stop_512 errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+save RAW_CODE VIP VIN
+saveOptions options save=selected

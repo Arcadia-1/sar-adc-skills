@@ -257,6 +257,67 @@
         "references/ldo.md",
         "SKILL.md"
       ]
+    },
+    {
+      "id": 29,
+      "prompt": "How should I set up a coherent two-tone intermodulation (IMD2/IMD3) testbench for a 10-bit SAR ADC in Spectre without clipping or bin collisions?",
+      "expected_output": "Should point to assets/tb/adc_top/tb_sar_adc_twotone_imd.scs and analyze_adc_top.py twotone: choose two near-Nyquist prime FFT bins (e.g. m_bin1=97, m_bin2=107 at N=256) so IM2, IM3 (2*f1-f2, 2*f2-f1), and harmonics occupy distinct bins, set each tone to around -6.5 dBFS so peak sum stays safely below 0 dBFS without rail clipping, run Spectre X with +preset=cx -preset_override and strobeoutput=strobeonly, and extract IMD2/IMD3/SFDR/SNDR.",
+      "files": [
+        "assets/tb/adc_top/tb_sar_adc_twotone_imd.scs",
+        "assets/tb/adc_top/analyze_adc_top.py",
+        "references/simulation-and-verification.md"
+      ]
+    },
+    {
+      "id": 30,
+      "prompt": "How do I verify reference buffer droop and decoupling capacitor sizing for a SAR ADC in Spectre, and why does undersized C_decap degrade HD3 rather than just linear gain?",
+      "expected_output": "Should point to assets/tb/adc_top/tb_sar_adc_vref_droop.scs and assets/va/behavioral_10b/va_vref_buffer.va: explain that signal-dependent CDAC charge draws droop VREF during MSB/MSB-1 trials so subsequent bits experience asymmetric reference error between large and small inputs (creating odd-order HD3 and ENOB collapse), and show how to compare stiff ideal VREF, undersized C_decap, and properly decoupled VREF via Spectre alter while capturing peak droop [mV], settling error [LSB], and ENOB/SFDR/HD3 recovery.",
+      "files": [
+        "assets/tb/adc_top/tb_sar_adc_vref_droop.scs",
+        "assets/va/behavioral_10b/va_vref_buffer.va",
+        "references/robustness-and-system.md"
+      ]
+    },
+    {
+      "id": 31,
+      "prompt": "How do I measure dynamic comparator kickback onto a floating SAR CDAC top plate in Spectre, and how do I quantify the induced dynamic offset in LSBs?",
+      "expected_output": "Should point to assets/tb/comparator/tb_cmp_kickback.scs and analyze_cmp_kickback.py: sample differential inputs onto floating high-Z CDAC top-plate capacitances (e.g. 500 fF with realistic capacitor and routing resistance mismatch dc_dac_pct, r_src_p/n), fire CMPCK while the switches are open, and extract common-mode kickback peak, differential kickback peak, and induced dynamic differential voltage shift right at the decision edge in mV and LSB (supporting both transistor comparators such as StrongARM and va_cmp_dynamic.va with c_kb_p/n).",
+      "files": [
+        "assets/tb/comparator/tb_cmp_kickback.scs",
+        "assets/tb/comparator/analyze_cmp_kickback.py",
+        "assets/va/behavioral_10b/va_cmp_dynamic.va"
+      ]
+    },
+    {
+      "id": 32,
+      "prompt": "How do I verify both full-ADC transient noise SNR against my analytical kT/C + comparator budget and measure Effective Resolution Bandwidth (ERBW) / RMS aperture jitter in Spectre?",
+      "expected_output": "Should point to assets/tb/adc_top/tb_sar_adc_trannoise_fft.scs (dual coherent FFT with noiseruns=1 + grounded-input histogram extracting sigma_total_lsb, sigma_in_uvrms, offset_lsb, cross-checked against P_q + P_kTC + P_cmp) and assets/tb/adc_top/tb_sar_adc_erbw_jitter.scs (4-frequency coherent prime-bin alter sweep spanning low-frequency to 2nd-Nyquist sub-sampling to extract ENOB(f_in), ERBW at 0.5-bit drop, and inverted RMS aperture jitter t_j_est_fs).",
+      "files": [
+        "assets/tb/adc_top/tb_sar_adc_trannoise_fft.scs",
+        "assets/tb/adc_top/tb_sar_adc_erbw_jitter.scs",
+        "assets/tb/adc_top/analyze_adc_top.py",
+        "references/simulation-and-verification.md"
+      ]
+    },
+    {
+      "id": 33,
+      "prompt": "How do I verify sub-radix-2 SAR CDAC redundancy recovery and foreground digital weight calibration under 2-3% MSB capacitor mismatch in Spectre?",
+      "expected_output": "Should point to assets/tb/cdac/tb_cdac_mismatch_redundancy.scs, assets/va/behavioral_10b/va_cdac_10b_redundant.va, and assets/tb/cdac/analyze_cdac.py mismatch_cal: inject an MSB decision settling error inside the redundancy margin (e.g. +/-56 LSB) to confirm zero missing codes on a ramp and unchanged ENOB, then inject MSB capacitor mismatch to show uncalibrated INL/SFDR degradation and apply blind sine-wave foreground least-squares digital weight calibration on the raw 11-bit redundant decisions to recover INL < 0.25 LSB and SFDR by > 20 dB.",
+      "files": [
+        "assets/tb/cdac/tb_cdac_mismatch_redundancy.scs",
+        "assets/va/behavioral_10b/va_cdac_10b_redundant.va",
+        "assets/tb/cdac/analyze_cdac.py"
+      ]
+    },
+    {
+      "id": 34,
+      "prompt": "How do I simulate a 4-channel time-interleaved SAR ADC in Spectre to separate offset, gain, and timing-skew spurs and digitally calibrate them?",
+      "expected_output": "Should point to assets/tb/adc_top/tb_ti_sar_mismatch.scs and analyze_adc_top.py ti_sar: clock 4 SAR ADC channels at 0, 90, 180, 270 deg (fs_eff = 4*fs_ch) with coherent prime-bin input (e.g. m_bin=97, N=256) so offset spurs (fs/4, fs/2), gain/timing-skew image spurs (k*fs/4 +/- f_in), and harmonics fall on distinct bins, estimate per-channel offset, gain, and timing skew via coherent sine fitting, and apply digital offset/gain plus bandlimited FFT-differentiator skew equalization to recover SFDR and ENOB.",
+      "files": [
+        "assets/tb/adc_top/tb_ti_sar_mismatch.scs",
+        "assets/tb/adc_top/analyze_adc_top.py",
+        "references/robustness-and-system.md"
+      ]
     }
   ]
 }

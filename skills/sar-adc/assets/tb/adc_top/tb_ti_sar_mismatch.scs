@@ -1,0 +1,135 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — 4-Channel TI-SAR Mismatch & Cal
+// =============================================================================
+// Instantiates 4 time-interleaved channels of `dut_sar_adc` clocked at
+// 0, 90, 180, 270 deg (`fs_eff = 4 * fs_ch = 200 MS/s`, `fs_ch = 50 MS/s`)
+// with injectable per-channel:
+//   - DC offset mismatch (`vos0..vos3`)     -> spurs at fs/4 (bin 64) & fs/2 (bin 128)
+//   - Gain mismatch (`dg0..dg3`)            -> image spurs at k*fs/4 +/- f_in
+//   - Sampling timing skew (`dt0..dt3`)     -> image spurs at k*fs/4 +/- f_in
+//
+// Coherent prime bin `m_bin = 97` (`N = 256`, `f_in = 0.3789 * fs_eff`) cleanly
+// separates fundamental (bin 97), offset spurs (bins 64, 128), gain/skew image
+// spurs (bins 31, 33, 95), and harmonics (bins 62, 35, 124, 27).
+//
+// Recommended Spectre X invocation:
+//   spectre +preset=cx -preset_override +mt=2 -format psfascii ...
+//
+// DUT interface contract (standard 10-bit fully differential SAR ADC):
+//   subckt dut_sar_adc VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/behavioral_10b/va_dac_10b_diff.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    a_in_ratio=0.88 \
+    fs_eff=200M \
+    n_fft=256 \
+    m_bin=97 \
+    n_settle_ch=4 \
+    duty_track=0.20 \
+    tr=15p \
+    tf=15p \
+    vos0=0.0 \
+    vos1=8m \
+    vos2=-6m \
+    vos3=5m \
+    dg0=0.0 \
+    dg1=0.008 \
+    dg2=-0.006 \
+    dg3=0.005 \
+    dt0=0.0 \
+    dt1=15p \
+    dt2=-12p \
+    dt3=18p \
+    temp_c=27
+
+parameters \
+    ts_eff=1/fs_eff \
+    ts_ch=4*ts_eff \
+    t_clk0=1n \
+    fin=fs_eff*m_bin/n_fft \
+    amp_se=0.5*a_in_ratio*vref \
+    n_ch=n_fft/4 \
+    t_stop=(n_settle_ch+n_ch+2)*ts_ch
+
+VSUP (VDD 0)   vsource dc=vdd type=dc
+VGND (VSS 0)   vsource dc=0   type=dc
+VVCM (VCM_N 0) vsource dc=vcm type=dc
+
+// Shared coherent differential sine input
+VVIP (VIP 0) vsource type=sine sinedc=vcm ampl=amp_se  freq=fin
+VVIN (VIN 0) vsource type=sine sinedc=vcm ampl=-amp_se freq=fin
+
+// Four 90-degree interleaved channel clocks with injectable timing skew `dt0..dt3`
+VCLK0 (CLKS0 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts_ch delay=t_clk0+0*ts_eff+dt0 rise=tr fall=tf width=duty_track*ts_ch
+VCLK1 (CLKS1 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts_ch delay=t_clk0+1*ts_eff+dt1 rise=tr fall=tf width=duty_track*ts_ch
+VCLK2 (CLKS2 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts_ch delay=t_clk0+2*ts_eff+dt2 rise=tr fall=tf width=duty_track*ts_ch
+VCLK3 (CLKS3 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts_ch delay=t_clk0+3*ts_eff+dt3 rise=tr fall=tf width=duty_track*ts_ch
+
+// Per-channel gain & offset mismatch injection (works for behavioral & transistor DUTs)
+E_G0P (VIP0_G VCM_N VIP VIN) vcvs gain=0.5*(1+dg0)
+E_G0N (VIN0_G VCM_N VIP VIN) vcvs gain=-0.5*(1+dg0)
+V_O0P (VIP0 VIP0_G) vsource dc=0.5*vos0  type=dc
+V_O0N (VIN0 VIN0_G) vsource dc=-0.5*vos0 type=dc
+
+E_G1P (VIP1_G VCM_N VIP VIN) vcvs gain=0.5*(1+dg1)
+E_G1N (VIN1_G VCM_N VIP VIN) vcvs gain=-0.5*(1+dg1)
+V_O1P (VIP1 VIP1_G) vsource dc=0.5*vos1  type=dc
+V_O1N (VIN1 VIN1_G) vsource dc=-0.5*vos1 type=dc
+
+E_G2P (VIP2_G VCM_N VIP VIN) vcvs gain=0.5*(1+dg2)
+E_G2N (VIN2_G VCM_N VIP VIN) vcvs gain=-0.5*(1+dg2)
+V_O2P (VIP2 VIP2_G) vsource dc=0.5*vos2  type=dc
+V_O2N (VIN2 VIN2_G) vsource dc=-0.5*vos2 type=dc
+
+E_G3P (VIP3_G VCM_N VIP VIN) vcvs gain=0.5*(1+dg3)
+E_G3N (VIN3_G VCM_N VIP VIN) vcvs gain=-0.5*(1+dg3)
+V_O3P (VIP3 VIP3_G) vsource dc=0.5*vos3  type=dc
+V_O3N (VIN3 VIN3_G) vsource dc=-0.5*vos3 type=dc
+
+// Four identical SAR ADC channels
+I_CH0 (VIP0 VIN0 CLKS0 \
+    D0_9 D0_8 D0_7 D0_6 D0_5 D0_4 D0_3 D0_2 D0_1 D0_0 VDD VSS) dut_sar_adc
+I_CH1 (VIP1 VIN1 CLKS1 \
+    D1_9 D1_8 D1_7 D1_6 D1_5 D1_4 D1_3 D1_2 D1_1 D1_0 VDD VSS) dut_sar_adc
+I_CH2 (VIP2 VIN2 CLKS2 \
+    D2_9 D2_8 D2_7 D2_6 D2_5 D2_4 D2_3 D2_2 D2_1 D2_0 VDD VSS) dut_sar_adc
+I_CH3 (VIP3 VIN3 CLKS3 \
+    D3_9 D3_8 D3_7 D3_6 D3_5 D3_4 D3_3 D3_2 D3_1 D3_0 VDD VSS) dut_sar_adc
+
+// Per-channel reconstruction DACs latching each channel on its own CLKS_k rise
+I_DAC0 (D0_9 D0_8 D0_7 D0_6 D0_5 D0_4 D0_3 D0_2 D0_1 D0_0 \
+    CLKS0 AOUT0 CODE0) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+I_DAC1 (D1_9 D1_8 D1_7 D1_6 D1_5 D1_4 D1_3 D1_2 D1_1 D1_0 \
+    CLKS1 AOUT1 CODE1) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+I_DAC2 (D2_9 D2_8 D2_7 D2_6 D2_5 D2_4 D2_3 D2_2 D2_1 D2_0 \
+    CLKS2 AOUT2 CODE2) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+I_DAC3 (D3_9 D3_8 D3_7 D3_6 D3_5 D3_4 D3_3 D3_2 D3_1 D3_0 \
+    CLKS3 AOUT3 CODE3) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe at t_clk0 + 0.85*ts_ch (< ts_ch) after all 4 channel latches have settled,
+// capturing one chronologically aligned 4-sample frame per strobe!
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts_ch strobedelay=t_clk0+0.85*ts_ch strobeoutput=strobeonly
+
+save CODE0 CODE1 CODE2 CODE3 VIP VIN
+saveOptions options save=selected

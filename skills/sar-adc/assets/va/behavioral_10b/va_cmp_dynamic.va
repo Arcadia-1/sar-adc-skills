@@ -6,6 +6,8 @@
 //   - Input-dependent logarithmic regeneration delay:
 //       td_eval = td_min + tau_regen * ln(vdd / max(|vid_eff|, v_meta))
 //     enabling realistic async SAR bit-time borrowing and metastability checks.
+//   - Optional clock/regeneration input kickback capacitance (c_kb_p, c_kb_n)
+//   - Optional input common-mode sensitivity (cmrr_v_per_v around vcm_nom)
 //   - Clean reset phase (CMPCK=0 -> DCMPP=0, DCMPN=0 after td_rst).
 //
 // Polarity (VIP > VIN, vid_eff >= 0):
@@ -17,28 +19,33 @@
 
 module va_cmp_dynamic(
     input  electrical CMPCK,
-    input  electrical VINN,
-    input  electrical VINP,
+    inout  electrical VINN,
+    inout  electrical VINP,
     output electrical DCMPN,
     output electrical DCMPP
 );
 
-parameter real    vdd        = 0.9  from (0:inf);
-parameter real    vos        = 0.0;                 // static input offset [V]
-parameter real    vnoise_rms = 0.0  from [0:inf);   // input-referred RMS noise [V]
-parameter integer seed       = 1;                   // PRNG seed for thermal noise
-parameter real    td_min     = 40p  from (0:inf);   // minimum decision delay [s]
-parameter real    tau_regen  = 15p  from [0:inf);   // regeneration time constant [s]
-parameter real    v_meta     = 1u   from (0:inf);   // metastability delay clamp [V]
-parameter real    td_rst     = 30p  from [0:inf);   // reset delay [s]
-parameter real    tr         = 10p  from (0:inf);   // output rise/fall time [s]
+parameter real    vdd          = 0.9  from (0:inf);
+parameter real    vos          = 0.0;                 // static input offset [V]
+parameter real    vnoise_rms   = 0.0  from [0:inf);   // input-referred RMS noise [V]
+parameter integer seed         = 1;                   // PRNG seed for thermal noise
+parameter real    td_min       = 40p  from (0:inf);   // minimum decision delay [s]
+parameter real    tau_regen    = 15p  from [0:inf);   // regeneration time constant [s]
+parameter real    v_meta       = 1u   from (0:inf);   // metastability delay clamp [V]
+parameter real    td_rst       = 30p  from [0:inf);   // reset delay [s]
+parameter real    tr           = 10p  from (0:inf);   // output rise/fall time [s]
+parameter real    c_kb_p       = 0.0  from [0:inf);   // kickback coupling cap to VINP [F]
+parameter real    c_kb_n       = 0.0  from [0:inf);   // kickback coupling cap to VINN [F]
+parameter real    cmrr_v_per_v = 0.0;                 // input-CM offset sensitivity dVos/dVcm [V/V]
+parameter real    vcm_nom      = 0.45;                // nominal input common-mode [V]
 
 integer outp, outn;
 integer pending_p, pending_n;
 integer armed_eval, armed_rst;
 integer rng_seed;
 real t_eval_fire, t_rst_fire;
-real vid_eff, vabs, td_eval, nsample;
+real vid_eff, vabs, td_eval, nsample, vcm_err;
+real v_kb_p, v_kb_n;
 
 analog begin
     @(initial_step) begin
@@ -53,10 +60,11 @@ analog begin
         rng_seed    = seed;
     end
 
-    // Clock rising edge: sample differential input, inject offset/noise, schedule decision
+    // Clock rising edge: sample differential input, inject offset/noise/CMRR, schedule decision
     @(cross(V(CMPCK) - vdd/2, +1)) begin
         nsample = (vnoise_rms > 0.0) ? ($rdist_normal(rng_seed, 0.0, vnoise_rms)) : 0.0;
-        vid_eff = (V(VINP) - V(VINN)) - vos + nsample;
+        vcm_err = cmrr_v_per_v * (0.5 * (V(VINP) + V(VINN)) - vcm_nom);
+        vid_eff = (V(VINP) - V(VINN)) - vos + vcm_err + nsample;
 
         if (vid_eff >= 0.0) begin
             pending_p = 1;
@@ -115,6 +123,18 @@ analog begin
 
     V(DCMPP) <+ transition(outp * vdd, 0, tr, tr);
     V(DCMPN) <+ transition(outn * vdd, 0, tr, tr);
+
+    // Optional parasitic kickback from internal integration/regeneration nodes into VINP/VINN
+    if (c_kb_p > 0.0 || c_kb_n > 0.0) begin
+        v_kb_p = vdd - 0.5 * V(CMPCK) - 0.5 * V(DCMPP);
+        v_kb_n = vdd - 0.5 * V(CMPCK) - 0.5 * V(DCMPN);
+        if (c_kb_p > 0.0) begin
+            I(VINP) <+ c_kb_p * ddt(V(VINP) - v_kb_p);
+        end
+        if (c_kb_n > 0.0) begin
+            I(VINN) <+ c_kb_n * ddt(V(VINN) - v_kb_n);
+        end
+    end
 end
 
 endmodule

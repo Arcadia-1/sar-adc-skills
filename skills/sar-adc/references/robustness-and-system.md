@@ -42,11 +42,15 @@ Verify:
 
 ## Product-Level Closure Checklist
 
-Moving from a schematic core to a shippable SAR ADC requires closing:
-- usable full swing after top-plate parasitics,
-- pre- and post-layout PVT timing margin (including slow corners and race margins),
-- reference recovery and supply PSRR,
-- sampling linearity up to Nyquist,
-- CDAC mismatch DNL/INL and comparator offset/trim,
-- metastability / BER target,
-- clock jitter and input-driver co-simulation.
+Moving from a schematic core to a shippable SAR ADC requires closing (with matching standalone decks under `assets/tb/`):
+- usable full swing after top-plate parasitics (`tb_sar_adc_ramp_dnl.scs`),
+- pre- and post-layout PVT timing margin including slow corners and race margins (`tb_sar_logic_timing.scs`),
+- near-Nyquist single-tone & two-tone linearity (`tb_sar_adc_fft.scs`, `tb_sar_adc_twotone_imd.scs`),
+- reference buffer droop/recovery and decoupling sizing (`tb_sar_adc_vref_droop.scs`),
+- supply dynamic PSRR, intermodulation sidebands, and input CMRR across `Vcm` (`tb_sar_adc_psrr_cmrr.scs`),
+- comparator kickback on floating high-Z CDAC top plates (`tb_cmp_kickback.scs`),
+- full-system thermal-noise budget FFT + grounded-input code histogram (`tb_sar_adc_trannoise_fft.scs`),
+- CDAC mismatch DNL/INL, sub-radix-2 redundancy recovery, and foreground weight calibration (`tb_cdac_mismatch_redundancy.scs`),
+- metastability / BER target and comparator offset/trim (`tb_cmp_offset.scs`),
+- clock aperture jitter / ERBW (`tb_sar_adc_erbw_jitter.scs`) and input-driver / anti-aliasing RC kickback co-simulation (`tb_sar_adc_input_driver.scs`),
+- time-interleaved channel offset/gain/timing-skew mismatch spurs and digital calibration when interleaving (`tb_ti_sar_mismatch.scs`).

@@ -1,0 +1,107 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — Dynamic PSRR & Input CMRR Sweep
+// =============================================================================
+// Verifies supply-ripple rejection and input common-mode rejection in one run:
+//   1. `tran_psrr`   : coherent sinusoidal supply ripple (`v_rip_pp = 50 mVpp`
+//                      at prime bin `m_rip = 17`) superimposed on `VDD` alongside
+//                      coherent input signal (`m_bin = 43`) -> extracts exact
+//                      input-referred PSRR [dB] at `f_rip` and intermodulation
+//                      sidebands `f_in +/- f_rip`
+//   2. `tran_cm_lo`, `tran_cm_nom`, `tran_cm_hi` : `alter` sweep of input
+//                      common-mode (`vcm_nom - 0.1, vcm_nom, vcm_nom + 0.1` V)
+//                      -> extracts CMRR [dB], DC offset shift [LSB], and ENOB
+//
+// CLKS is switched between live VDD and VSS (modeling a real on-chip clock
+// buffer), so both transistor-level and behavioral (`psrr_v_per_v`) DUTs sense
+// supply ripple physically.
+//
+// DUT interface contract (10-bit fully differential SAR ADC):
+//   subckt dut_sar_adc VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/behavioral_10b/va_dac_10b_diff.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm_nom=0.45 \
+    vcm=0.45 \
+    dvcm=0.1 \
+    vcm_lo=vcm_nom-dvcm \
+    vcm_hi=vcm_nom+dvcm \
+    a_in_ratio=0.70 \
+    v_rip_pp=50m \
+    fs=50M \
+    n_fft=256 \
+    m_bin=43 \
+    m_rip=17 \
+    n_settle=4 \
+    duty_track=0.20 \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    fin=fs*m_bin/n_fft \
+    f_rip=fs*m_rip/n_fft \
+    amp_se=0.5*a_in_ratio*vref \
+    t_stop=(n_settle+n_fft+1)*ts
+
+// Supply with coherent ripple (zeroed via alter during CMRR sweep)
+VSUP (VDD 0) vsource type=sine sinedc=vdd ampl=0.5*v_rip_pp freq=f_rip
+VGND (VSS 0) vsource dc=0 type=dc
+
+// Supply-tracking CLKS driver (0 -> V(VDD)) plus clean reference clock for I_DAC
+VCLK_HI (CLK_HI 0) vsource type=pulse val0=0 val1=1 \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+VCLK_LO (CLK_LO 0) vsource type=pulse val0=1 val1=0 \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+model sw_clk relay rclosed=10 ropen=1e9 vt1=0.35 vt2=0.65
+S_CKH (VDD  CLKS CLK_HI 0) sw_clk
+S_CKL (CLKS VSS  CLK_LO 0) sw_clk
+C_CK  (CLKS 0) capacitor c=5f
+
+// Coherent differential sine input centered at swept `vcm`
+VVIP (VIP 0) vsource type=sine sinedc=vcm ampl=amp_se  freq=fin
+VVIN (VIN 0) vsource type=sine sinedc=vcm ampl=-amp_se freq=fin
+
+I0 (VIP VIN CLKS \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    VDD VSS) dut_sar_adc
+
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLK_HI AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5 vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Dynamic PSRR test with 50 mVpp coherent ripple on VDD
+tran_psrr tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 2) Input CMRR sweep (v_rip_pp = 0, sweep Vcm = vcm_nom - 0.1, vcm_nom, vcm_nom + 0.1)
+alt_rip0  alter param=v_rip_pp value=0
+alt_cm_lo alter param=vcm      value=vcm_lo
+tran_cm_lo tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+alt_cm_nom alter param=vcm value=vcm_nom
+tran_cm_nom tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+alt_cm_hi alter param=vcm value=vcm_hi
+tran_cm_hi tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+save CODE AOUT VDD VIP VIN
+saveOptions options save=selected

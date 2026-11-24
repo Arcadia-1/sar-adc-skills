@@ -6,12 +6,17 @@ Process-independent, Spectre-verified Verilog-A models for phased SAR ADC verifi
 
 | Model | Module | Key Injectable Non-Idealities / Purpose |
 |---|---|---|
-| [`va_cmp_dynamic.va`](behavioral_10b/va_cmp_dynamic.va) | `va_cmp_dynamic` | `vos`, Gaussian `vnoise_rms`, logarithmic regeneration delay `tau_regen`, `td_min`, `td_rst` |
-| [`va_cdac_10b_diff.va`](behavioral_10b/va_cdac_10b_diff.va) | `va_cdac_10b_diff` | Vcm-based (`mode=0`) or monotonic (`mode=1`), `c_par_ratio`, MSB mismatch `dm_msb`, `tau_settle` |
+| [`va_cmp_dynamic.va`](behavioral_10b/va_cmp_dynamic.va) | `va_cmp_dynamic` | `vos`, Gaussian `vnoise_rms`, logarithmic regeneration delay `tau_regen`, `td_min`, `td_rst`, optional kickback caps `c_kb_p`/`c_kb_n`, input CM sensitivity `cmrr_v_per_v` |
+| [`va_cdac_10b_diff.va`](behavioral_10b/va_cdac_10b_diff.va) | `va_cdac_10b_diff` | Vcm-based (`scheme=0`) or monotonic (`scheme=1`), `c_par_ratio`, MSB mismatch `dm_msb`, `tau_settle`, optional `vnoise_ktc_rms`, `psrr_v_per_v`/`psrr_gain_per_v`, `cmrr_v_per_v` |
+| [`va_cdac_10b_redundant.va`](behavioral_10b/va_cdac_10b_redundant.va) | `va_cdac_10b_redundant` | 11-trial sub-radix-2 redundant 10-bit CDAC (`+56 LSB` MSB margin), per-cap mismatch `dm10_pct..dm1_pct`, injectable MSB error `v_msb_err`, `tau_settle` |
 | [`va_sar_logic_10b_async.va`](behavioral_10b/va_sar_logic_10b_async.va) | `va_sar_logic_10b_async` | Self-timed async state machine with `EOC` completion stop and latched `DOUT[9:0]` |
+| [`va_sar_logic_11b_red.va`](behavioral_10b/va_sar_logic_11b_red.va) | `va_sar_logic_11b_red` | 11-trial async SAR logic companion for `va_cdac_10b_redundant`, exposing raw decision word `RAW_CODE` (`0..2047`) for digital calibration |
 | [`va_dac_10b_diff.va`](behavioral_10b/va_dac_10b_diff.va) | `va_dac_10b_diff` | Mid-rise 10-bit differential reconstruction DAC (`AOUT` + integer `CODE`) |
-| [`va_bootstrap_sw.va`](behavioral_10b/va_bootstrap_sw.va) | `va_bootstrap_sw` | Bootstrapped (`mode=0`, flat `Ron`) vs. plain NMOS (`mode=1`, nonlinear `Ron(Vin)`) |
+| [`va_bootstrap_sw.va`](behavioral_10b/va_bootstrap_sw.va) | `va_bootstrap_sw` | Bootstrapped (`mode=0`, flat `Ron`) vs. plain NMOS (`mode=1`, nonlinear `Ron(Vin)`), optional aperture jitter `t_jitter_rms`, `psrr_v_per_v`, `cmrr_v_per_v` |
 | [`va_code_ramp_10b.va`](behavioral_10b/va_code_ramp_10b.va) | `va_code_ramp_10b` | Sequential 10-bit code/differential-control sweep generator for CDAC DNL/INL TBs |
+| [`va_vref_buffer.va`](behavioral_10b/va_vref_buffer.va) | `va_vref_buffer` | Reference buffer (`r_out`, `r_hf`, recovery pole `f_bw`), optional bondwire `l_bond`/`r_bond`, on-chip `c_decap`/`r_esr` |
+| [`va_input_driver.va`](behavioral_10b/va_input_driver.va) | `va_input_driver` | Finite-bandwidth (`f_bw`), finite-`r_out`, slew-limited (`i_max`) analog input buffer for acquisition-settling TBs |
+| [`va_clk_jitter.va`](behavioral_10b/va_clk_jitter.va) | `va_clk_jitter` | Causal Gaussian falling-edge sampling aperture jitter injector (`t_jitter_rms`) for ERBW/jitter characterization |
 
 ## `tutorial_4b/` — 4-Bit Educational Baseline Models
 

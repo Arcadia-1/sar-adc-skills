@@ -9,6 +9,8 @@
 //     (attenuates DAC redistribution relative to sampled input, modeling early clipping)
 //   - Optional MSB fractional capacitor mismatch (dm_msb) for INL/DNL/HD3 studies
 //   - Optional 1-pole RC DAC settling time constant (tau_settle)
+//   - Optional differential kT/C sampling thermal noise (vnoise_ktc_rms)
+//   - Optional supply/CMRR coupling (psrr_v_per_v, psrr_gain_per_v, cmrr_v_per_v)
 //
 // Polarity convention (matches va_sar_logic_10b_async & L2/L3 4-bit models):
 //   - Full-scale differential input range: [-vref, +vref], where vref = vrefp - vrefn
@@ -28,43 +30,72 @@ module va_cdac_10b_diff(
     output electrical       VCN
 );
 
-parameter real    vdd         = 0.9  from (0:inf);
-parameter real    vrefp       = 0.9;
-parameter real    vrefn       = 0.0;
-parameter integer scheme      = 0    from [0:1];    // 0=Vcm-based, 1=monotonic downward
-parameter real    c_par_ratio = 0.0  from [0:inf);  // C_parasitic / C_total_dac
-parameter real    dm_msb      = 0.0;                // fractional mismatch on bit 9 cap
-parameter real    tau_settle  = 0.0  from [0:inf);  // 1-pole RC settling constant [s]
-parameter real    tr          = 15p  from (0:inf);  // edge transition time [s]
+parameter real    vdd             = 0.9  from (0:inf);
+parameter real    vrefp           = 0.9;
+parameter real    vrefn           = 0.0;
+parameter integer scheme          = 0    from [0:1];    // 0=Vcm-based, 1=monotonic downward
+parameter real    c_par_ratio     = 0.0  from [0:inf);  // C_parasitic / C_total_dac
+parameter real    dm_msb          = 0.0;                // fractional mismatch on bit 9 cap
+parameter real    tau_settle      = 0.0  from [0:inf);  // 1-pole RC settling constant [s]
+parameter real    tr              = 15p  from (0:inf);  // edge transition time [s]
+parameter real    vnoise_ktc_rms  = 0.0  from [0:inf);  // differential kT/C RMS noise [V]
+parameter integer noise_seed      = 1;                  // PRNG seed for kT/C sampling noise
+parameter real    psrr_v_per_v    = 0.0;                // supply-ripple additive feedthrough [V/V]
+parameter real    psrr_gain_per_v = 0.0;                // supply-to-Vref gain modulation [1/V]
+parameter real    cmrr_v_per_v    = 0.0;                // input-CM differential coupling [V/V]
+parameter real    vcm_nom         = 0.45;               // nominal input common-mode [V]
 
 electrical vcp_ideal, vcn_ideal;
 
 real vp_hold, vn_hold;
-real vref, alpha;
+real vref, vref_eff, alpha;
 real dvp, dvn, step_k;
 real vp_tgt, vn_tgt;
-integer hold_mode;
+real vdd_sense, t_vdd_fire, ktc_n, v_psrr_err, v_cmrr_err;
+integer hold_mode, armed_vdd, nseed;
 genvar k;
 
 analog begin
     @(initial_step) begin
-        vref      = vrefp - vrefn;
-        alpha     = 1.0 / (1.0 + c_par_ratio);
-        vp_hold   = V(VIP);
-        vn_hold   = V(VIN);
-        hold_mode = (V(CLKS) > vdd/2) ? 0 : 1;
+        vref       = vrefp - vrefn;
+        vref_eff   = vref;
+        alpha      = 1.0 / (1.0 + c_par_ratio);
+        vp_hold    = V(VIP);
+        vn_hold    = V(VIN);
+        hold_mode  = (V(CLKS) > vdd/2) ? 0 : 1;
+        vdd_sense  = vdd;
+        armed_vdd  = 0;
+        t_vdd_fire = -1.0;
+        nseed      = noise_seed;
     end
 
-    // Enter track mode when CLKS rises
+    // Enter track mode when CLKS rises; sample supply high level if PSRR coupling enabled
     @(cross(V(CLKS) - vdd/2, +1)) begin
         hold_mode = 0;
+        if (psrr_v_per_v != 0.0 || psrr_gain_per_v != 0.0) begin
+            armed_vdd  = 1;
+            t_vdd_fire = $abstime + 100p;
+        end
     end
 
-    // Sample top-plate voltages on CLKS falling edge
+    @(timer(t_vdd_fire)) begin
+        if (armed_vdd) begin
+            if (V(CLKS) > 0.5 * vdd) begin
+                vdd_sense = V(CLKS);
+            end
+            armed_vdd = 0;
+        end
+    end
+
+    // Sample top-plate voltages on CLKS falling edge (+ optional kT/C, PSRR, CMRR errors)
     @(cross(V(CLKS) - vdd/2, -1)) begin
-        vp_hold   = V(VIP);
-        vn_hold   = V(VIN);
-        hold_mode = 1;
+        ktc_n      = (vnoise_ktc_rms > 0.0) ? $rdist_normal(nseed, 0.0, vnoise_ktc_rms) : 0.0;
+        v_psrr_err = psrr_v_per_v * (vdd_sense - vdd);
+        v_cmrr_err = cmrr_v_per_v * (0.5 * (V(VIP) + V(VIN)) - vcm_nom);
+        vp_hold    = V(VIP) + 0.5 * (ktc_n + v_psrr_err + v_cmrr_err);
+        vn_hold    = V(VIN) - 0.5 * (ktc_n + v_psrr_err + v_cmrr_err);
+        vref_eff   = vref * (1.0 + psrr_gain_per_v * (vdd_sense - vdd));
+        hold_mode  = 1;
     end
 
     if (hold_mode == 0) begin
@@ -74,7 +105,7 @@ analog begin
         dvp = 0.0;
         dvn = 0.0;
         for (k = 9; k >= 1; k = k - 1) begin
-            step_k = alpha * vref * pow(2.0, k - 10);
+            step_k = alpha * vref_eff * pow(2.0, k - 10);
             if (k == 9) begin
                 step_k = step_k * (1.0 + dm_msb);
             end

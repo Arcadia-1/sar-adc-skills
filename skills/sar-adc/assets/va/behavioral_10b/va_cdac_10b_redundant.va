@@ -1,0 +1,152 @@
+// Process-independent 11-trial Sub-Radix-2 Redundant 10-bit Differential CDAC
+//
+// Implements a 10-bit-resolution differential CDAC with 11 bit trials
+// (10 switched bit weights DCTRLP/N[10:1] + 1 final LSB comparator decision):
+//
+//   Nominal weights (in 10-bit LSB units, W_tot = 520, full-scale = +/-520 LSB):
+//     W[10:1] = {232, 128, 72, 40, 22, 12, 6, 4, 2, 1},  W_0 = 0.5 LSB
+//
+//   Redundancy margin at each bit k: R_k = (1 + sum_{j<k} W_j) - W_k:
+//     Bit 10 (MSB)   : R_10 = +56 LSB  (recovers MSB settling/decision errors up to +/-56 LSB!)
+//     Bit  9 (MSB-1) : R_9  = +32 LSB
+//     Bit  8         : R_8  = +16 LSB
+//     Bit  7         : R_7  = +8  LSB
+//     Bit  6         : R_6  = +4  LSB
+//     Bit  5         : R_5  = +2  LSB
+//     Bit  4         : R_4  = +2  LSB
+//     Bits 3..1      : R_3..1 = 0 LSB  (exact binary finish)
+//
+// Injectable non-idealities:
+//   - Per-capacitor fractional mismatch [%] (dm10_pct .. dm1_pct) for foreground
+//     digital weight calibration studies
+//   - Injectable MSB decision error (v_msb_err [V]) applied ONLY before MSB switches
+//     (DCTRLP[10]==0 && DCTRLN[10]==0), demonstrating redundancy recovery when
+//     |v_msb_err| < R_10 * V_LSB and code corruption when redundancy is exceeded
+//   - Optional 1-pole RC DAC settling time constant (tau_settle)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_cdac_10b_redundant(
+    input  electrical        VIP,
+    input  electrical        VIN,
+    input  electrical        CLKS,
+    input  electrical [10:1] DCTRLP,
+    input  electrical [10:1] DCTRLN,
+    output electrical        VCP,
+    output electrical        VCN
+);
+
+parameter real    vdd         = 0.9  from (0:inf);
+parameter real    vrefp       = 0.9;
+parameter real    vrefn       = 0.0;
+parameter integer scheme      = 0    from [0:1];    // 0=Vcm-based, 1=monotonic downward
+parameter real    c_par_ratio = 0.0  from [0:inf);  // C_parasitic / C_total_dac
+parameter real    dm10_pct    = 0.0;                // % mismatch on bit 10 (MSB, nom=232)
+parameter real    dm9_pct     = 0.0;                // % mismatch on bit  9 (nom=128)
+parameter real    dm8_pct     = 0.0;                // % mismatch on bit  8 (nom=72)
+parameter real    dm7_pct     = 0.0;                // % mismatch on bit  7 (nom=40)
+parameter real    dm6_pct     = 0.0;                // % mismatch on bit  6 (nom=22)
+parameter real    dm5_pct     = 0.0;                // % mismatch on bit  5 (nom=12)
+parameter real    dm4_pct     = 0.0;                // % mismatch on bit  4 (nom=6)
+parameter real    dm3_pct     = 0.0;                // % mismatch on bit  3 (nom=4)
+parameter real    dm2_pct     = 0.0;                // % mismatch on bit  2 (nom=2)
+parameter real    dm1_pct     = 0.0;                // % mismatch on bit  1 (nom=1)
+parameter real    v_msb_err   = 0.0;                // injected MSB-trial error [V]
+parameter real    tau_settle  = 0.0  from [0:inf);  // 1-pole RC settling constant [s]
+parameter real    tr          = 15p  from (0:inf);  // edge transition time [s]
+
+electrical vcp_ideal, vcn_ideal;
+
+real vp_hold, vn_hold;
+real vref, alpha, w_tot;
+real w_eff[10:1];
+real dvp, dvn, step_k, msb_err_now;
+real vp_tgt, vn_tgt;
+integer hold_mode, msb_decided;
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        vref      = vrefp - vrefn;
+        alpha     = 1.0 / (1.0 + c_par_ratio);
+        vp_hold   = V(VIP);
+        vn_hold   = V(VIN);
+        hold_mode = (V(CLKS) > vdd/2) ? 0 : 1;
+    end
+
+    // Recompute effective capacitor weights every step so Spectre `alter` updates take effect
+    w_eff[10] = 232.0 * (1.0 + 0.01 * dm10_pct);
+    w_eff[9]  = 128.0 * (1.0 + 0.01 * dm9_pct);
+    w_eff[8]  =  72.0 * (1.0 + 0.01 * dm8_pct);
+    w_eff[7]  =  40.0 * (1.0 + 0.01 * dm7_pct);
+    w_eff[6]  =  22.0 * (1.0 + 0.01 * dm6_pct);
+    w_eff[5]  =  12.0 * (1.0 + 0.01 * dm5_pct);
+    w_eff[4]  =   6.0 * (1.0 + 0.01 * dm4_pct);
+    w_eff[3]  =   4.0 * (1.0 + 0.01 * dm3_pct);
+    w_eff[2]  =   2.0 * (1.0 + 0.01 * dm2_pct);
+    w_eff[1]  =   1.0 * (1.0 + 0.01 * dm1_pct);
+
+    // Total array capacitance = sum(w_eff[10:1]) + 1.0 dummy unit
+    w_tot = 1.0 + w_eff[10] + w_eff[9] + w_eff[8] + w_eff[7] + w_eff[6]
+                + w_eff[5]  + w_eff[4] + w_eff[3] + w_eff[2] + w_eff[1];
+
+    @(cross(V(CLKS) - vdd/2, +1)) begin
+        hold_mode = 0;
+    end
+
+    @(cross(V(CLKS) - vdd/2, -1)) begin
+        vp_hold   = V(VIP);
+        vn_hold   = V(VIN);
+        hold_mode = 1;
+    end
+
+    if (hold_mode == 0) begin
+        vp_tgt = V(VIP);
+        vn_tgt = V(VIN);
+    end else begin
+        dvp = 0.0;
+        dvn = 0.0;
+        msb_decided = ((V(DCTRLP[10]) > vdd/2) || (V(DCTRLN[10]) > vdd/2)) ? 1 : 0;
+        msb_err_now = (msb_decided == 0) ? v_msb_err : 0.0;
+
+        for (k = 10; k >= 1; k = k - 1) begin
+            // Differential step for bit k (full-scale = +/-vref => step = alpha * vref * w_k / w_tot)
+            step_k = alpha * vref * (w_eff[k] / w_tot);
+
+            if (V(DCTRLN[k]) > vdd/2) begin
+                if (scheme == 0) begin
+                    dvp = dvp - 0.5 * step_k;
+                    dvn = dvn + 0.5 * step_k;
+                end else begin
+                    dvp = dvp - step_k;
+                end
+            end else if (V(DCTRLP[k]) > vdd/2) begin
+                if (scheme == 0) begin
+                    dvp = dvp + 0.5 * step_k;
+                    dvn = dvn - 0.5 * step_k;
+                end else begin
+                    dvn = dvn - step_k;
+                end
+            end
+        end
+        vp_tgt = vp_hold + dvp + 0.5 * msb_err_now;
+        vn_tgt = vn_hold + dvn - 0.5 * msb_err_now;
+    end
+
+    if (tau_settle > 0.0) begin
+        V(vcp_ideal) <+ transition(vp_tgt, 0, tr, tr);
+        V(vcn_ideal) <+ transition(vn_tgt, 0, tr, tr);
+        I(vcp_ideal, VCP) <+ V(vcp_ideal, VCP);
+        I(VCP)            <+ tau_settle * ddt(V(VCP));
+        I(vcn_ideal, VCN) <+ V(vcn_ideal, VCN);
+        I(VCN)            <+ tau_settle * ddt(V(VCN));
+    end else begin
+        V(vcp_ideal) <+ 0.0;
+        V(vcn_ideal) <+ 0.0;
+        V(VCP) <+ transition(vp_tgt, 0, tr, tr);
+        V(VCN) <+ transition(vn_tgt, 0, tr, tr);
+    end
+end
+
+endmodule

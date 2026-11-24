@@ -1,0 +1,105 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — ERBW & Sampling Aperture Jitter
+// =============================================================================
+// Sweeps four coherent prime-bin input frequencies via Spectre `alter` spanning
+// low-frequency, mid-band, near-Nyquist, and 2nd-Nyquist sub-sampling:
+//   - f0 =   7/256 * fs (~0.027 * fs)  -> low-frequency quantization/thermal floor
+//   - f1 =  59/256 * fs (~0.230 * fs)  -> mid-band roll-off
+//   - f2 = 113/256 * fs (~0.441 * fs)  -> near-Nyquist (brackets ERBW)
+//   - f3 = 233/256 * fs (~0.910 * fs)  -> 2nd-Nyquist sub-sampling (aliases to bin 23)
+//
+// Sampling-edge aperture jitter (`t_jitter_rms`) is injected on `CLKS_DUT` via
+// `va_clk_jitter.va` (set `t_jitter_rms=0` when characterizing intrinsic DUT
+// bandwidth / `va_bootstrap_sw` jitter). Extracts:
+//   - ENOB(f_in) and SNR(f_in) across the 4 frequencies
+//   - Effective Resolution Bandwidth (ERBW: frequency of 0.5-bit ENOB drop)
+//   - Inverted RMS aperture jitter `t_j_est_fs` vs. injected `t_jitter_rms`
+//
+// DUT interface contract (10-bit fully differential SAR ADC):
+//   subckt dut_sar_adc VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/behavioral_10b/va_dac_10b_diff.va"
+ahdl_include "../../va/behavioral_10b/va_clk_jitter.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    a_in_ratio=0.90 \
+    fs=50M \
+    n_fft=256 \
+    m_f0=7 \
+    m_f1=59 \
+    m_f2=113 \
+    m_f3=233 \
+    n_settle=4 \
+    duty_track=0.20 \
+    t_jitter_rms=7p \
+    jitter_seed=19 \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    f0=fs*m_f0/n_fft \
+    f1=fs*m_f1/n_fft \
+    f2=fs*m_f2/n_fft \
+    f3=fs*m_f3/n_fft \
+    fin=f0 \
+    amp_se=0.5*a_in_ratio*vref \
+    t_stop=(n_settle+n_fft+1)*ts
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+// Inject causal Gaussian falling-edge aperture jitter onto DUT sampling clock
+I_JIT (CLKS CLKS_DUT) va_clk_jitter \
+    vdd=vdd t_jitter_rms=t_jitter_rms seed=jitter_seed tr=tr tf=tf
+
+VVIP (VIP 0) vsource type=sine sinedc=vcm ampl=amp_se  freq=fin
+VVIN (VIN 0) vsource type=sine sinedc=vcm ampl=-amp_se freq=fin
+
+I0 (VIP VIN CLKS_DUT \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    VDD VSS) dut_sar_adc
+
+// Latch completed digital word on clean strobed CLKS rising edge
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLKS AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Low-frequency baseline (~0.027 * fs)
+tran_f0 tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 2) Mid-band (~0.230 * fs)
+alt_f1 alter param=fin value=f1
+tran_f1 tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 3) Near-Nyquist (~0.441 * fs)
+alt_f2 alter param=fin value=f2
+tran_f2 tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 4) Sub-sampling 2nd Nyquist zone (~0.910 * fs, folds to FFT bin 23)
+alt_f3 alter param=fin value=f3
+tran_f3 tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+save CODE AOUT VIP VIN
+saveOptions options save=selected
