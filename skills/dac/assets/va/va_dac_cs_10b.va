@@ -1,0 +1,89 @@
+// Process-independent 10-bit Segmented Current-Steering DAC Behavioral Model
+//
+// Models physical current-steering DAC non-idealities for Spectre verification:
+//   - Differential current outputs IOUTP / IOUTN sourcing from VDD into grounded
+//     load resistors R_L (e.g. 50 ohm each):
+//       I_P(k) = k * i_lsb,   I_N(k) = (1023 - k) * i_lsb   (constant sum I_FS)
+//   - Code-dependent unit-cell output impedance (`r_cell`, `c_cell`):
+//       Each steered unit cell places r_cell || (1 / j*w*c_cell) in parallel with
+//       the active output node, reproducing exact textbook Lin & Bult differential
+//       HD3 = (N_tot * R_L / (4 * Z_cell(f)))^2 and high-frequency SFDR roll-off!
+//   - Injectable MSB weight mismatch `dm_msb` (static DNL/INL + distortion)
+//   - Injectable MSB-vs-LSB timing skew `t_skew` (physical major-carry glitch impulse!)
+//   - Injectable output-side resistance asymmetry `dr_pn` (exposes even-order HD2!)
+//   - Smooth compliance headroom roll-off near `VDD - v_ov_min` & thermal noise `in_lsb`
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dac_cs_10b(
+    input  electrical [9:0] DIN,
+    input  electrical       VDD,
+    input  electrical       VSS,
+    output electrical       IOUTP,
+    output electrical       IOUTN
+);
+
+parameter real vth      = 0.50   from (0:inf);     // digital logic threshold [V]
+parameter real i_lsb    = 10e-6  from (1e-9:1.0);  // unit LSB current [A] (1023*10uA = 10.23 mA)
+parameter real r_cell   = 1e9    from (1e3:inf);   // unit-cell output resistance [ohm] (1e9 ~ ideal; 250k..1M finite cascode)
+parameter real c_cell   = 0.0    from [0:inf);     // unit-cell parasitic output cap [F] (e.g. 2f..10f)
+parameter real dm_msb   = 0.0;                     // fractional MSB (bit 9) weight error (e.g. 0.002 -> +1.02 LSB DNL)
+parameter real t_skew   = 0.0;                     // MSB switching skew relative to lower bits [s] (e.g. 150p -> major-carry glitch)
+parameter real t_edge   = 40e-12 from (1e-12:inf); // switch rise/fall transition time [s]
+parameter real v_ov_min = 0.25   from (0.01:2.0);  // minimum compliance headroom VDD - Vout [V]
+parameter real in_lsb   = 0.0    from [0:inf);     // white current noise per unit cell [A/sqrt(Hz)]
+
+integer b_msb;
+real w_lower, w_msb_tgt, k_msb_p, k_lsb_p, k_msb_n, k_lsb_n;
+real kp_eff, kn_eff, d_msb, d_lsb;
+real vp, vn, vdd_v, comp_p, comp_n, ip_src, in_src;
+genvar i;
+
+analog begin
+    b_msb = (V(DIN[9], VSS) > vth) ? 1 : 0;
+
+    w_lower = 0.0;
+    for (i = 0; i < 9; i = i + 1) begin
+        if (V(DIN[i], VSS) > vth)
+            w_lower = w_lower + pow(2.0, i);
+    end
+
+    // Positive t_skew delays MSB relative to lower bits; negative delays lower bits
+    d_msb = (t_skew >= 0.0) ? t_skew : 0.0;
+    d_lsb = (t_skew <  0.0) ? -t_skew : 0.0;
+
+    w_msb_tgt = 512.0 * (1.0 + dm_msb);
+
+    k_msb_p = transition(b_msb ? w_msb_tgt : 0.0, d_msb, t_edge, t_edge);
+    k_lsb_p = transition(w_lower,                 d_lsb, t_edge, t_edge);
+
+    k_msb_n = transition(b_msb ? 0.0 : w_msb_tgt, d_msb, t_edge, t_edge);
+    k_lsb_n = transition(511.0 - w_lower,         d_lsb, t_edge, t_edge);
+
+    kp_eff = max(k_msb_p + k_lsb_p, 0.0);
+    kn_eff = max(k_msb_n + k_lsb_n, 0.0);
+
+    vdd_v = V(VDD, VSS);
+    vp    = V(IOUTP, VSS);
+    vn    = V(IOUTN, VSS);
+
+    // Smooth compliance headroom roll-off when output approaches VDD - v_ov_min
+    comp_p = 0.5 * (1.0 + tanh((vdd_v - vp - v_ov_min) / 0.05));
+    comp_n = 0.5 * (1.0 + tanh((vdd_v - vn - v_ov_min) / 0.05));
+
+    // Active steered current minus finite unit-cell Early conductance k * V_out / r_cell
+    ip_src = kp_eff * (i_lsb * comp_p - vp / r_cell);
+    in_src = kn_eff * (i_lsb * comp_n - vn / r_cell);
+
+    I(VDD, IOUTP) <+ ip_src + white_noise(in_lsb * in_lsb * max(kp_eff, 1.0), "cs_p_th");
+    I(VDD, IOUTN) <+ in_src + white_noise(in_lsb * in_lsb * max(kn_eff, 1.0), "cs_n_th");
+
+    // Code-dependent parallel unit-cell output capacitance to AC ground (VSS)
+    if (c_cell > 0.0) begin
+        I(IOUTP, VSS) <+ kp_eff * c_cell * ddt(V(IOUTP, VSS));
+        I(IOUTN, VSS) <+ kn_eff * c_cell * ddt(V(IOUTN, VSS));
+    end
+end
+
+endmodule

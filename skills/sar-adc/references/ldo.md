@@ -95,7 +95,7 @@ $$T_0 = \beta \cdot A_{v1} \cdot g_{m2} r_{o2}, \qquad A_{v1} = g_{m1}(r_{o1} \p
 
 ## How to Verify an LDO
 
-> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/ldo/`](../assets/tb/ldo/README.md) (`tb_ldo_stb.scs`, `tb_ldo_psrr_noise.scs`, `tb_ldo_load_tran.scs`, `analyze_ldo.py`) and the PMOS-pass behavioral macro-model [`../assets/va/va_ldo_ideal.va`](../assets/va/va_ldo_ideal.va). For deeper standalone LDO characterization (including DC line/load regulation, dropout sweeps, output impedance $|Z_{\text{out}}(f)|$, line-step transients, and capless LDOs), see the dedicated [`skills/ldo/`](../../ldo/SKILL.md) skill.
+> **Ready-to-run process-independent LDO Spectre testbenches & Verilog-A models:** To avoid duplicate testbenches across skills, all standalone LDO verification assets live in the canonical [`skills/ldo/`](../../ldo/SKILL.md) skill — see [`skills/ldo/assets/tb/`](../../ldo/assets/tb/README.md) (`tb_ldo_dc_reg_dropout.scs`, `tb_ldo_stb.scs`, `tb_ldo_psrr_zout_noise.scs`, `tb_ldo_load_line_tran.scs`, `analyze_ldo.py`) and the PMOS-pass / capless Verilog-A models [`va_ldo_pmos.va`](../../ldo/assets/va/va_ldo_pmos.va) and [`va_ldo_capless.va`](../../ldo/assets/va/va_ldo_capless.va).
 
 1. **DC Operating Point, Line & Load Regulation:**
    - Sweep $I_{\text{load}}$ from $I_{\text{min}}$ (light load) to $I_{\text{max}}$ (full load) and $V_{\text{in}}$ from $V_{\text{in,min}}$ to $V_{\text{in,max}}$ across PVT.

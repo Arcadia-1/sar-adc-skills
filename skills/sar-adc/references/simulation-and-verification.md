@@ -70,7 +70,7 @@ Use `adctoolbox.find_coherent_frequency(fs, fin_target, N)` to pick $M$ cleanly.
 
 ### Reconstructing Output Codes
 
-- **Behavioral DAC / `CODE` pin (cleanest):** Include a Verilog-A reconstructor (like `assets/va/_va_dac_4b.va` or an ideal CDAC with a latched `CODE` pin) and sample at a fixed settled instant each period:
+- **Behavioral DAC / `CODE` pin (cleanest):** Include a Verilog-A reconstructor (like `assets/va/behavioral_10b/va_dac_10b_diff.va` or `assets/va/tutorial_4b/_va_dac_4b.va`) and sample at a fixed settled instant each period:
   ```python
   t_strobe = t_skip + np.arange(N) / Fs
   samples = np.interp(t_strobe, t_sim, aout_sim)
@@ -100,7 +100,7 @@ stat = analyze_inl_from_sine(codes, num_bits=N_bits)  # needs >= 1024 samples
 ## 5. Phased Verification Flow
 
 ### Phase 1 — All-Behavioral Verilog-A Baseline
-- Build the complete loop using the 10-bit behavioral models (`va_cdac_10b_diff.va`, `va_cmp_dynamic.va`, `va_sar_logic_10b_async.va`, `va_dac_10b_diff.va`, `va_bootstrap_sw.va`, `va_ldo_ideal.va`) or 4-bit tutorial models in [`../assets/va/`](../assets/va/), driven by [`../assets/tb/adc_top/`](../assets/tb/adc_top/README.md) (`tb_sar_adc_fft.scs` and `tb_sar_adc_ramp_dnl.scs`).
+- Build the complete loop using the 10-bit behavioral models (`va_cdac_10b_diff.va`, `va_cmp_dynamic.va`, `va_sar_logic_10b_async.va`, `va_dac_10b_diff.va`, `va_bootstrap_sw.va`) in [`../assets/va/behavioral_10b/`](../assets/va/README.md) or the 4-bit tutorial models in `../assets/va/tutorial_4b/`, driven by [`../assets/tb/adc_top/`](../assets/tb/adc_top/README.md) (`tb_sar_adc_fft.scs` and `tb_sar_adc_ramp_dnl.scs`).
 - Confirm architecture, polarities, bus ordering, coherent FFT setup, and near-ideal ENOB baseline ($6.02N + 1.76\text{ dB}$).
 
 ### Phase 2 — Standalone Per-Block Characterization
@@ -118,7 +118,7 @@ Run each block independently with its ready-to-run, process-independent Spectre 
 2. **Bootstrap switch** — [`../assets/tb/bootstrap/`](../assets/tb/bootstrap/README.md) (`tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py`): clocked $R_{\text{on}}(V_{\text{in}})$ sweep (precharging flying cap `CB` every cycle, flatness $< 10\%$), near-Nyquist coherent sine sampling into `CL` (THD below noise floor, typically $< -70\text{ dB}$ for 10+ bits), and `VGATE` droop/oxide-stress audit.
 3. **CDAC** — [`../assets/tb/cdac/`](../assets/tb/cdac/README.md) (`tb_cdac_static_dnl_inl.scs`, `tb_cdac_settling.scs`, `analyze_cdac.py`): full-code static sweep (DNL $< 0.5\text{ LSB}$, INL $< 1\text{ LSB}$, common-mode shift), worst-case MSB 0.5-LSB settling time, hold-mode feedthrough, and AC capacitance extraction.
 4. **SAR logic** — [`../assets/tb/sar_logic/`](../assets/tb/sar_logic/README.md) (`tb_sar_logic_timing.scs`, `analyze_sar_logic.py`): multi-frame closed-loop timing & metastability check with `va_cmp_dynamic.va` + `va_cdac_10b_diff.va` (exact $N$ `CMPCK` pulses, clean `EOC`/`NOR3` stop, $T_{\text{conv}} < (1 - D_{\text{samp}})/f_s$, positive `VALID_L`-vs-`EN` margin).
-5. **LDO (if used)** — [`../assets/tb/ldo/`](../assets/tb/ldo/README.md) (`tb_ldo_stb.scs`, `tb_ldo_psrr_noise.scs`, `tb_ldo_load_tran.scs`, `analyze_ldo.py`): `stb` phase margin ($\ge 45\text{–}60^\circ$), AC PSRR, integrated output noise, and fast load-step droop.
+5. **LDO (if used)** — use the canonical [`skills/ldo/`](../../ldo/assets/tb/README.md) suite (`tb_ldo_dc_reg_dropout.scs`, `tb_ldo_stb.scs`, `tb_ldo_psrr_zout_noise.scs`, `tb_ldo_load_line_tran.scs`, `analyze_ldo.py`): `stb` phase margin ($\ge 45\text{–}60^\circ$), AC PSRR & $|Z_{\text{out}}(f)|$, integrated output noise, and fast load-step droop.
 6. **Full SAR ADC top** — [`../assets/tb/adc_top/`](../assets/tb/adc_top/README.md) (`tb_sar_adc_fft.scs`, `tb_sar_adc_ramp_dnl.scs`, `analyze_adc_top.py`): coherent FFT (ENOB/SNDR/SFDR/THD) and overdriven ramp DNL/INL + usable full-swing check.
 
 ### Phase 3 — Incremental Transistor Replacement

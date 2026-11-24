@@ -1,0 +1,87 @@
+// Process-independent 10-bit Coherent Digital Sine & Two-Tone Code Generator
+//
+// Generates quantized 10-bit offset-binary digital codes [0..1023] on each
+// rising CLK edge for coherent dynamic DAC verification:
+//   - sig_mode = 0 : single-tone coherent sine at bin `m_bin / n_fft`
+//                    with amplitude `amp_fs` (relative to full scale)
+//   - sig_mode = 1 : two-tone coherent sum at bins `m_bin1 / n_fft` and
+//                    `m_bin2 / n_fft` (each at `0.5 * amp_fs`, i.e., ~ -6 dBFS
+//                    per tone so the summed waveform never digitally clips!)
+//
+// Drives DIN[9:0] (MSB-first in Spectre) and exact integer `CODE_MON`.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dac_sine_gen_10b(
+    input  electrical       CLK,
+    input  electrical       VSS,
+    output electrical [9:0] DIN,
+    output electrical       CODE_MON
+);
+
+parameter real    vdd      = 1.0  from (0:inf);
+parameter real    vth      = 0.5  from (0:inf);
+parameter integer sig_mode = 0    from [0:1];      // 0 = single-tone, 1 = two-tone IMD3
+parameter integer n_fft    = 256  from [16:65536];
+parameter integer m_bin    = 29   from [1:32767];  // single-tone coherent bin (odd prime)
+parameter integer m_bin1   = 59   from [1:32767];  // two-tone bin 1
+parameter integer m_bin2   = 61   from [1:32767];  // two-tone bin 2
+parameter real    amp_fs   = 0.98 from (0.01:1.0); // peak full-scale utilization
+parameter real    tr       = 20p  from (0:inf);
+
+integer idx, cur_code, tmp;
+integer bits[9:0];
+real ph1, ph2, x_norm, x_q;
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        idx = 0;
+        if (sig_mode == 0) begin
+            ph1    = 2.0 * `M_PI * m_bin * idx / n_fft;
+            x_norm = amp_fs * sin(ph1);
+        end else begin
+            ph1    = 2.0 * `M_PI * m_bin1 * idx / n_fft;
+            ph2    = 2.0 * `M_PI * m_bin2 * idx / n_fft;
+            x_norm = 0.5 * amp_fs * (sin(ph1) + sin(ph2));
+        end
+        x_q = floor(511.5 + 511.5 * x_norm + 0.5);
+        if (x_q < 0.0)    x_q = 0.0;
+        if (x_q > 1023.0) x_q = 1023.0;
+        cur_code = x_q;
+        tmp = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        idx = idx + 1;
+        if (sig_mode == 0) begin
+            ph1    = 2.0 * `M_PI * m_bin * idx / n_fft;
+            x_norm = amp_fs * sin(ph1);
+        end else begin
+            ph1    = 2.0 * `M_PI * m_bin1 * idx / n_fft;
+            ph2    = 2.0 * `M_PI * m_bin2 * idx / n_fft;
+            x_norm = 0.5 * amp_fs * (sin(ph1) + sin(ph2));
+        end
+        x_q = floor(511.5 + 511.5 * x_norm + 0.5);
+        if (x_q < 0.0)    x_q = 0.0;
+        if (x_q > 1023.0) x_q = 1023.0;
+        cur_code = x_q;
+        tmp = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+    end
+
+    for (k = 0; k <= 9; k = k + 1) begin
+        V(DIN[k], VSS) <+ transition(bits[k] * vdd, 0.0, tr, tr);
+    end
+    V(CODE_MON, VSS) <+ transition(cur_code, 0.0, tr, tr);
+end
+
+endmodule

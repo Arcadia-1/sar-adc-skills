@@ -1,0 +1,7 @@
+interface:
+  display_name: "DAC Design"
+  short_description: "Process-independent Current-Steering & R-2R DAC design, SFDR/IMD3/glitch & Spectre TBs"
+  default_prompt: "Use $dac-skill to size or verify a Current-Steering or R-2R DAC (INL yield, output impedance vs. SFDR/IMD3, glitch impulse, or Spectre testbenches)."
+
+policy:
+  allow_implicit_invocation: true

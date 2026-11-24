@@ -19,7 +19,7 @@ subckt dut_sar_logic CLKS DCMPP DCMPN CMPCK EOC \
     DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
     DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
     VDD VSS
-    // instantiate your transistor SAR logic (or wrap ../../va/va_sar_logic_10b_async.va)
+    // instantiate your transistor SAR logic (or wrap ../../va/behavioral_10b/va_sar_logic_10b_async.va)
 ends dut_sar_logic
 ```
 

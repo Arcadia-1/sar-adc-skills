@@ -21,7 +21,7 @@ global 0
 
 include "models_corner.scs"
 include "dut_subckt.scs"
-ahdl_include "../../va/va_code_ramp_10b.va"
+ahdl_include "../../va/behavioral_10b/va_code_ramp_10b.va"
 
 parameters \
     vdd=0.9 \

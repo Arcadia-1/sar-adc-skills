@@ -1,0 +1,65 @@
+// =============================================================================
+// Process-Independent R-2R DAC TB — Full-Scale & Major-Carry Settling
+// =============================================================================
+// Applies two step transitions to an 8-bit R-2R DAC driving `cload`:
+//   1. t = t_fs : full-scale step  0 (00000000) -> 255 (11111111)
+//   2. t = t_mc : major-carry step 127 (01111111) -> 128 (10000000)
+//      (prepared by dropping to 127 at t_prep)
+//
+// DUT interface contract:
+//   subckt dut_r2r_dac DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VREF VSS VOUT
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vref=1.0 \
+    vdd_dig=1.0 \
+    cload=1p \
+    t_fs=50n \
+    t_prep=250n \
+    t_mc=450n \
+    t_stop=650n \
+    tr=50p \
+    tf=50p \
+    temp_c=27
+
+VVREF (VREF 0) vsource dc=vref type=dc
+VGND  (VSS  0) vsource dc=0    type=dc
+
+// MSB bit DIN7: 0 -> 1 at t_fs, 1 -> 0 at t_prep (code 127), 0 -> 1 at t_mc (code 128)
+VMSB (DIN_MSB 0) vsource type=pwl wave=[ \
+    0            0 \
+    t_fs         0 \
+    (t_fs+tr)    vdd_dig \
+    t_prep       vdd_dig \
+    (t_prep+tf)  0 \
+    t_mc         0 \
+    (t_mc+tr)    vdd_dig \
+    t_stop       vdd_dig ]
+
+// Lower 7 bits DIN[6:0]: 0 -> 1 at t_fs (code 255), stay 1 at t_prep (code 127), 1 -> 0 at t_mc (code 128)
+VLOW (DIN_LOW 0) vsource type=pwl wave=[ \
+    0            0 \
+    t_fs         0 \
+    (t_fs+tr)    vdd_dig \
+    t_mc         vdd_dig \
+    (t_mc+tf)    0 \
+    t_stop       0 ]
+
+I0 (DIN_MSB DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW \
+    VREF VSS VOUT) dut_r2r_dac
+CL (VOUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=200p
+
+save VOUT DIN_MSB DIN_LOW
+saveOptions options save=selected

@@ -81,7 +81,7 @@ Use two matched bootstrap instances (one per differential input channel) sharing
 
 ## How to Verify a Bootstrap Switch
 
-> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/bootstrap/`](../assets/tb/bootstrap/README.md) (`tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py`) and the behavioral comparison model [`../assets/va/va_bootstrap_sw.va`](../assets/va/va_bootstrap_sw.va) (`mode=0` bootstrapped vs. `mode=1` plain NMOS).
+> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/bootstrap/`](../assets/tb/bootstrap/README.md) (`tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py`) and the behavioral comparison model [`va_bootstrap_sw.va`](../assets/va/behavioral_10b/va_bootstrap_sw.va) (`mode=0` bootstrapped vs. `mode=1` plain NMOS).
 
 ### 1. Differential Sampling Linearity (THD / SFDR — Primary Gate)
 

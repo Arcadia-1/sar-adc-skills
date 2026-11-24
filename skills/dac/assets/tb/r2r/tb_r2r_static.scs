@@ -1,0 +1,50 @@
+// =============================================================================
+// Process-Independent R-2R DAC TB — 256-Code Static Linearity (DNL / INL)
+// =============================================================================
+// Sweeps all 256 input codes (0..255) using `va_dac_ramp_gen_10b.va` and strobes
+// settled VOUT using `strobeoutput=strobeonly`.
+//
+// DUT interface contract (8-bit voltage-mode R-2R DAC):
+//   subckt dut_r2r_dac DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VREF VSS VOUT
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_ramp_gen_10b.va"
+
+parameters \
+    vref=1.0 \
+    vdd_dig=1.0 \
+    cload=1p \
+    ts=200n \
+    n_codes=256 \
+    tr=50p \
+    tf=50p \
+    temp_c=27
+
+VVREF (VREF 0) vsource dc=vref type=dc
+VGND  (VSS  0) vsource dc=0    type=dc
+
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_GEN (CLK VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_ramp_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig start_code=0 stop_code=(n_codes-1) step_size=1 tr=tr
+
+I0 (DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VREF VSS VOUT) dut_r2r_dac
+CL (VOUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=n_codes*ts errpreset=moderate \
+    strobeperiod=ts strobedelay=0.90*ts strobeoutput=strobeonly
+
+save VOUT CODE_MON
+saveOptions options save=selected
