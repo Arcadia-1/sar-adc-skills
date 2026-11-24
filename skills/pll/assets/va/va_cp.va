@@ -1,0 +1,53 @@
+// Process-independent behavioral Charge Pump (CP)
+//
+// Models:
+//   - Nominal charge-pump current i_cp with configurable Up/Down mismatch
+//       i_up = i_cp * (1 + 0.5*mismatch),  i_dn = i_cp * (1 - 0.5*mismatch)
+//   - Smooth rail compliance clamping near VDD and VSS (headroom v_comp)
+//   - Optional static DC leakage (i_leak) and bleed offset (i_offset, for Frac-N
+//     linearization studies)
+//   - Polarity: UP=VDD sources +i_up INTO IOUT (raises VCTRL)
+//               DN=VDD sinks  +i_dn FROM IOUT (lowers VCTRL)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_cp(
+    input  electrical UP,
+    input  electrical DN,
+    inout  electrical IOUT,
+    input  electrical VDD,
+    input  electrical VSS
+);
+
+parameter real vdd_nom  = 0.9   from (0:inf);
+parameter real i_cp     = 100u  from (0:inf);    // nominal charge-pump current [A]
+parameter real mismatch = 0.0   from (-0.5:0.5); // fractional (I_up - I_dn) / I_cp
+parameter real i_leak   = 0.0;                   // leakage current to VSS [A]
+parameter real i_offset = 0.0;                   // static offset/bleed current to VSS [A]
+parameter real v_comp   = 0.10  from (0:inf);    // compliance headroom from rails [V]
+parameter real r_out    = 1e9   from (0:inf);    // finite output resistance [ohm]
+
+real sw_up, sw_dn, comp_up, comp_dn;
+real i_up_eff, i_dn_eff, v_hi, v_lo;
+
+analog begin
+    // Smooth switch weight in [0, 1]
+    sw_up = 0.5 * (1.0 + tanh((V(UP, VSS) - 0.5 * vdd_nom) / (0.04 * vdd_nom)));
+    sw_dn = 0.5 * (1.0 + tanh((V(DN, VSS) - 0.5 * vdd_nom) / (0.04 * vdd_nom)));
+
+    // Smooth compliance roll-off when IOUT approaches VDD or VSS
+    v_hi    = V(VDD, IOUT);
+    v_lo    = V(IOUT, VSS);
+    comp_up = 0.5 * (1.0 + tanh((v_hi - 0.5 * v_comp) / (0.25 * v_comp)));
+    comp_dn = 0.5 * (1.0 + tanh((v_lo - 0.5 * v_comp) / (0.25 * v_comp)));
+
+    i_up_eff = i_cp * (1.0 + 0.5 * mismatch) * sw_up * comp_up;
+    i_dn_eff = i_cp * (1.0 - 0.5 * mismatch) * sw_dn * comp_dn;
+
+    // Positive I(IOUT, VSS) flows OUT of IOUT to VSS -> -i_up_eff charges IOUT upward
+    I(IOUT, VSS) <+ -i_up_eff + i_dn_eff + i_leak + i_offset
+                    + (V(IOUT, VSS) - 0.5 * vdd_nom) / r_out;
+end
+
+endmodule

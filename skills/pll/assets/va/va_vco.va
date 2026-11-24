@@ -1,0 +1,63 @@
+// Process-independent behavioral differential Voltage-Controlled Oscillator (VCO)
+//
+// Models:
+//   - Linear frequency tuning: f(Vctrl) = clamp(f0 + kvco * (Vctrl - vctrl0), f_min, f_max)
+//   - Exact phase accumulation via idtmod() with adaptive timestep bounding
+//   - Optional per-cycle Gaussian period jitter (jitter_rms) via $rdist_normal
+//   - Differential sinusoidal outputs OUTP / OUTN centered at vcm
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_vco(
+    input  electrical VCTRL,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real    f0            = 1.0e9  from (0:inf);   // center frequency at vctrl0 [Hz]
+parameter real    kvco          = 200e6;                 // VCO tuning gain [Hz/V]
+parameter real    vctrl0        = 0.45;                  // center control voltage [V]
+parameter real    f_min         = 50e6   from (0:inf);   // lower frequency clamp [Hz]
+parameter real    f_max         = 20e9   from (0:inf);   // upper frequency clamp [Hz]
+parameter real    vcm           = 0.45;                  // output common-mode voltage [V]
+parameter real    vamp          = 0.9    from (0:inf);   // peak-to-peak single-ended swing [V]
+parameter real    jitter_rms    = 0.0    from [0:inf);   // per-cycle RMS period jitter [s]
+parameter integer seed          = 1;
+parameter integer pts_per_cycle = 16     from [8:128];   // minimum tran points per VCO cycle
+
+real f_nom, f_eff, phase_norm, dt_jit;
+integer rng_seed;
+
+analog begin
+    @(initial_step) begin
+        rng_seed = seed;
+        dt_jit   = 0.0;
+    end
+
+    f_nom = f0 + kvco * (V(VCTRL) - vctrl0);
+    if (f_nom < f_min) f_nom = f_min;
+    if (f_nom > f_max) f_nom = f_max;
+
+    // Apply per-cycle period jitter perturbation cleanly
+    f_eff = f_nom / max(1.0 + f_nom * dt_jit, 0.2);
+
+    // Normalized phase in [0, 1)
+    phase_norm = idtmod(f_eff, 0.0, 1.0, 0.0);
+
+    // Update cycle jitter sample once per cycle at phase wrap
+    @(cross(phase_norm - 0.5, +1)) begin
+        if (jitter_rms > 0.0) begin
+            dt_jit = $rdist_normal(rng_seed, 0.0, jitter_rms);
+        end else begin
+            dt_jit = 0.0;
+        end
+    end
+
+    $bound_step(1.0 / (pts_per_cycle * f_eff));
+
+    V(OUTP) <+ vcm + 0.5 * vamp * sin(2.0 * `M_PI * phase_norm);
+    V(OUTN) <+ vcm - 0.5 * vamp * sin(2.0 * `M_PI * phase_norm);
+end
+
+endmodule

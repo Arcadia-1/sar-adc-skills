@@ -1,0 +1,52 @@
+// =============================================================================
+// Process-Independent Integer-N CP-PLL Testbench — Closed-Loop Lock Transient
+// =============================================================================
+// Verifies closed-loop frequency locking from an initial VCTRL offset using
+// either behavioral Verilog-A blocks, hybrid replacement, or full transistor DUT:
+//   - Settling time to within +/-0.1% of target f_out = N * f_ref
+//   - Locked frequency error [ppm]
+//   - Steady-state VCTRL ripple [mVpp] & narrowband FM reference spur estimate
+//
+// DUT interface contract (5-pin Integer-N PLL core):
+//   subckt dut_int_n_pll FREF OUTP OUTN VCTRL VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    f_ref=50M \
+    n_div=20 \
+    vctrl_init=0.25 \
+    t_stop=4u \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters \
+    t_ref=1/f_ref \
+    f_target=n_div*f_ref
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=tr fall=tf width=0.5*t_ref
+
+I0    (FREF OUTP OUTN VCTRL VDD VSS) dut_int_n_pll
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=f_target
+
+ic VCTRL=vctrl_init
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate
+
+save VCTRL F_INST T_PER OUTP
+saveOptions options save=selected

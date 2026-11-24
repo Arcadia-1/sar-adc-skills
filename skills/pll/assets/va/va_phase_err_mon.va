@@ -1,0 +1,50 @@
+// Process-independent instantaneous frequency and period monitor
+//
+// Measures rising-edge-to-rising-edge period on CLK_IN crossing vth:
+//   - T_PER  : instantaneous cycle period [s]
+//   - F_INST : scaled instantaneous frequency = freq_scale / T_PER
+//              (default freq_scale = 1e-9 -> 1.0 V == 1.0 GHz, avoiding
+//              Spectre's 1 GV voltage blowup guard on multi-GHz clocks!)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_phase_err_mon(
+    input  electrical CLK_IN,
+    output electrical F_INST,
+    output electrical T_PER
+);
+
+parameter real vth        = 0.45;
+parameter real f_init     = 1.0e9 from (0:inf);
+parameter real freq_scale = 1e-9  from (0:inf);  // 1e-9 => output F_INST in GHz [V = GHz]
+parameter real tr         = 10p   from (0:inf);
+
+integer started;
+real t_prev, t_per_val, f_inst_val;
+
+analog begin
+    @(initial_step) begin
+        started    = 0;
+        t_prev     = 0.0;
+        t_per_val  = 1.0 / f_init;
+        f_inst_val = f_init * freq_scale;
+    end
+
+    @(cross(V(CLK_IN) - vth, +1)) begin
+        if (started == 1) begin
+            if ($abstime > t_prev + 1e-15) begin
+                t_per_val  = $abstime - t_prev;
+                f_inst_val = freq_scale / t_per_val;
+            end
+        end else begin
+            started = 1;
+        end
+        t_prev = $abstime;
+    end
+
+    V(F_INST) <+ transition(f_inst_val, 0, tr, tr);
+    V(T_PER)  <+ transition(t_per_val,  0, tr, tr);
+end
+
+endmodule

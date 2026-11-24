@@ -1,0 +1,7 @@
+interface:
+  display_name: "PLL Design (Int-N / Frac-N / ADPLL)"
+  short_description: "Engineering guide and Spectre verification toolkit for Integer-N, Fractional-N, and All-Digital PLLs"
+  default_prompt: "Use $pll-skill to design, budget, simulate, or debug an Integer-N PLL, Fractional-N MASH PLL, or ADPLL."
+
+policy:
+  allow_implicit_invocation: true

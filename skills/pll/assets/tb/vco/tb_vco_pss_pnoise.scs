@@ -1,0 +1,54 @@
+// =============================================================================
+// Process-Independent VCO Testbench — Autonomous Oscillator PSS + PNOISE
+// =============================================================================
+// Measures in a single Spectre RF (+aps) run:
+//   - Exact free-running oscillation frequency f0 [Hz] and swing
+//   - Average DC supply power P_DC [mW]
+//   - Single-sideband PM phase noise L(df) [dBc/Hz] from 1 kHz to 100 MHz
+//   - VCO FoM = -L(df) + 20*log10(f0/df) - 10*log10(P_mW) [dBc/Hz]
+//   - Integrated RMS phase jitter [fs] over configurable offset band
+//
+// Run with Spectre `+aps` (required for `pnoisemethod=fullspectrum`).
+//
+// DUT interface contract:
+//   subckt dut_vco VCTRL OUTP OUTN VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vctrl=0.45 \
+    f_est=2.0G \
+    t_stab=30n \
+    harms=20 \
+    temp_c=27
+
+VSUP   (VDD 0)   vsource dc=vdd   type=dc
+VGND   (VSS 0)   vsource dc=0     type=dc
+VVCTRL (VCTRL 0) vsource dc=vctrl type=dc
+
+// Tiny startup kick pulse strictly inside t < 0.5 ns (zero during steady state)
+IKICK (OUTP OUTN) isource type=pulse val0=0 val1=200u delay=0 rise=10p fall=10p width=0.15n
+
+I0 (VCTRL OUTP OUTN VDD VSS) dut_vco
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Autonomous shooting PSS: supply differential oscillator nodes (OUTP OUTN)
+pss (OUTP OUTN) pss fund=f_est harms=harms errpreset=conservative \
+    tstab=t_stab autotstab=yes annotate=status
+
+// Relative single-sideband PM phase noise around fundamental (relharmnum=1)
+pnoise (OUTP OUTN) pnoise sweeptype=relative relharmnum=1 \
+    start=1k stop=100M dec=20 pnoisemethod=fullspectrum \
+    noisetype=timeaverage noiseout=[pm] annotate=status
+
+save OUTP OUTN VSUP:p
+saveOptions options save=selected

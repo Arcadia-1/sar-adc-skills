@@ -1,0 +1,59 @@
+// =============================================================================
+// Process-Independent PFD + Charge Pump Testbench — Phase-to-Charge Transfer
+// =============================================================================
+// Uses a slightly detuned two-clock beat sweep (`t_div = t_ref + dt_step`) to
+// sweep arrival-time offset Delta_t = t(FDIV) - t(FREF) linearly from
+// -dt_max through 0 to +dt_max in a single fast transient run!
+//
+// Extracts:
+//   - Q_out(Delta_t) and average CP current I_avg(Delta_t)
+//   - Linear phase-detector gain K_d = I_cp / (2*pi) [uA/rad]
+//   - Up/Down current mismatch (%) and zero-phase offset charge Q(0)
+//   - Dead-zone audit around Delta_t = 0
+//
+// DUT interface contract (5-pin PFD + Charge Pump combined block):
+//   subckt dut_pfd_cp FREF FDIV IOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vctrl_dc=0.45 \
+    t_ref=20n \
+    dt_step=100p \
+    n_half=20 \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+// FDIV starts at delay=0 with period t_ref+dt_step; FREF starts at delay=n_half*dt_step
+// with period t_ref. On cycle k: t(FDIV) - t(FREF) = (k - n_half) * dt_step!
+parameters \
+    n_cycles=2*n_half+1 \
+    t_stop=(n_cycles+1)*t_ref
+
+VSUP  (VDD 0)    vsource dc=vdd      type=dc
+VGND  (VSS 0)    vsource dc=0        type=dc
+// Hold IOUT at fixed DC compliance voltage; I_cp_out = -I(VMEAS:p)
+VMEAS (IOUT 0)   vsource dc=vctrl_dc type=dc
+
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=n_half*dt_step rise=tr fall=tf width=0.5*t_ref
+VFDIV (FDIV 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref+dt_step delay=0 rise=tr fall=tf width=0.5*t_ref
+
+I0 (FREF FDIV IOUT VDD VSS) dut_pfd_cp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=20p
+
+save FREF FDIV VMEAS:p
+saveOptions options save=selected

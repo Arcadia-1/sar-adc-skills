@@ -1,0 +1,45 @@
+// =============================================================================
+// Process-Independent ADPLL Testbench — Closed-Loop Lock & FTW Jitter Check
+// =============================================================================
+// Verifies closed-loop All-Digital PLL locking for:
+//   - Integer-N TDC-ADPLL (`va_tdc + va_dlf_pi + va_dco + va_div_int`)
+//   - Fractional-N TDC-ADPLL (`va_tdc + va_dlf_pi + va_dco + va_mmd_mash111`)
+//   - Bang-Bang ADPLL (`va_bbpd + va_dlf_pi + va_dco + va_div_int`)
+//
+// DUT interface contract (6-pin ADPLL exposing FTW and TDC_OUT monitors):
+//   subckt dut_adpll FREF OUTP OUTN FTW TDC_OUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    f_ref=50M \
+    t_stop=8u \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters t_ref=1/f_ref
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=tr fall=tf width=0.5*t_ref
+
+I0    (FREF OUTP OUTN FTW TDC_OUT VDD VSS) dut_adpll
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=1.0G
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate
+
+save FTW TDC_OUT F_INST OUTP
+saveOptions options save=selected
