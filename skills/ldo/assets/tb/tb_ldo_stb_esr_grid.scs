@@ -1,0 +1,77 @@
+// =============================================================================
+// Process-Independent LDO Testbench — 2D Load x ESR Stability Tunnel (`stb`)
+// =============================================================================
+// Executes a 9-point `alter` + `stb` (`iprobe`) stability matrix across:
+//   - 3 load currents : `iload_lo` (10 uA), `iload_mid` (1 mA), `iload_hi` (10 mA)
+//   - 3 output ESRs   : `esr_lo` (5 mOhm), `esr_mid` (200 mOhm), `esr_hi` (5 Ohm)
+//
+// Maps both the low-ESR boundary (ESR zero too high to cancel pass-gate pole)
+// and the high-ESR boundary (ESR zero too low, pushing UGF past internal pole)
+// to verify the full LDO ESR stability tunnel in one fast Spectre run.
+//
+// DUT interface contract (5-pin LDO exposing breakable FB_IN):
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    cload=2.2u \
+    iload_lo=10u \
+    iload_mid=1m \
+    iload_hi=10m \
+    esr_lo=5m \
+    esr_mid=200m \
+    esr_hi=5.0 \
+    iload=iload_lo \
+    resr=esr_lo \
+    temp_c=27
+
+VSUP  (VDD 0)      vsource dc=vdd_in type=dc
+VGND  (VSS 0)      vsource dc=0      type=dc
+VVREF (VREF 0)     vsource dc=vref   type=dc
+
+I0    (VDD VREF VOUT FB_IN VSS) dut_ldo
+IPRB  (VOUT FB_IN) iprobe
+
+ILOAD (VOUT VSS)    isource   dc=iload type=dc
+RESR  (VOUT V_CESR) resistor  r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Row 1: Light load (iload_lo) across low / nominal / high ESR
+stb_ilo_esrlo  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r1_m alter param=resr value=esr_mid
+stb_ilo_esrmid stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r1_h alter param=resr value=esr_hi
+stb_ilo_esrhi  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+
+// Row 2: Mid load (iload_mid) across low / nominal / high ESR
+alt_r2_i alter param=iload value=iload_mid
+alt_r2_l alter param=resr  value=esr_lo
+stb_imid_esrlo  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r2_m alter param=resr value=esr_mid
+stb_imid_esrmid stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r2_h alter param=resr value=esr_hi
+stb_imid_esrhi  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+
+// Row 3: Max load (iload_hi) across low / nominal / high ESR
+alt_r3_i alter param=iload value=iload_hi
+alt_r3_l alter param=resr  value=esr_lo
+stb_ihi_esrlo  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r3_m alter param=resr value=esr_mid
+stb_ihi_esrmid stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+alt_r3_h alter param=resr value=esr_hi
+stb_ihi_esrhi  stb start=1 stop=1G dec=20 probe=IPRB annotate=status
+
+save VOUT VSUP:p
+saveOptions options save=selected

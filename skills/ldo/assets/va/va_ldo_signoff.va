@@ -1,0 +1,207 @@
+// Process-independent industrial signoff PMOS-pass LDO macro-model
+//
+// Exposes active-high enable EN and breakable feedback pin FB_IN:
+//   - Closed-loop use  : tie FB_IN directly to VOUT
+//   - Stability (`stb`): connect `IPRB (VOUT FB_IN) iprobe`
+//   - 5-pin wrapper    : tie EN to VDD inside `subckt dut_ldo`
+//
+// Models:
+//   - Enable (EN) with smooth internal soft-start reference ramp (`t_ss`)
+//     and active output discharge switch (`r_disch`) when EN = 0
+//   - Two-stage VDD-referenced error amplifier (`a_ea`, `ro_ea`, `c_ea`, `f_p3`)
+//     with slew-current limiting (`i_ea_max`), optional Miller + nulling (`c_m`,
+//     `r_z`), split VDD/VSS gate-node capacitance for realistic midband PSRR,
+//     and white + 1/f noise (`vn_ea_th`, `vn_ea_1f`)
+//   - EKV-style PMOS pass device with load-dependent gm(I) and ro(I) parameterized
+//     by nominal `gm_pass` and `ro_pass` at `i_nom`, physical triode dropout
+//     resistance (`r_on_min`), and smooth foldback current limit (`i_lim`, `i_sc`)
+//   - Output temperature drift (`tc_vout`, `tc_vout2`), PTAT quiescent current
+//     with load-adaptive driver bias (`i_q`, `tc_iq`, `k_iq`), and exponential
+//     temperature-dependent shutdown leakage (`i_shdn`)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_ldo_signoff(
+    input  electrical VDD,
+    input  electrical VREF,
+    input  electrical EN,
+    output electrical VOUT,
+    input  electrical FB_IN,
+    input  electrical VSS
+);
+
+// Error amplifier & compensation parameters
+parameter real a_ea        = 100.0   from (1:inf);    // EA DC gain [V/V] (40 dB)
+parameter real ro_ea       = 100e3   from (0:inf);    // EA output resistance [ohm]
+parameter real c_ea        = 10.0p   from (0:inf);    // Pass-gate total capacitance [F]
+parameter real k_cgnd      = 0.30    from [0:1];      // Fraction of c_ea referenced to VSS
+parameter real f_p3        = 1.0e6   from (0:inf);    // EA internal non-dominant pole [Hz]
+parameter real i_ea_max    = 1.2e-6  from (0:inf);    // EA output slew-limit current [A]
+parameter real c_m         = 0.0     from [0:inf);    // Optional Miller cap [F]
+parameter real r_z         = 500.0   from [0:inf);    // Optional nulling resistor [ohm]
+parameter real vn_ea_th    = 20e-9   from [0:inf);    // EA white noise [V/sqrt(Hz)]
+parameter real vn_ea_1f    = 60e-9   from [0:inf);    // EA 1/f noise at 1 kHz [V/sqrt(Hz)]
+
+// PMOS pass device, dropout & foldback OCP parameters
+parameter real gm_pass     = 70e-3   from (0:inf);    // Nominal pass gm at i_nom [S]
+parameter real ro_pass     = 1200.0  from (0:inf);    // Nominal pass ro at i_nom [ohm]
+parameter real i_nom       = 10e-3   from (0:inf);    // Reference load for gm_pass/ro_pass [A]
+parameter real r_on_min    = 12.0    from (0:inf);    // Minimum triode Ron in dropout [ohm]
+parameter real vth_p       = 0.40    from (0:inf);    // PMOS pass threshold voltage [V]
+parameter real vsg0        = 0.48    from (0:inf);    // Quiescent PMOS Vsg bias [V]
+parameter real v_ekv       = 0.08    from (0:inf);    // EKV slope factor 2*n*Vt [V]
+parameter real r_fb        = 200e3   from (0:inf);    // Internal bleed / divider resistance [ohm]
+parameter real c_out_par   = 1.0n    from [0:inf);    // On-chip rail / pass-drain parasitic cap [F]
+parameter real i_lim       = 35e-3   from (0:inf);    // Peak over-current limit knee [A]
+parameter real i_sc        = 14e-3   from (0:inf);    // Foldback short-circuit current [A]
+parameter real v_fb_knee   = 0.85    from (0:inf);    // Foldback knee output voltage [V]
+
+// Enable, soft-start & active discharge parameters
+parameter real v_en_th     = 0.60    from (0:inf);    // Enable threshold [V]
+parameter real v_en_w      = 0.05    from (0:inf);    // Enable smooth transition half-width [V]
+parameter real t_ss        = 150e-6  from (0:inf);    // Soft-start reference ramp time [s]
+parameter real v_ref_nom   = 0.90    from (0:inf);    // Nominal VREF for soft-start slew [V]
+parameter real r_disch     = 25.0    from (0:inf);    // Active output discharge Ron when EN=0 [ohm]
+
+// Bias, temperature drift & shutdown leakage parameters
+parameter real i_q         = 30e-6   from [0:inf);    // Base active quiescent current [A]
+parameter real k_iq        = 5.0e-3  from [0:inf);    // Load-proportional driver bias [A/A]
+parameter real t0_c        = 27.0    from (-100:200); // Nominal reference temperature [C]
+parameter real tc_vout     = 15e-6   from (-1e-2:1e-2); // Linear VOUT tempco [1/C]
+parameter real tc_vout2    = -0.15e-6 from (-1e-4:1e-4); // Quadratic curvature [1/C^2]
+parameter real tc_iq       = 1.5e-3  from (-1e-2:1e-2); // Quiescent current PTAT slope [1/C]
+parameter real i_shdn      = 25e-9   from [0:inf);    // Shutdown leakage at 27 C [A]
+parameter real t_leak_tau  = 18.0    from (1:200);    // Arrhenius leakage e-folding temp [C]
+
+electrical vss_int, vea1, vg, vm_mid;
+
+real temp_c, dt_c, v_ref_t, iq_t_fac, leak_arg, i_leak_t;
+real en_eff, v_target, c_ss, i_ss_max, v_ss_err;
+real v_err, c_p3, gm_ea, i_ea_lin, i_ea_drive, c_ea_vdd, c_ea_gnd;
+real arg_lo, arg_hi, sp_lo, sp_hi;
+real i_spec, v_early, vsg_p, v_ov_norm, u_ekv, i_sat, vds_p, i_pmos_sat;
+real i_tri, i_pass_raw, v_out_pos, x_fb, arg_fb, sp_fb, fb_lin;
+real i_lim_eff, delta_lim, arg_lim, sp_lim, i_pass;
+real vdd_pos, vdd_en;
+
+analog begin
+    // 1. Temperature dependence
+    temp_c   = $temperature - `P_CELSIUS0;
+    dt_c     = temp_c - t0_c;
+    v_ref_t  = V(VREF, VSS) * (1.0 + tc_vout * dt_c + tc_vout2 * dt_c * dt_c);
+    iq_t_fac = 1.0 + tc_iq * dt_c;
+    if (iq_t_fac < 0.2) iq_t_fac = 0.2;
+    leak_arg = (temp_c - 27.0) / t_leak_tau;
+    if (leak_arg > 15.0)  leak_arg = 15.0;
+    if (leak_arg < -15.0) leak_arg = -15.0;
+    i_leak_t = i_shdn * exp(leak_arg);
+
+    // 2. Smooth enable & slew-limited soft-start reference ramp
+    en_eff   = 0.5 * (1.0 + tanh((V(EN, VSS) - v_en_th) / v_en_w));
+    v_target = en_eff * v_ref_t;
+    c_ss     = 1.0e-9;
+    i_ss_max = c_ss * (v_ref_nom / max(t_ss, 1.0e-9));
+    v_ss_err = v_target - V(vss_int, VSS);
+    I(vss_int, VSS) <+ c_ss * ddt(V(vss_int, VSS))
+                     - i_ss_max * tanh(v_ss_err / 0.015)
+                     + (1.0 - en_eff) * V(vss_int, VSS) / 1.0e3;
+
+    // 3. Error amplifier internal 3rd pole (f_p3) + 1 TOhm FB_IN bias path
+    I(FB_IN, VSS) <+ V(FB_IN, VSS) * 1.0e-12;
+    v_err = V(vss_int, VSS) - V(FB_IN, VSS);
+    c_p3  = 1.0 / (`M_TWO_PI * f_p3 * 1.0e3);
+    I(vea1, VSS) <+ (V(vea1, VSS) - v_err) / 1.0e3 + c_p3 * ddt(V(vea1, VSS));
+
+    // 4. VDD-referenced EA output stage with slew-current limit & split gate caps
+    //    Net OTA current is zero at DC steady state -> zero tanh compression across load!
+    gm_ea      = a_ea / ro_ea;
+    i_ea_lin   = gm_ea * V(vea1, VSS) + (V(vg, VDD) + en_eff * vsg0) / ro_ea;
+    i_ea_drive = en_eff * i_ea_max * tanh(i_ea_lin / i_ea_max);
+    c_ea_gnd   = k_cgnd * c_ea;
+    c_ea_vdd   = (1.0 - k_cgnd) * c_ea;
+
+    I(vg, VSS) <+ i_ea_drive
+                + c_ea_gnd * ddt(V(vg, VSS))
+                + en_eff * white_noise((gm_ea * vn_ea_th) * (gm_ea * vn_ea_th), "ldo_ea_th")
+                + en_eff * flicker_noise((gm_ea * vn_ea_1f) * (gm_ea * vn_ea_1f) * 1.0e3, 1.0, "ldo_ea_1f");
+    I(vg, VDD) <+ (V(vg, VDD) + en_eff * vsg0) * 1.0e-9
+                + c_ea_vdd * ddt(V(vg, VDD))
+                + (1.0 - en_eff) * V(vg, VDD) / 1.0e3;
+
+    // Smooth rail clamps keeping vg within [VSS, VDD]
+    arg_lo = (V(VSS) - V(vg)) / 0.02;
+    if (arg_lo > 30.0)      sp_lo = arg_lo;
+    else if (arg_lo < -30.0) sp_lo = exp(-30.0);
+    else                    sp_lo = ln(1.0 + exp(arg_lo));
+
+    arg_hi = (V(vg) - V(VDD)) / 0.02;
+    if (arg_hi > 30.0)      sp_hi = arg_hi;
+    else if (arg_hi < -30.0) sp_hi = exp(-30.0);
+    else                    sp_hi = ln(1.0 + exp(arg_hi));
+
+    I(vg, VSS) <+ -1.0e-2 * 0.02 * sp_lo;
+    I(vg, VDD) <+  1.0e-2 * 0.02 * sp_hi;
+
+    // Optional Miller compensation branch
+    if (c_m > 0.0) begin
+        if (r_z > 0.0) begin
+            I(vg, vm_mid)   <+ V(vg, vm_mid) / r_z;
+            I(vm_mid, VOUT) <+ c_m * ddt(V(vm_mid, VOUT));
+        end else begin
+            V(vm_mid, vg)   <+ 0.0;
+            I(vg, VOUT)     <+ c_m * ddt(V(vg, VOUT));
+        end
+    end else begin
+        V(vm_mid, VSS) <+ 0.0;
+    end
+
+    // 5. EKV PMOS pass device with triode dropout & smooth foldback OCP
+    i_spec    = (gm_pass * v_ekv) * (gm_pass * v_ekv) / (4.0 * i_nom);
+    v_early   = ro_pass * i_nom;
+    vsg_p     = V(VDD, vg);
+    v_ov_norm = (vsg_p - vth_p) / v_ekv;
+    if (v_ov_norm > 30.0)       u_ekv = v_ov_norm;
+    else if (v_ov_norm < -30.0) u_ekv = exp(-30.0);
+    else                        u_ekv = ln(1.0 + exp(v_ov_norm));
+
+    i_sat      = i_spec * u_ekv * u_ekv;
+    vds_p      = 0.5 * (V(VDD, VOUT) + sqrt(V(VDD, VOUT) * V(VDD, VOUT) + 1.0e-8));
+    i_pmos_sat = i_sat * (1.0 + vds_p / v_early);
+
+    // Physical triode dropout ceiling
+    i_tri      = vds_p / r_on_min + 1.0e-9;
+    i_pass_raw = i_tri * tanh(i_pmos_sat / i_tri);
+
+    // Smooth foldback current-limit profile: i_sc (VOUT=0) -> i_lim (VOUT >= v_fb_knee)
+    v_out_pos = 0.5 * (V(VOUT, VSS) + sqrt(V(VOUT, VSS) * V(VOUT, VSS) + 1.0e-6));
+    x_fb      = v_out_pos / v_fb_knee;
+    arg_fb    = (x_fb - 1.0) / 0.05;
+    if (arg_fb > 30.0)       sp_fb = arg_fb;
+    else if (arg_fb < -30.0) sp_fb = exp(-30.0);
+    else                     sp_fb = ln(1.0 + exp(arg_fb));
+    fb_lin    = x_fb - 0.05 * sp_fb + 0.05 * ln(1.0 + exp(-20.0));
+    if (fb_lin < 0.0) fb_lin = 0.0;
+
+    i_lim_eff = i_sc + (i_lim - i_sc) * fb_lin;
+    delta_lim = max(0.03 * i_lim_eff, 1.0e-6);
+    arg_lim   = (i_lim_eff - i_pass_raw) / delta_lim;
+    if (arg_lim > 30.0)       sp_lim = arg_lim;
+    else if (arg_lim < -30.0) sp_lim = exp(-30.0);
+    else                      sp_lim = ln(1.0 + exp(arg_lim));
+    i_pass    = en_eff * max(i_lim_eff - delta_lim * sp_lim, 0.0);
+
+    I(VDD, VOUT) <+ i_pass;
+
+    // 6. Output parasitic cap, internal bleed/divider, and active discharge when EN=0
+    I(VOUT, VSS) <+ V(VOUT, VSS) / r_fb
+                  + c_out_par * ddt(V(VOUT, VSS))
+                  + (1.0 - en_eff) * V(VOUT, VSS) / r_disch;
+
+    // 7. Quiescent bias current (active) + Arrhenius shutdown leakage
+    vdd_pos = 0.5 * (V(VDD, VSS) + sqrt(V(VDD, VSS) * V(VDD, VSS) + 1.0e-6));
+    vdd_en  = tanh(vdd_pos / 0.2);
+    I(VDD, VSS) <+ (en_eff * (i_q * iq_t_fac + k_iq * i_pass) + i_leak_t) * vdd_en;
+end
+
+endmodule

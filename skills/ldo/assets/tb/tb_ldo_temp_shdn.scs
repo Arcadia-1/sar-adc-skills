@@ -1,0 +1,56 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Temperature Drift, IQ(IL) & Shutdown
+// =============================================================================
+// Runs three DC signoff sweeps in one fast Spectre simulation:
+//   1. `dc_temp`      : Active temperature sweep (-40..125 C at nominal load)
+//                       -> `vout_27c_v`, box temperature coefficient [ppm/C].
+//   2. `dc_iq_load`   : Multi-decade active load sweep (10 uA .. 10 mA at 27 C)
+//                       -> `iq_light_ua`, `iq_full_ua`, light & full current
+//                       efficiency `eta_I = I_load / (I_load + I_q)`.
+//   3. `dc_shdn_temp` : Shutdown (`EN = 0`, `ILOAD = 0`) temperature sweep
+//                       (-40..125 C) -> `i_shdn_27c_na` & `i_shdn_125c_ua`.
+//
+// DUT interface contract (6-pin LDO with active-high EN and breakable FB_IN):
+//   subckt dut_ldo_en VDD VREF EN VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    v_en=1.2 \
+    iload=1m \
+    iload_min=10u \
+    iload_max=10m \
+    temp_c=27
+
+VSUP  (VDD  0) vsource dc=vdd_in type=dc
+VGND  (VSS  0) vsource dc=0      type=dc
+VVREF (VREF 0) vsource dc=vref   type=dc
+VEN   (EN   0) vsource dc=v_en   type=dc
+
+I0    (VDD VREF EN VOUT VOUT VSS) dut_ldo_en
+ILOAD (VOUT VSS) isource dc=iload type=dc
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Active output temperature drift (-40..125 C)
+dc_temp dc param=temp start=-40 stop=125 step=5
+
+// 2. Multi-decade quiescent current & efficiency sweep at 27 C
+dc_iq_load dc param=iload start=iload_min stop=iload_max dec=20
+
+// 3. Disabled (EN = 0) shutdown leakage across temperature (-40..125 C)
+alt_en0 alter param=v_en  value=0
+alt_il0 alter param=iload value=0
+dc_shdn_temp dc param=temp start=-40 stop=125 step=5
+
+save VOUT EN VSUP:p
+saveOptions options save=selected
