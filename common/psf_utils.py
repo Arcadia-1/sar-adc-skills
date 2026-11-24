@@ -553,7 +553,9 @@ def mixed_mode_s_params(
         raise KeyError(f"S-parameter s{i}{j} not found; available: {sorted(sp_data.keys())}")
 
     sdd11 = 0.5 * (get_s(in_p, in_p) - get_s(in_p, in_n) - get_s(in_n, in_p) + get_s(in_n, in_n))
-    out: dict[str, np.ndarray] = {"sdd11": sdd11}
+    scc11 = 0.5 * (get_s(in_p, in_p) + get_s(in_p, in_n) + get_s(in_n, in_p) + get_s(in_n, in_n))
+    scd11 = 0.5 * (get_s(in_p, in_p) - get_s(in_p, in_n) + get_s(in_n, in_p) - get_s(in_n, in_n))
+    out: dict[str, np.ndarray] = {"sdd11": sdd11, "scc11": scc11, "scd11": scd11}
     if out_p is not None and out_n is not None:
         sdd21 = 0.5 * (
             get_s(out_p, in_p) - get_s(out_p, in_n) - get_s(out_n, in_p) + get_s(out_n, in_n)
@@ -564,7 +566,11 @@ def mixed_mode_s_params(
         scd21 = 0.5 * (
             get_s(out_p, in_p) - get_s(out_p, in_n) + get_s(out_n, in_p) - get_s(out_n, in_n)
         )
+        sdc21 = 0.5 * (
+            get_s(out_p, in_p) + get_s(out_p, in_n) - get_s(out_n, in_p) - get_s(out_n, in_n)
+        )
         out["sdd21"] = sdd21
         out["scc21"] = scc21
         out["scd21"] = scd21
+        out["sdc21"] = sdc21
     return out

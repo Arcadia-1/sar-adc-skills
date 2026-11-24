@@ -1,0 +1,74 @@
+// =============================================================================
+// Process-Independent SerDes Channel TB — Touchstone .s4p nport Convolution
+// =============================================================================
+// Verifies a 4-port Touchstone `.s4p` channel model via Spectre X `nport`
+// (`interp=bbspice passivity=fit_enforce` — delay-extracting passive rational
+// Broadband SPICE macro-model; note legacy `interp=rational` lacks delay
+// extraction and can become ill-conditioned on electrically long channels!)
+// across simultaneous frequency-domain `sp` (10 MHz..20 GHz) and time-domain
+// transient convolution (1-UI isolated SBR + PRBS-7 eye):
+//   - Confirms exact SDD21 / SDD11 match against Touchstone table
+//   - Confirms causal convolution (small pre-cursor h_-2/h_-1 relative to h0)
+//   - Extracts SBR cursors (h_-1, h0, h1..h5, PDA eye) and PRBS-7 eye height/width
+//
+// Default channel: bundled analytically-generated passive causal Touchstone
+// `channel_synth_causal.s4p` (L = 0.15 m, Z_diff = 100 ohm, -9.7 dB @ 5 GHz).
+// Override `s4p_file` or swap `dut_nport_channel` to test any measured `.s4p`.
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    bit_rate=10G \
+    v_swing=1.6 \
+    v_cm=0.5 \
+    z0=50 \
+    t_rf=15p \
+    n_ui_eye=180 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui_eye*ui
+
+subckt dut_nport_channel (INP INN OUTP OUTN VSS)
+    NPORT0 (INP VSS INN VSS OUTP VSS OUTN VSS) nport \
+        file="channel_synth_causal.s4p" interp=bbspice passivity=fit_enforce
+ends dut_nport_channel
+
+VGND (VSS 0) vsource dc=0 type=dc
+VCLK (CLK 0) vsource type=pulse val0=0 val1=1.0 period=ui delay=0 rise=5p fall=5p width=0.5*ui
+
+// --- Replica 1: 4-port S-parameter extraction ---
+P1 (SP_INP  VSS) port r=z0 num=1 type=sine
+P2 (SP_INN  VSS) port r=z0 num=2 type=sine
+P3 (SP_OUTP VSS) port r=z0 num=3 type=sine
+P4 (SP_OUTN VSS) port r=z0 num=4 type=sine
+I_SP (SP_INP SP_INN SP_OUTP SP_OUTN VSS) dut_nport_channel
+
+// --- Replica 2: Isolated 1-UI pulse for SBR & causality check ---
+I_SBR_GEN (CLK VSS SBR_INP SBR_INN SBR_BIT) va_prbs_gen \
+    mode=2 pulse_idx=15 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CH_SBR  (SBR_INP SBR_INN SBR_OUTP SBR_OUTN VSS) dut_nport_channel
+RSBRP     (SBR_OUTP VSS) resistor r=z0
+RSBRN     (SBR_OUTN VSS) resistor r=z0
+
+// --- Replica 3: PRBS-7 folded 1-UI eye via nport rational convolution ---
+I_PRBS_GEN (CLK VSS EYE_INP EYE_INN EYE_BIT) va_prbs_gen \
+    mode=0 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CH_EYE   (EYE_INP EYE_INN EYE_OUTP EYE_OUTN VSS) dut_nport_channel
+REYEP      (EYE_OUTP VSS) resistor r=z0
+REYEN      (EYE_OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+sp   sp   ports=[P1 P2 P3 P4] start=10M stop=20G dec=40 annotate=status
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save SBR_OUTP SBR_OUTN EYE_INP EYE_INN EYE_OUTP EYE_OUTN
+saveOptions options save=selected

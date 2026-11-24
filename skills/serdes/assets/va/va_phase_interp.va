@@ -1,0 +1,80 @@
+// Process-independent Multi-Bit SerDes Phase Interpolator (PI) Model
+//
+// Mixes quadrature differential input clocks `(CKI_P, CKI_N)` (0 deg, sin(wt))
+// and `(CKQ_P, CKQ_N)` (-90 deg lagging, -cos(wt)) according to phase control
+// voltage `V(VCODE, VSS)` spanning `0 .. n_codes` over one full `2*pi` (1 UI)
+// cycle, generating a clean differential output clock `(CLKP, CLKN)`:
+//
+//   phi   = 2*pi * V(VCODE, VSS) / n_codes
+//   theta = phi + 2*pi * (inl_amp * sin(4*phi) + 0.5 * dnl_amp * cos(0.5*n_codes*phi))
+//   v_mix = cos(theta) * V(CKI_P, CKI_N) + sin(theta) * V(CKQ_P, CKQ_N)
+//         = A * sin(w*t - theta)
+//
+// Larger `VCODE` delays the output clock phase linearly by `1 / n_codes` UI per
+// code (with seamless continuous 2*pi wraparound for arbitrary CDR frequency
+// offset tracking). `inl_amp` [UI] injects realistic 4th-harmonic quadrant
+// bowing INL, and `dnl_amp` [UI] injects alternating odd/even step DNL.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_phase_interp(
+    input  electrical CKI_P,
+    input  electrical CKI_N,
+    input  electrical CKQ_P,
+    input  electrical CKQ_N,
+    input  electrical VCODE,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical CLKP,
+    output electrical CLKN
+);
+
+parameter real    vdd        = 1.0    from (0.2:5.0);
+parameter real    n_codes    = 64.0   from (4.0:4096.0); // PI codes per 2*pi (1 UI)
+parameter real    inl_amp    = 0.012  from [0.0:0.25);   // 4th-harmonic peak INL [UI] (0.012 UI = 12 mUI = 4.32 deg)
+parameter real    dnl_amp    = 0.002  from [0.0:0.25);   // alternating code DNL amplitude [UI]
+parameter real    rj_rms_ui  = 0.0    from [0.0:0.15);   // optional per-cycle Gaussian RJ [UI rms] (0 = deterministic)
+parameter integer noise_seed = 42;                       // RNG seed for optional RJ injection
+parameter real    v_lim      = 0.12   from (0.01:2.0);   // output limiter gain slope [V]
+parameter real    tau_out    = 4e-12  from (0.5e-12:inf);// output buffer smoothing RC time constant [s]
+parameter real    r_out      = 50.0   from (1.0:1e6);    // output drive impedance [ohm]
+
+electrical n_filt;
+integer seed;
+real phi, theta, v_i, v_q, v_mix, v_lim_out, rj_sample, rj_sm;
+
+analog begin
+    @(initial_step) begin
+        seed      = noise_seed;
+        rj_sample = 0.0;
+    end
+
+    @(cross(V(CKI_P, CKI_N), +1)) begin
+        if (rj_rms_ui > 0.0)
+            rj_sample = $rdist_normal(seed, 0.0, rj_rms_ui);
+        else
+            rj_sample = 0.0;
+    end
+
+    rj_sm = (rj_rms_ui > 0.0) ? transition(rj_sample, 0.0, 10e-12, 10e-12) : 0.0;
+
+    phi   = `M_TWO_PI * (V(VCODE, VSS) / n_codes + rj_sm);
+    theta = phi
+          + `M_TWO_PI * inl_amp * sin(4.0 * phi)
+          + `M_TWO_PI * 0.5 * dnl_amp * cos(0.5 * n_codes * phi);
+
+    v_i   = V(CKI_P, CKI_N);
+    v_q   = V(CKQ_P, CKQ_N);
+    v_mix = cos(theta) * v_i + sin(theta) * v_q;
+
+    // Smooth single-pole buffer before limiting prevents high-frequency numerical chatter
+    I(n_filt, VSS) <+ (V(n_filt, VSS) - v_mix) + tau_out * ddt(V(n_filt, VSS));
+
+    v_lim_out = 0.5 * vdd * tanh(V(n_filt, VSS) / v_lim);
+    I(CLKP, VSS) <+ (V(CLKP, VSS) - (0.5 * vdd + v_lim_out)) / r_out;
+    I(CLKN, VSS) <+ (V(CLKN, VSS) - (0.5 * vdd - v_lim_out)) / r_out;
+    I(VDD,  VSS) <+ 3.0e-3;
+end
+
+endmodule

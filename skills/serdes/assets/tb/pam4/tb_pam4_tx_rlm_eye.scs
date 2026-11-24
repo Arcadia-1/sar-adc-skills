@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent SerDes PAM4 TB — TX RLM, Level Symmetry & 3-Eye Opening
+// =============================================================================
+// Drives a 10 Gbaud (20 Gb/s) Gray-coded PRBS-7 PAM4 stream into `dut_pam4_tx`
+// terminated into a matched 100-ohm differential load (`50 ohm` per side) to
+// extract:
+//   - Exact 4 steady-state PAM4 levels (`V0, V1, V2, V3` [mV])
+//   - IEEE 802.3 Ratio of Level Mismatch `RLM = min(3*ES1, 3*ES2, 2-3*ES1, 2-3*ES2)`
+//     (target `RLM >= 0.95`)
+//   - Lower, Middle, and Upper PAM4 eye heights [mV] and eye widths [UI / ps]
+//   - Inner-level symmetry error
+//
+// DUT interface contract (7-pin PAM4 TX driver / FFE):
+//   subckt dut_pam4_tx INP INN CLK VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_pam4_gen.va"
+
+parameters \
+    vdd=1.0 \
+    baud_rate=10G \
+    v_in_swing=0.90 \
+    v_cm=0.50 \
+    z0=50 \
+    t_rf=10p \
+    n_sym=220 \
+    temp_c=27
+
+parameters \
+    ui=1/baud_rate \
+    t_stop=n_sym*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+VCLK_GEN (CLK_GEN 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0      rise=5p fall=5p width=0.5*ui
+VCLK_TX  (CLK_TX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.5*ui rise=5p fall=5p width=0.5*ui
+
+// Gray-coded PRBS-7 PAM4 generator (clean ideal input levels into TX)
+I_GEN (CLK_GEN VSS DINP DINN SYM_TX) va_pam4_gen \
+    mode=0 vth=0.5*vdd v_swing=v_in_swing v_cm=v_cm rlm_err=0.0 t_rf=t_rf r_src=1
+
+// PAM4 TX driver under test into matched 100-ohm differential load
+I_TX  (DINP DINN CLK_TX VDD VSS OUTP OUTN) dut_pam4_tx
+RLP   (OUTP VSS) resistor r=z0
+RLN   (OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=4p
+
+save OUTP OUTN SYM_TX
+saveOptions options save=selected

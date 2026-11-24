@@ -120,6 +120,66 @@
       "prompt": "How do I extract a high-speed SerDes slicer's input-referred RMS noise and BER = 1e-12 sensitivity from a Spectre transient-noise run?",
       "expected_output": "Should reference assets/tb/slicer_dfe/tb_slicer_noise_tran.scs, analyze_slicer_dfe.py noise_tran, and assets/va/va_slicer_cml.va: clock the slicer at fixed small overdrive vid_in for >= 300 cycles (with noiseruns=1 for transistor trannoise), invert P(decision=1) via probit Phi^-1 to compute sigma_n, and multiply by Q = 7.03 for BER = 1e-12 half-eye margin.",
       "files": ["assets/tb/slicer_dfe/tb_slicer_noise_tran.scs", "assets/va/va_slicer_cml.va", "references/simulation-and-verification.md"]
+    },
+    {
+      "id": 21,
+      "prompt": "Explain the 2x-oversampled Alexander Bang-Bang Phase Detector (BBPD) early/late truth table, how edge-sampler metastability creates a dead zone, and how to verify it in Spectre X.",
+      "expected_output": "Should explain rising-edge data sampling D[k] and falling-edge transition sampling E[k-1]: when D[k] != D[k-1], E[k-1] == D[k] indicates clock LATE (UP=1, advance clock), E[k-1] == D[k-1] indicates clock EARLY (DN=1, delay clock), and |V_edge| < v_meta produces UP=DN=0 (dead zone ~2*v_meta/(dV/dt)); reference assets/va/va_bbpd_serdes.va, assets/tb/cdr/tb_bbpd_transfer.scs, and analyze_cdr.py bbpd.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/va/va_bbpd_serdes.va", "assets/tb/cdr/tb_bbpd_transfer.scs"]
+    },
+    {
+      "id": 22,
+      "prompt": "How does a quadrature Phase Interpolator (PI) generate arbitrary phase delay across 2*pi, what causes 4th-harmonic INL, and how do I measure PI DNL/INL in Spectre X?",
+      "expected_output": "Should give V_mix = cos(theta)*V_I + sin(theta)*V_Q = A*sin(wt - theta) with V_I = sin(wt) and V_Q = -cos(wt) (using sinephase=-90 in Spectre transient!), note 4th-harmonic sin(4*phi) quadrant bowing INL and monotonicity requirement (DNL > -1 LSB), and point to assets/va/va_phase_interp.va, assets/tb/cdr/tb_pi_linearity.scs, and analyze_cdr.py pi.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/va/va_phase_interp.va", "assets/tb/cdr/tb_pi_linearity.scs"]
+    },
+    {
+      "id": 23,
+      "prompt": "Why does a Type-II 2nd-order PI-based digital CDR need two nested accumulators (unlike a VCO-based CDR), what sets its sinusoidal JTOL slew-rate limit, and how do I verify JTF/JTOL in Spectre X?",
+      "expected_output": "Should explain that a PI is a phase actuator (not a VCO frequency integrator), so Type-II tracking requires freq_acc[n] = freq_acc[n-1] + ki*err and phase_acc[n] = phase_acc[n-1] + kp*err + freq_acc[n], state max Bang-Bang phase slew rate D_T*kp/(N_codes*UI) vs. pi*f_sj*A_pp, and reference assets/va/va_cdr_loop.va, assets/tb/cdr/tb_cdr_jtol.scs, and analyze_cdr.py jtol.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/va/va_cdr_loop.va", "assets/tb/cdr/tb_cdr_jtol.scs"]
+    },
+    {
+      "id": 24,
+      "prompt": "Write the exact IEEE 802.3 PAM4 Ratio of Level Mismatch (RLM) equation and explain how to verify TX RLM >= 0.95 and 3-eye opening in Spectre X.",
+      "expected_output": "Should define V_mid = 0.5*(V0+V3), ES1 = (V1-V_mid)/(V0-V_mid), ES2 = (V2-V_mid)/(V3-V_mid), and RLM = min(3*ES1, 3*ES2, 2-3*ES1, 2-3*ES2) >= 0.95, explain Gray coding (00,01,11,10) -> (-3,-1,+1,+3), and point to assets/tb/pam4/tb_pam4_tx_rlm_eye.scs, assets/va/va_pam4_gen.va, assets/va/va_pam4_tx.va, and analyze_pam4.py tx_rlm.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/pam4/tb_pam4_tx_rlm_eye.scs", "assets/va/va_pam4_tx.va"]
+    },
+    {
+      "id": 25,
+      "prompt": "How does a 3-threshold PAM4 slicer + 1-tap PAM4 DFE cancel post-cursor ISI proportionally across all four levels, and how do I verify 3-eye opening and 0-SER/0-BER in Spectre X?",
+      "expected_output": "Should state slicing thresholds {-2/3*VREF, 0, +2/3*VREF}, proportional feedback s[k-1]*H1 with s in {-1, -1/3, +1/3, +1}, Gray decoding so adjacent symbol errors flip 1 bit, and point to assets/tb/pam4/tb_pam4_dfe_ber.scs, assets/va/va_pam4_dfe_slicer.va, and analyze_pam4.py dfe_ber.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/pam4/tb_pam4_dfe_ber.scs", "assets/va/va_pam4_dfe_slicer.va"]
+    },
+    {
+      "id": 26,
+      "prompt": "How do half-rate Duty-Cycle Distortion (DCD) and 90-degree I/Q skew degrade SerDes eye margin, and how do I verify orthogonal calibration and Dual-Dirac BER = 1e-12 bathtub eye width in Spectre X?",
+      "expected_output": "Should explain that DCD alternates wide/narrow UIs while I/Q skew offsets half-rate BBPD edge vs. data sampling, reference assets/va/va_clk_dcd_iq.va, assets/tb/clocking_jitter/tb_clk_dcd_iq_skew.scs (dcd_iq), and tb_tx_jitter_bathtub.scs (bathtub decomposing DCD, DDJ, SJ, ANOVA RJ_rms and TJ = DJ + 2*Q*RJ at BER=1e-12).",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/clocking_jitter/tb_clk_dcd_iq_skew.scs", "assets/tb/clocking_jitter/tb_tx_jitter_bathtub.scs"]
+    },
+    {
+      "id": 27,
+      "prompt": "How do I extract a StrongARM/CML slicer's regeneration time constant tau_regen and Setup/Hold timing margin in Spectre X, and why can an unbuffered SR latch cause huge hysteresis?",
+      "expected_output": "Should state t_ck2q(V_od) = t_0 + tau_regen*ln(V_ref/|V_od|), explain that connecting a NAND/NOR SR latch directly to regenerative nodes (LP, LN) causes state-dependent capacitance asymmetry/hysteresis (fixed by symmetric inverter isolation buffers + equalize switches), and reference assets/tb/slicer_dfe/tb_slicer_clk2q_setup_hold.scs and analyze_slicer_dfe.py clk2q_sh.",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/slicer_dfe/tb_slicer_clk2q_setup_hold.scs"]
+    },
+    {
+      "id": 28,
+      "prompt": "How do I measure CTLE large-signal P1dB [Vpp / dBm], HD3 [dBc], and SFDR [dB] accurately in Spectre X without spectral leakage or preset tolerance clamping?",
+      "expected_output": "Should reference assets/tb/ctle_vga/tb_ctle_linearity_p1db.scs and analyze_ctle_vga.py linearity: run a coherent amplitude sweep with outputstart for settling, strobedelay < strobeperiod, strobeoutput=strobeonly, extract_uniform_strobe(), and pass -preset_override to Spectre X +preset=cx so tight netlist reltol is honored.",
+      "files": ["references/cdr-pam4-and-clocking.md", "references/simulation-and-verification.md", "assets/tb/ctle_vga/tb_ctle_linearity_p1db.scs"]
+    },
+    {
+      "id": 29,
+      "prompt": "Why does Spectre X nport interp=rational often fail DC convergence on electrically long Touchstone .s4p channels, and how should I simulate and verify .s4p causality?",
+      "expected_output": "Should explain that legacy interp=rational lacks delay extraction and blows up above ~80 poles on long transmission-line delays, recommend interp=bbspice passivity=fit_enforce (delay-extracting Broadband SPICE rational macro-model) plus smooth low-frequency RL knee points to avoid CMI-2839, verify causality via SBR |h_-2|/h0 < 2%, and reference assets/tb/channel/tb_channel_nport_s4p.scs and channel_synth_causal.s4p.",
+      "files": ["references/cdr-pam4-and-clocking.md", "references/simulation-and-verification.md", "assets/tb/channel/tb_channel_nport_s4p.scs"]
+    },
+    {
+      "id": 30,
+      "prompt": "How do I quantify differential RX front-end mode conversion (SDD11, SCD11, SCD21, SDC21) under ESD/termination mismatch AND channel FEXT/NEXT crosstalk eye degradation in Spectre X?",
+      "expected_output": "Should point to assets/tb/tcoil/tb_rx_frontend_sdd11_scd21.scs (analyze_tcoil.py --mode rx_frontend extracting SDD11, SCD11, SCD21, SDC21) and assets/tb/channel/tb_channel_xtalk_fext_next.scs (analyze_channel.py xtalk comparing isolated vs. asynchronous PRBS-9 FEXT/NEXT victim eye loss, quiet-victim RMS/pp noise, and AC coupling dB).",
+      "files": ["references/cdr-pam4-and-clocking.md", "assets/tb/tcoil/tb_rx_frontend_sdd11_scd21.scs", "assets/tb/channel/tb_channel_xtalk_fext_next.scs"]
     }
   ]
 }

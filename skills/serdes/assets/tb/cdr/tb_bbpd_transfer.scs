@@ -1,0 +1,59 @@
+// =============================================================================
+// Process-Independent SerDes CDR TB — 2x-Oversampled Alexander BBPD Transfer
+// =============================================================================
+// Sweeps clock-to-data phase offset smoothly across [-0.46 UI, +0.47 UI] using
+// a vernier beat-frequency clock (`T_clk = 100.5 ps` vs. `10 Gb/s` alternating
+// `1010...` data with `UI = 100 ps`, `0.5 ps = 5 mUI` phase step per cycle):
+//   - Negative offset (clock EARLY): expects `DN = VDD, UP = 0` (`UP - DN = -1`)
+//   - Near zero (`|V_edge| < v_meta`): metastability dead zone (`UP = DN = 0`)
+//   - Positive offset (clock LATE) : expects `UP = VDD, DN = 0` (`UP - DN = +1`)
+//
+// DUT interface contract (9-pin 2x-oversampled BBPD):
+//   subckt dut_bbpd INP INN CLKP CLKN VDD VSS UP DN DOUT
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    v_swing=0.8 \
+    ui=100p \
+    t_rf_data=20p \
+    t_step=0.5p \
+    n_steps=190 \
+    temp_c=27
+
+parameters \
+    t_clk=ui+t_step \
+    t_stop=(n_steps+2)*t_clk
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Alternating 1010... NRZ data (100% transition density, transitions at 10p + k*100p)
+VINP (INP VSS) vsource type=pulse val0=(vcm_in-0.25*v_swing) val1=(vcm_in+0.25*v_swing) \
+    period=(2*ui) delay=0 rise=t_rf_data fall=t_rf_data width=(ui-t_rf_data)
+VINN (INN VSS) vsource type=pulse val0=(vcm_in+0.25*v_swing) val1=(vcm_in-0.25*v_swing) \
+    period=(2*ui) delay=0 rise=t_rf_data fall=t_rf_data width=(ui-t_rf_data)
+
+// Vernier clock: rising = data sample, falling = edge sample sweeping -45.75p..+48.75p
+VCLKP (CLKP VSS) vsource type=pulse val0=0 val1=vdd period=t_clk delay=12p \
+    rise=4p fall=4p width=(0.5*t_clk-4p)
+VCLKN (CLKN VSS) vsource type=pulse val0=vdd val1=0 period=t_clk delay=12p \
+    rise=4p fall=4p width=(0.5*t_clk-4p)
+
+I0 (INP INN CLKP CLKN VDD VSS UP DN DOUT) dut_bbpd
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=2p
+
+save INP INN CLKP CLKN UP DN DOUT
+saveOptions options save=selected

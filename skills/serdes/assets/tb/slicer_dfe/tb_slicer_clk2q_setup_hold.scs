@@ -1,0 +1,150 @@
+// =============================================================================
+// Process-Independent SerDes Slicer TB — Clk-to-Q, tau_regen & Setup/Hold Margin
+// =============================================================================
+// Characterizes dynamic slicer regeneration and aperture timing in one run:
+//   1. Overdrive sweep (`tran_od0..tran_od7`, v_od = 100 mV down to 0.5 mV):
+//      Initializes slicer to logic 0 on cycle 1 (`-100 mV`), applies `+v_od` on
+//      cycle 2, and extracts `t_ck2q(v_od)` plus exponential regeneration time
+//      constant `tau_regen = -d(t_ck2q)/d(ln(v_od))` [ps].
+//   2. Setup & Hold timing sweep (`tran_sh`, 21 pairs stepping +50 ps..-10 ps in
+//      3 ps increments): simultaneously probes setup lead time (`SU_OUTP/N`) and
+//      hold duration (`HD_OUTP/N`) using +/-50 mV overdrive transitions.
+//
+// Compatible with both CML/latched slicers (`va_slicer_cml.va`) and dynamic
+// StrongARM comparators (reset to 0 V diff when CLK = 0).
+//
+// DUT interface contract (7-pin clocked slicer):
+//   subckt dut_slicer INP INN CLK VDD VSS DOUTP DOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    v_init=100m \
+    v_od=100m \
+    v_sh=50m \
+    tclk=400p \
+    t_edge=2p \
+    temp_c=27
+
+parameters \
+    t_stop_od=1.75*tclk \
+    t_stop_sh=42.5*tclk \
+    vn_sh=-v_sh
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Rising edges at t = (k + 0.25)*tclk = 100p, 500p, 900p, ...
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd period=tclk delay=0.25*tclk \
+    rise=5p fall=5p width=0.5*tclk
+
+// --- 1. Overdrive Sweep Replica (Cycle 1 = -v_init, Cycle 2 = +v_od) ---
+VOD_P (OD_INP VSS) vsource type=pulse \
+    val0=(vcm_in-0.5*v_init) val1=(vcm_in+0.5*v_od) \
+    delay=(0.85*tclk) rise=5p fall=5p width=t_stop_sh period=(2*t_stop_sh)
+VOD_N (OD_INN VSS) vsource type=pulse \
+    val0=(vcm_in+0.5*v_init) val1=(vcm_in-0.5*v_od) \
+    delay=(0.85*tclk) rise=5p fall=5p width=t_stop_sh period=(2*t_stop_sh)
+I_OD (OD_INP OD_INN CLK VDD VSS OD_OUTP OD_OUTN) dut_slicer
+
+// --- 2. Setup Time Sweep Replica (21 pairs: dt = +50p down to -10p, step 3p) ---
+// Test rising edges at t_m = (2m + 1.25)*tclk = 500p, 1300p, 2100p, ..., 16500p
+VSU_D (SU_DIFF VSS) vsource type=pwl wave=[ \
+    0       vn_sh \
+    450p    vn_sh  452p    v_sh  680p  v_sh  682p  vn_sh \
+    1253p   vn_sh  1255p   v_sh  1480p v_sh  1482p vn_sh \
+    2056p   vn_sh  2058p   v_sh  2280p v_sh  2282p vn_sh \
+    2859p   vn_sh  2861p   v_sh  3080p v_sh  3082p vn_sh \
+    3662p   vn_sh  3664p   v_sh  3880p v_sh  3882p vn_sh \
+    4465p   vn_sh  4467p   v_sh  4680p v_sh  4682p vn_sh \
+    5268p   vn_sh  5270p   v_sh  5480p v_sh  5482p vn_sh \
+    6071p   vn_sh  6073p   v_sh  6280p v_sh  6282p vn_sh \
+    6874p   vn_sh  6876p   v_sh  7080p v_sh  7082p vn_sh \
+    7677p   vn_sh  7679p   v_sh  7880p v_sh  7882p vn_sh \
+    8480p   vn_sh  8482p   v_sh  8680p v_sh  8682p vn_sh \
+    9283p   vn_sh  9285p   v_sh  9480p v_sh  9482p vn_sh \
+    10086p  vn_sh  10088p  v_sh  10280p v_sh 10282p vn_sh \
+    10889p  vn_sh  10891p  v_sh  11080p v_sh 11082p vn_sh \
+    11692p  vn_sh  11694p  v_sh  11880p v_sh 11882p vn_sh \
+    12495p  vn_sh  12497p  v_sh  12680p v_sh 12682p vn_sh \
+    13298p  vn_sh  13300p  v_sh  13480p v_sh 13482p vn_sh \
+    14101p  vn_sh  14103p  v_sh  14280p v_sh 14282p vn_sh \
+    14904p  vn_sh  14906p  v_sh  15080p v_sh 15082p vn_sh \
+    15707p  vn_sh  15709p  v_sh  15880p v_sh 15882p vn_sh \
+    16510p  vn_sh  16512p  v_sh  16680p v_sh 16682p vn_sh \
+    t_stop_sh vn_sh ]
+VCM_SU (VCM_N VSS) vsource dc=vcm_in type=dc
+ESU_P  (SU_INP VCM_N SU_DIFF VSS) vcvs gain=0.5
+ESU_N  (SU_INN VCM_N SU_DIFF VSS) vcvs gain=-0.5
+I_SU   (SU_INP SU_INN CLK VDD VSS SU_OUTP SU_OUTN) dut_slicer
+
+// --- 3. Hold Time Sweep Replica (21 pairs: dt = +50p down to -10p, step 3p) ---
+// Rises to +v_sh 180p before each test CLK, drops back to -v_sh at t_m + dt_m
+VHD_D (HD_DIFF VSS) vsource type=pwl wave=[ \
+    0       vn_sh \
+    320p    vn_sh  322p    v_sh  550p   v_sh  552p   vn_sh \
+    1120p   vn_sh  1122p   v_sh  1347p  v_sh  1349p  vn_sh \
+    1920p   vn_sh  1922p   v_sh  2144p  v_sh  2146p  vn_sh \
+    2720p   vn_sh  2722p   v_sh  2941p  v_sh  2943p  vn_sh \
+    3520p   vn_sh  3522p   v_sh  3738p  v_sh  3740p  vn_sh \
+    4320p   vn_sh  4322p   v_sh  4535p  v_sh  4537p  vn_sh \
+    5120p   vn_sh  5122p   v_sh  5332p  v_sh  5334p  vn_sh \
+    5920p   vn_sh  5922p   v_sh  6129p  v_sh  6131p  vn_sh \
+    6720p   vn_sh  6722p   v_sh  6926p  v_sh  6928p  vn_sh \
+    7520p   vn_sh  7522p   v_sh  7723p  v_sh  7725p  vn_sh \
+    8320p   vn_sh  8322p   v_sh  8520p  v_sh  8522p  vn_sh \
+    9120p   vn_sh  9122p   v_sh  9317p  v_sh  9319p  vn_sh \
+    9920p   vn_sh  9922p   v_sh  10114p v_sh  10116p vn_sh \
+    10720p  vn_sh  10722p  v_sh  10911p v_sh  10913p vn_sh \
+    11520p  vn_sh  11522p  v_sh  11708p v_sh  11710p vn_sh \
+    12320p  vn_sh  12322p  v_sh  12505p v_sh  12507p vn_sh \
+    13120p  vn_sh  13122p  v_sh  13302p v_sh  13304p vn_sh \
+    13920p  vn_sh  13922p  v_sh  14099p v_sh  14101p vn_sh \
+    14720p  vn_sh  14722p  v_sh  14896p v_sh  14898p vn_sh \
+    15520p  vn_sh  15522p  v_sh  15693p v_sh  15695p vn_sh \
+    16320p  vn_sh  16322p  v_sh  16490p v_sh  16492p vn_sh \
+    t_stop_sh vn_sh ]
+EHD_P (HD_INP VCM_N HD_DIFF VSS) vcvs gain=0.5
+EHD_N (HD_INN VCM_N HD_DIFF VSS) vcvs gain=-0.5
+I_HD  (HD_INP HD_INN CLK VDD VSS HD_OUTP HD_OUTN) dut_slicer
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 8-point overdrive sweep: 100m, 50m, 20m, 10m, 5m, 2m, 1m, 0.5m
+tran_od0 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od1 alter param=v_od value=50m
+tran_od1 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od2 alter param=v_od value=20m
+tran_od2 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od3 alter param=v_od value=10m
+tran_od3 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od4 alter param=v_od value=5m
+tran_od4 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od5 alter param=v_od value=2m
+tran_od5 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od6 alter param=v_od value=1m
+tran_od6 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+alt_od7 alter param=v_od value=0.5m
+tran_od7 tran stop=t_stop_od errpreset=conservative maxstep=1p
+
+// Setup & Hold sweep across 21 timing steps (+50p..-10p, 3p step)
+tran_sh tran stop=t_stop_sh errpreset=conservative maxstep=1p
+
+save CLK OD_INP OD_INN OD_OUTP OD_OUTN SU_OUTP SU_OUTN HD_OUTP HD_OUTN
+saveOptions options save=selected

@@ -6,7 +6,9 @@
 //   - Dynamic decision hysteresis / memory `hysteresis_v` (shifts threshold by
 //     +/- 0.5*hysteresis_v opposing a bit flip from the previous decision!)
 //   - Per-cycle Gaussian input-referred RMS noise `vnoise_rms` (via $rdist_normal)
-//   - Finite clock-to-Q delay `t_ck2q` and smooth transition time `t_rf`
+//   - Finite clock-to-Q delay `t_ck2q`, optional overdrive-dependent regeneration
+//     time constant `tau_regen` (`t_ck2q_eff = t_ck2q + tau_regen*ln(vdd/|v_eff|)`)
+//     and pre-amp input aperture (`tau_in`, `t_int`) for Setup/Hold modeling.
 
 `include "constants.vams"
 `include "disciplines.vams"
@@ -27,31 +29,85 @@ parameter real    vos          = 0.0;                     // static input offset
 parameter real    hysteresis_v = 0.0    from [0:inf);     // total hysteresis window V_th,up - V_th,dn [V]
 parameter real    vnoise_rms   = 0.0    from [0:inf);     // input-referred RMS noise per cycle [Vrms]
 parameter integer noise_seed   = 12345;
-parameter real    t_ck2q       = 15e-12 from [0:inf);
+parameter real    t_ck2q       = 15e-12 from [0:inf);     // base clock-to-Q propagation delay [s]
+parameter real    tau_regen    = 0.0    from [0:inf);     // optional latch regeneration tau [s] (0 = fixed t_ck2q)
+parameter real    tau_in       = 0.0    from [0:inf);     // optional input pre-amp RC tau [s] (setup time)
+parameter real    t_int        = 0.0    from [0:inf);     // optional post-CLK integration aperture [s] (hold time)
 parameter real    t_rf         = 10e-12 from (1e-12:inf);
 
-integer seed, prev_bit, cur_bit;
-real v_eff, v_hys_shift, v_n;
+electrical n_in;
+integer seed, prev_bit, cur_bit, pend_bit;
+real v_eff, v_hys_shift, v_n, v_in_src, t_samp, t_fire, t_reg, v_abs;
 
 analog begin
     @(initial_step) begin
         seed     = noise_seed;
         prev_bit = 0;
         cur_bit  = 0;
+        pend_bit = 0;
+        t_samp   = -1.0;
+        t_fire   = -1.0;
     end
+
+    // Optional pre-amp input RC pole (models finite setup aperture when tau_in > 0)
+    if (tau_in > 0.0)
+        I(n_in, VSS) <+ (V(n_in, VSS) - V(INP, INN)) + tau_in * ddt(V(n_in, VSS));
+    else
+        V(n_in, VSS) <+ V(INP, INN);
 
     @(cross(V(CLK, VSS) - vth, +1)) begin
-        // Hysteresis opposes changing state: when prev_bit==0, need > +hys/2 to flip to 1;
-        // when prev_bit==1, need < -hys/2 to flip back to 0.
-        v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);
-        v_n         = (vnoise_rms > 0.0) ? $rdist_normal(seed, 0.0, vnoise_rms) : 0.0;
-        v_eff       = V(INP, INN) + vos + v_hys_shift + v_n;
-        cur_bit     = (v_eff >= 0.0) ? 1 : 0;
-        prev_bit    = cur_bit;
+        if (tau_regen <= 0.0 && t_int <= 0.0) begin
+            // Original exact fast path (100% backward-compatible)
+            v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);
+            v_n         = (vnoise_rms > 0.0) ? $rdist_normal(seed, 0.0, vnoise_rms) : 0.0;
+            v_eff       = V(n_in, VSS) + vos + v_hys_shift + v_n;
+            cur_bit     = (v_eff >= 0.0) ? 1 : 0;
+            prev_bit    = cur_bit;
+        end else if (t_int > 0.0) begin
+            // Schedule end-of-integration sampling instant (models finite hold window)
+            t_samp = $abstime + t_int;
+        end else begin
+            // Instantaneous sampling with overdrive-dependent regeneration delay
+            v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);
+            v_n         = (vnoise_rms > 0.0) ? $rdist_normal(seed, 0.0, vnoise_rms) : 0.0;
+            v_eff       = V(n_in, VSS) + vos + v_hys_shift + v_n;
+            pend_bit    = (v_eff >= 0.0) ? 1 : 0;
+            v_abs       = max(abs(v_eff), 1e-6);
+            t_reg       = tau_regen * ln(max(vdd / v_abs, 1.0));
+            if (t_reg > 12.0 * tau_regen) t_reg = 12.0 * tau_regen;
+            t_fire      = $abstime + t_ck2q + t_reg;
+        end
     end
 
-    V(DOUTP, VSS) <+ transition(cur_bit ? vdd : 0.0, t_ck2q, t_rf, t_rf);
-    V(DOUTN, VSS) <+ transition(cur_bit ? 0.0 : vdd, t_ck2q, t_rf, t_rf);
+    @(timer(t_samp)) begin
+        if (t_samp > 0.0) begin
+            v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);
+            v_n         = (vnoise_rms > 0.0) ? $rdist_normal(seed, 0.0, vnoise_rms) : 0.0;
+            v_eff       = V(n_in, VSS) + vos + v_hys_shift + v_n;
+            pend_bit    = (v_eff >= 0.0) ? 1 : 0;
+            v_abs       = max(abs(v_eff), 1e-6);
+            t_reg       = (tau_regen > 0.0) ? (tau_regen * ln(max(vdd / v_abs, 1.0))) : 0.0;
+            if (tau_regen > 0.0 && t_reg > 12.0 * tau_regen) t_reg = 12.0 * tau_regen;
+            t_fire      = $abstime + max(t_ck2q - t_int, 1e-12) + t_reg;
+            t_samp      = -1.0;
+        end
+    end
+
+    @(timer(t_fire)) begin
+        if (t_fire > 0.0) begin
+            cur_bit  = pend_bit;
+            prev_bit = cur_bit;
+            t_fire   = -1.0;
+        end
+    end
+
+    if (tau_regen <= 0.0 && t_int <= 0.0) begin
+        V(DOUTP, VSS) <+ transition(cur_bit ? vdd : 0.0, t_ck2q, t_rf, t_rf);
+        V(DOUTN, VSS) <+ transition(cur_bit ? 0.0 : vdd, t_ck2q, t_rf, t_rf);
+    end else begin
+        V(DOUTP, VSS) <+ transition(cur_bit ? vdd : 0.0, 0.0, t_rf, t_rf);
+        V(DOUTN, VSS) <+ transition(cur_bit ? 0.0 : vdd, 0.0, t_rf, t_rf);
+    end
     I(VDD, VSS)   <+ 1.0e-3;
 end
 

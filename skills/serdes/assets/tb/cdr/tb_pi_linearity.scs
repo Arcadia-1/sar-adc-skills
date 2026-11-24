@@ -1,0 +1,70 @@
+// =============================================================================
+// Process-Independent SerDes CDR TB — Multi-Bit Phase Interpolator Linearity
+// =============================================================================
+// Sweeps PI phase control `VCODE` across one full 2*pi cycle (codes 0..64,
+// 65 static dwell windows of 400 ps = 4 clock cycles each at 10 GHz) driven by
+// ideal quadrature clocks `(CKI_P/N, CKQ_P/N)`.
+//
+// Extracts:
+//   - Mean phase step size [mUI / deg / ps] vs. ideal 1/64 UI (15.625 mUI)
+//   - Differential Non-Linearity DNL [LSB / mUI / deg]
+//   - Integral Non-Linearity INL [LSB / mUI / deg]
+//   - Strict monotonicity check (`min_step_mui > 0`)
+//
+// DUT interface contract (9-pin Quadrature Phase Interpolator):
+//   subckt dut_pi CKI_P CKI_N CKQ_P CKQ_N VCODE VDD VSS CLKP CLKN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    f_clk=10G \
+    t_dwell=400p \
+    t_stop=26.2n \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Ideal 10 GHz quadrature differential reference clocks (CKI = sin, CKQ = -cos)
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=-90
+
+// 65-step static code staircase (codes 0..64, 400 ps dwell per code, 20 ps ramp)
+VCD (VCODE VSS) vsource type=pwl wave=[ \
+    0.00n  0  0.38n  0  0.40n  1  0.78n  1  0.80n  2  1.18n  2  1.20n  3  1.58n  3 \
+    1.60n  4  1.98n  4  2.00n  5  2.38n  5  2.40n  6  2.78n  6  2.80n  7  3.18n  7 \
+    3.20n  8  3.58n  8  3.60n  9  3.98n  9  4.00n 10  4.38n 10  4.40n 11  4.78n 11 \
+    4.80n 12  5.18n 12  5.20n 13  5.58n 13  5.60n 14  5.98n 14  6.00n 15  6.38n 15 \
+    6.40n 16  6.78n 16  6.80n 17  7.18n 17  7.20n 18  7.58n 18  7.60n 19  7.98n 19 \
+    8.00n 20  8.38n 20  8.40n 21  8.78n 21  8.80n 22  9.18n 22  9.20n 23  9.58n 23 \
+    9.60n 24  9.98n 24 10.00n 25 10.38n 25 10.40n 26 10.78n 26 10.80n 27 11.18n 27 \
+   11.20n 28 11.58n 28 11.60n 29 11.98n 29 12.00n 30 12.38n 30 12.40n 31 12.78n 31 \
+   12.80n 32 13.18n 32 13.20n 33 13.58n 33 13.60n 34 13.98n 34 14.00n 35 14.38n 35 \
+   14.40n 36 14.78n 36 14.80n 37 15.18n 37 15.20n 38 15.58n 38 15.60n 39 15.98n 39 \
+   16.00n 40 16.38n 40 16.40n 41 16.78n 41 16.80n 42 17.18n 42 17.20n 43 17.58n 43 \
+   17.60n 44 17.98n 44 18.00n 45 18.38n 45 18.40n 46 18.78n 46 18.80n 47 19.18n 47 \
+   19.20n 48 19.58n 48 19.60n 49 19.98n 49 20.00n 50 20.38n 50 20.40n 51 20.78n 51 \
+   20.80n 52 21.18n 52 21.20n 53 21.58n 53 21.60n 54 21.98n 54 22.00n 55 22.38n 55 \
+   22.40n 56 22.78n 56 22.80n 57 23.18n 57 23.20n 58 23.58n 58 23.60n 59 23.98n 59 \
+   24.00n 60 24.38n 60 24.40n 61 24.78n 61 24.80n 62 25.18n 62 25.20n 63 25.58n 63 \
+   25.60n 64 26.20n 64 ]
+
+I0 (CKI_P CKI_N CKQ_P CKQ_N VCODE VDD VSS CLKP CLKN) dut_pi
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=2p
+
+save CKI_P CKI_N VCODE CLKP CLKN
+saveOptions options save=selected

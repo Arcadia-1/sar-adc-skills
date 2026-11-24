@@ -1,0 +1,103 @@
+// Process-independent 3-Tap PAM4 TX FFE Driver Model
+//
+// Implements a 3-tap PAM4 Feed-Forward Equalizer (1 pre-cursor + main + 1 post-cursor)
+// with configurable RLM outer/inner-level nonlinearity, finite analog bandwidth,
+// and matched 50-ohm output termination + pad capacitance:
+//
+//   y[k] = w_pre * s[k] + w_main * s[k-1] + w_post1 * s[k-2]
+//   where s[k] in {-1, -1/3, +1/3, +1} (quantized from differential input vs. v_in_ref)
+//
+// RLM nonlinearity model:
+//   - rlm_err > 0 : cubic outer-level compression (CML/SST driver saturation),
+//                   yielding exact IEEE 802.3 RLM = 1 - rlm_err (with FFE off)
+//   - rlm_err < 0 : MSB/LSB DAC slice mismatch compressing inner levels,
+//                   yielding exact IEEE 802.3 RLM = 1 - |rlm_err|
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_pam4_tx(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real    vth      = 0.50   from (0:inf);     // CLK threshold [V]
+parameter real    v_in_ref = 0.45   from (0.01:5.0);  // input outer-level peak |INP-INN| [V]
+parameter real    v_swing  = 0.90   from (0.01:5.0);  // matched-load differential peak-to-peak swing [Vpp_diff]
+parameter real    v_cm     = 0.60;                    // output DC common-mode [V]
+parameter real    w_pre    = 0.0;                     // pre-cursor tap weight
+parameter real    w_main   = 1.0;                     // main cursor tap weight
+parameter real    w_post1  = 0.0;                     // 1st post-cursor tap weight
+parameter integer norm_l1  = 1      from [0:1];       // 1 = enforce sum(|w_k|) = 1 peak-power constraint
+parameter real    rlm_err  = 0.015  from (-0.35:0.35);// RLM mismatch (0.015 -> RLM = 0.985)
+parameter real    f_bw     = 18.0e9 from (1e7:1e12);  // TX analog driver -3 dB bandwidth [Hz]
+parameter real    r_term   = 50.0   from (1.0:1e6);   // single-ended TX termination [ohm]
+parameter real    c_pad    = 60e-15 from [0:inf);     // output ESD/pad capacitance [F]
+parameter real    t_rf     = 10e-12 from (1e-12:inf); // internal DAC transition time [s]
+
+electrical n_bw;
+real s0, s1, s2, w_sum, wn_pre, wn_main, wn_p1;
+real v_in, y_eq, y_nl, y_sm, alpha, beta, tau_bw, vp_drv, vn_drv;
+
+analog begin
+    @(initial_step) begin
+        s0 = -1.0;
+        s1 = -1.0;
+        s2 = -1.0;
+        w_sum = abs(w_pre) + abs(w_main) + abs(w_post1);
+        if (norm_l1 == 1 && w_sum > 1e-12) begin
+            wn_pre  = w_pre   / w_sum;
+            wn_main = w_main  / w_sum;
+            wn_p1   = w_post1 / w_sum;
+        end else begin
+            wn_pre  = w_pre;
+            wn_main = w_main;
+            wn_p1   = w_post1;
+        end
+        y_eq = wn_pre * s0 + wn_main * s1 + wn_p1 * s2;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        s2 = s1;
+        s1 = s0;
+        v_in = V(INP, INN);
+        if (v_in < -(2.0 / 3.0) * v_in_ref)
+            s0 = -1.0;
+        else if (v_in < 0.0)
+            s0 = -(1.0 / 3.0);
+        else if (v_in < (2.0 / 3.0) * v_in_ref)
+            s0 =  (1.0 / 3.0);
+        else
+            s0 =  1.0;
+
+        y_eq = wn_pre * s0 + wn_main * s1 + wn_p1 * s2;
+    end
+
+    // Apply physical 3rd-order RLM nonlinearity
+    if (rlm_err >= 0.0) begin
+        alpha = (9.0 * rlm_err) / (8.0 + 9.0 * rlm_err);
+        y_nl  = y_eq * (1.0 - alpha * y_eq * y_eq);
+    end else begin
+        beta  = (9.0 * (-rlm_err)) / 8.0;
+        y_nl  = y_eq * (1.0 - beta * (1.0 - y_eq * y_eq));
+    end
+
+    y_sm   = transition(y_nl, 0.0, t_rf, t_rf);
+    tau_bw = 1.0 / (`M_TWO_PI * f_bw);
+    I(n_bw, VSS) <+ (V(n_bw, VSS) - y_sm) + tau_bw * ddt(V(n_bw, VSS));
+
+    // Open-circuit +/-0.5*v_swing per side delivers v_swing Vpp_diff into matched 100-ohm load
+    vp_drv = v_cm + 0.5 * v_swing * V(n_bw, VSS);
+    vn_drv = v_cm - 0.5 * v_swing * V(n_bw, VSS);
+
+    I(OUTP, VSS) <+ (V(OUTP, VSS) - vp_drv) / r_term + c_pad * ddt(V(OUTP, VSS));
+    I(OUTN, VSS) <+ (V(OUTN, VSS) - vn_drv) / r_term + c_pad * ddt(V(OUTN, VSS));
+    I(VDD,  VSS) <+ 12e-3;
+end
+
+endmodule

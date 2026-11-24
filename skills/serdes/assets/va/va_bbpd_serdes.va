@@ -1,0 +1,95 @@
+// Process-independent 2x-Oversampled Alexander (Bang-Bang) Phase Detector
+//
+// Full-rate 2x-oversampled SerDes BBPD sampling differential NRZ input
+// `(INP, INN)` on both edges of differential recovered clock `(CLKP, CLKN)`:
+//   - Rising edge of `V(CLKP, CLKN)` : Data sample `D[k]` (eye center)
+//   - Falling edge of `V(CLKP, CLKN)`: Edge sample `E[k-1]` (0.5 UI prior, bit transition)
+//
+// Alexander phase logic evaluated on each data-clock rising edge (when `D[k] != D[k-1]`):
+//   - Clock LATE  (`E[k-1] == D[k]`  ): `UP = vdd, DN = 0` (advance / speed up clock)
+//   - Clock EARLY (`E[k-1] == D[k-1]`): `UP = 0,   DN = vdd` (retard / delay clock)
+//   - No transition (`D[k] == D[k-1]`) or edge sample inside metastability
+//     aperture (`|V_edge| < v_meta`): `UP = 0, DN = 0` (hold / dead zone)
+//
+// Also outputs retimed single-ended data `DOUT` for live BER verification.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bbpd_serdes(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLKP,
+    input  electrical CLKN,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical UP,
+    output electrical DN,
+    output electrical DOUT
+);
+
+parameter real vdd    = 1.0    from (0.2:5.0);
+parameter real v_meta = 20e-3  from [0:inf);    // edge-sampler metastability aperture [V]
+parameter real vos_d  = 0.0;                    // data-sampler input offset [V]
+parameter real vos_e  = 0.0;                    // edge-sampler input offset [V]
+parameter real t_ck2q = 10e-12 from [0:inf);    // phase-detector logic delay [s]
+parameter real t_rf   = 8e-12  from (1e-12:inf);// output edge transition time [s]
+
+integer d_prev, d_cur, e_prev, e_valid, up_st, dn_st, init_done;
+real v_d, v_e;
+
+analog begin
+    @(initial_step) begin
+        d_prev    = -1;
+        d_cur     = -1;
+        e_prev    = 0;
+        e_valid   = 0;
+        up_st     = 0;
+        dn_st     = 0;
+        init_done = 0;
+    end
+
+    // Edge sampler: falling edge of (CLKP - CLKN) sits 0.5 UI away from data edge
+    @(cross(V(CLKP, CLKN), -1)) begin
+        v_e = V(INP, INN) + vos_e;
+        if (abs(v_e) < v_meta) begin
+            e_prev  = 0;
+            e_valid = 0;
+        end else begin
+            e_prev  = (v_e >= 0.0) ? 1 : -1;
+            e_valid = 1;
+        end
+    end
+
+    // Data sampler + Alexander UP/DN decision: rising edge of (CLKP - CLKN)
+    @(cross(V(CLKP, CLKN), +1)) begin
+        v_d   = V(INP, INN) + vos_d;
+        d_cur = (v_d >= 0.0) ? 1 : -1;
+
+        if (init_done == 1 && d_cur != d_prev && e_valid == 1) begin
+            if (e_prev == d_cur) begin
+                // Clock arrived LATE relative to data transition -> assert UP (advance)
+                up_st = 1;
+                dn_st = 0;
+            end else begin
+                // Clock arrived EARLY relative to data transition -> assert DN (delay)
+                up_st = 0;
+                dn_st = 1;
+            end
+        end else begin
+            up_st = 0;
+            dn_st = 0;
+        end
+
+        d_prev    = d_cur;
+        e_valid   = 0;
+        init_done = 1;
+    end
+
+    V(UP,   VSS) <+ transition(up_st ? vdd : 0.0, t_ck2q, t_rf, t_rf);
+    V(DN,   VSS) <+ transition(dn_st ? vdd : 0.0, t_ck2q, t_rf, t_rf);
+    V(DOUT, VSS) <+ transition((d_cur > 0) ? vdd : 0.0, t_ck2q, t_rf, t_rf);
+    I(VDD,  VSS) <+ 1.5e-3;
+end
+
+endmodule

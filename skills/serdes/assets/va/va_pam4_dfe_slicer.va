@@ -1,0 +1,97 @@
+// Process-independent 3-Threshold PAM4 Slicer + 1-Tap PAM4 DFE + Gray Decoder
+//
+// Implements a closed-loop 1-tap PAM4 DFE summer feeding three parallel slicers
+// with thresholds at `-2/3 * VREF`, `0`, and `+2/3 * VREF`, followed by exact
+// IEEE 802.3 Gray decoding:
+//
+//   V(SUMP, SUMN) = V(INP, INN) - s[k-1] * V(H1, VSS)
+//
+//   V_sum < -2/3 * VREF          -> sym = 0, s = -1.0,  (MSB, LSB) = (0, 0)
+//   -2/3 * VREF <= V_sum < 0     -> sym = 1, s = -1/3,  (MSB, LSB) = (0, 1)
+//   0 <= V_sum < +2/3 * VREF     -> sym = 2, s = +1/3,  (MSB, LSB) = (1, 1)
+//   V_sum >= +2/3 * VREF         -> sym = 3, s = +1.0,  (MSB, LSB) = (1, 0)
+//
+// Setting `V(VREF)` to the received outer-level peak (`|V_3 - V_0| / 2`, i.e., `h0`)
+// and `V(H1)` to the 1st post-cursor weight (`h1` per unit outer symbol) cancels
+// post-cursor ISI proportionally across all 4 PAM4 levels.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_pam4_dfe_slicer(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical H1,
+    input  electrical VREF,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical SUMP,
+    output electrical SUMN,
+    output electrical SYM_OUT,
+    output electrical MSB_OUT,
+    output electrical LSB_OUT
+);
+
+parameter real vdd        = 1.0    from (0.2:5.0);
+parameter real vth        = 0.50   from (0:inf);     // CLK threshold [V]
+parameter real vos_lo     = 0.0;                     // lower slicer (-2/3) offset [V]
+parameter real vos_mid    = 0.0;                     // middle slicer (0) offset [V]
+parameter real vos_hi     = 0.0;                     // upper slicer (+2/3) offset [V]
+parameter real t_fb_delay = 14e-12 from [0:inf);     // 1-UI critical-path feedback delay [s]
+parameter real t_rf       = 8e-12  from (1e-12:inf); // output transition time [s]
+
+integer sym_idx, msb_b, lsb_b;
+real v_s, v_r, th_lo, th_hi, s_prev, v_fb, v_fb_sm;
+
+analog begin
+    @(initial_step) begin
+        sym_idx = 0;
+        msb_b   = 0;
+        lsb_b   = 0;
+        s_prev  = -1.0;
+        v_fb    = 0.0;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        v_s   = V(SUMP, SUMN);
+        v_r   = max(V(VREF, VSS), 1e-3);
+        th_lo = -(2.0 / 3.0) * v_r + vos_lo;
+        th_hi =  (2.0 / 3.0) * v_r + vos_hi;
+
+        if (v_s < th_lo) begin
+            sym_idx = 0;
+            s_prev  = -1.0;
+            msb_b   = 0;
+            lsb_b   = 0;
+        end else if (v_s < vos_mid) begin
+            sym_idx = 1;
+            s_prev  = -(1.0 / 3.0);
+            msb_b   = 0;
+            lsb_b   = 1;
+        end else if (v_s < th_hi) begin
+            sym_idx = 2;
+            s_prev  =  (1.0 / 3.0);
+            msb_b   = 1;
+            lsb_b   = 1;
+        end else begin
+            sym_idx = 3;
+            s_prev  =  1.0;
+            msb_b   = 1;
+            lsb_b   = 0;
+        end
+
+        v_fb = s_prev * V(H1, VSS);
+    end
+
+    v_fb_sm = transition(v_fb, t_fb_delay, t_rf, t_rf);
+
+    V(SUMP,    VSS) <+ V(INP, VSS) - 0.5 * v_fb_sm;
+    V(SUMN,    VSS) <+ V(INN, VSS) + 0.5 * v_fb_sm;
+    V(SYM_OUT, VSS) <+ transition(1.0 * sym_idx, t_fb_delay, t_rf, t_rf);
+    V(MSB_OUT, VSS) <+ transition(msb_b ? vdd : 0.0, t_fb_delay, t_rf, t_rf);
+    V(LSB_OUT, VSS) <+ transition(lsb_b ? vdd : 0.0, t_fb_delay, t_rf, t_rf);
+    I(VDD,     VSS) <+ 3.0e-3;
+end
+
+endmodule

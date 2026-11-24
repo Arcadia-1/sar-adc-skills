@@ -1,0 +1,75 @@
+// Process-independent Half-Rate / Quarter-Rate SerDes Clock Distribution Model
+//
+// Takes quadrature differential input clocks `(CKI_P, CKI_N)` (0 deg, sin(wt))
+// and `(CKQ_P, CKQ_N)` (-90 deg lagging, -cos(wt)) and generates four-phase
+// output clocks `(CK0, CK90, CK180, CK270)` with independently injectable and
+// calibratable Duty-Cycle Distortion (DCD) and 90-degree I/Q phase skew:
+//
+//   dcd_eff [%]    = dcd_pct     - k_dcd_cal * V(VDCD_CAL, VSS)
+//   iq_eff  [deg]  = iq_skew_deg - k_iq_cal  * V(VIQ_CAL,  VSS)
+//
+// Physics:
+//   - I/Q phase skew rotates the Q branch by `iq_eff` via exact orthogonal mixing
+//     `v_q_rot = cos(dphi)*v_q - sin(dphi)*v_i = A * sin(w*t - pi/2 - dphi)`.
+//   - DCD injects an exact slicing threshold offset `dv = v_in_amp * sin(pi*dcd_eff/100)`
+//     shifting duty cycle of all four phases to `50% + dcd_eff%` without coupling
+//     into the rising-edge I/Q spacing (orthogonally calibratable!).
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_clk_dcd_iq(
+    input  electrical CKI_P,
+    input  electrical CKI_N,
+    input  electrical CKQ_P,
+    input  electrical CKQ_N,
+    input  electrical VDCD_CAL,
+    input  electrical VIQ_CAL,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical CK0,
+    output electrical CK90,
+    output electrical CK180,
+    output electrical CK270
+);
+
+parameter real vdd         = 1.0    from (0.2:5.0);
+parameter real v_in_amp    = 1.0    from (0.05:5.0);   // peak differential amplitude of CKI/CKQ sine inputs [V]
+parameter real dcd_pct     = 5.0    from (-25.0:25.0); // injected duty-cycle distortion [% away from 50%]
+parameter real iq_skew_deg = 6.0    from (-45.0:45.0); // injected I/Q quadrature phase error [deg]
+parameter real k_dcd_cal   = 10.0   from (0.1:200.0);  // DCD calibration gain [% / V] on VDCD_CAL
+parameter real k_iq_cal    = 12.0   from (0.1:360.0);  // I/Q calibration gain [deg / V] on VIQ_CAL
+parameter real v_lim       = 0.08   from (0.01:2.0);   // buffer limiting threshold [V]
+parameter real tau_out     = 3e-12  from (0.5e-12:inf);// output buffer rise/fall pole [s]
+parameter real r_out       = 50.0   from (1.0:1e6);    // output drive impedance [ohm]
+
+electrical n_i, n_q;
+real dcd_eff, iq_eff, dphi, dv_dcd, v_i, v_q, v_q_rot, yi, yq;
+
+analog begin
+    dcd_eff = dcd_pct - k_dcd_cal * V(VDCD_CAL, VSS);
+    if (dcd_eff >  30.0) dcd_eff =  30.0;
+    if (dcd_eff < -30.0) dcd_eff = -30.0;
+
+    iq_eff  = iq_skew_deg - k_iq_cal * V(VIQ_CAL, VSS);
+    dphi    = iq_eff * (`M_PI / 180.0);
+    dv_dcd  = v_in_amp * sin(`M_PI * dcd_eff / 100.0);
+
+    v_i     = V(CKI_P, CKI_N);
+    v_q     = V(CKQ_P, CKQ_N);
+    v_q_rot = cos(dphi) * v_q - sin(dphi) * v_i;
+
+    yi = 0.5 * vdd * tanh((v_i + dv_dcd) / v_lim);
+    yq = 0.5 * vdd * tanh((v_q_rot + dv_dcd) / v_lim);
+
+    I(n_i, VSS) <+ (V(n_i, VSS) - yi) + tau_out * ddt(V(n_i, VSS));
+    I(n_q, VSS) <+ (V(n_q, VSS) - yq) + tau_out * ddt(V(n_q, VSS));
+
+    I(CK0,   VSS) <+ (V(CK0,   VSS) - (0.5 * vdd + V(n_i, VSS))) / r_out;
+    I(CK180, VSS) <+ (V(CK180, VSS) - (0.5 * vdd - V(n_i, VSS))) / r_out;
+    I(CK90,  VSS) <+ (V(CK90,  VSS) - (0.5 * vdd + V(n_q, VSS))) / r_out;
+    I(CK270, VSS) <+ (V(CK270, VSS) - (0.5 * vdd - V(n_q, VSS))) / r_out;
+    I(VDD,   VSS) <+ 4.0e-3;
+end
+
+endmodule
