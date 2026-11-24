@@ -1,0 +1,73 @@
+// =============================================================================
+// Process-Independent RC Relaxation Oscillator TB — Digital Trim & Cold Startup
+// =============================================================================
+// Two-part verification in a single Spectre run:
+//   Part A (`tran_trim_0..7`): 8-code `alter` sweep across the 5-bit VTRIM bank
+//     {0, 4, 8, 12, 16, 20, 24, 31} -> trim_range_pct, step %/LSB, monotonicity
+//   Part B (`tran_startup`): EN rising-edge cold startup from shutdown (EN=0)
+//     at t_en = 200 ns -> t_startup_1pct_us, first_cycle_err_pct, i_dd_ua, i_shdn_na
+//
+// DUT interface contract (5-pin RC Relaxation Oscillator):
+//   subckt dut_rc_osc VDD EN VTRIM OUT VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.2 \
+    trim_code=0 \
+    en_val0=1.2 \
+    en_val1=1.2 \
+    t_en=200n \
+    cload=100f \
+    t_trim=2.0u \
+    t_start_stop=3.0u \
+    temp_c=27
+
+VSUP   (VDD   0) vsource dc=vdd       type=dc
+VGND   (VSS   0) vsource dc=0         type=dc
+VEN    (EN    0) vsource type=pulse val0=en_val0 val1=en_val1 delay=t_en rise=2n fall=2n width=10m
+VTRIMS (VTRIM 0) vsource dc=trim_code type=dc
+
+I0 (VDD EN VTRIM OUT VSS) dut_rc_osc
+CL (OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Part A: 8-point 5-bit digital trim sweep (codes 0, 4, 8, 12, 16, 20, 24, 31)
+tran_trim_0 tran stop=t_trim errpreset=moderate
+
+alt_c4 alter param=trim_code value=4
+tran_trim_1 tran stop=t_trim errpreset=moderate
+
+alt_c8 alter param=trim_code value=8
+tran_trim_2 tran stop=t_trim errpreset=moderate
+
+alt_c12 alter param=trim_code value=12
+tran_trim_3 tran stop=t_trim errpreset=moderate
+
+alt_c16 alter param=trim_code value=16
+tran_trim_4 tran stop=t_trim errpreset=moderate
+
+alt_c20 alter param=trim_code value=20
+tran_trim_5 tran stop=t_trim errpreset=moderate
+
+alt_c24 alter param=trim_code value=24
+tran_trim_6 tran stop=t_trim errpreset=moderate
+
+alt_c31 alter param=trim_code value=31
+tran_trim_7 tran stop=t_trim errpreset=moderate
+
+// Part B: Cold startup from EN=0 -> EN=VDD at t_en=200 ns (mid trim_code=16)
+alt_st_code alter param=trim_code value=16
+alt_st_en   alter param=en_val0   value=0
+tran_startup tran stop=t_start_stop errpreset=conservative
+
+save EN OUT VTRIM VSUP:p
+saveOptions options save=selected

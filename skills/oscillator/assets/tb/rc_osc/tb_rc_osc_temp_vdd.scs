@@ -1,0 +1,65 @@
+// =============================================================================
+// Process-Independent RC Relaxation Oscillator TB — Temperature & Supply PVT Sweep
+// =============================================================================
+// Runs a 7-corner multi-point `alter` transient sweep in a single Spectre run:
+//   - 5 temperatures at nominal VDD: -40, 0, 27, 85, 125 C
+//   - 3 supply voltages at 27 C: 0.9*vdd_nom, vdd_nom (reused), 1.1*vdd_nom
+//
+// Extracts f_nom_mhz, temp_drift_pct, box-method tc_ppm_per_c, supply
+// sensitivity vdd_sens_pct_per_v, and total_pvt_spread_pct.
+//
+// DUT interface contract (5-pin RC Relaxation Oscillator):
+//   subckt dut_rc_osc VDD EN VTRIM OUT VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vdd_cur=1.2 \
+    trim_code=16 \
+    cload=100f \
+    t_win=2.5u \
+    temp_c=-40
+
+VSUP   (VDD   0) vsource dc=vdd_cur   type=dc
+VGND   (VSS   0) vsource dc=0         type=dc
+VEN    (EN    0) vsource dc=vdd_cur   type=dc
+VTRIMS (VTRIM 0) vsource dc=trim_code type=dc
+
+I0 (VDD EN VTRIM OUT VSS) dut_rc_osc
+CL (OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 5-temperature sweep at nominal VDD
+tran_tm40 tran stop=t_win errpreset=moderate
+
+alt_t0   alter param=temp value=0
+tran_t0  tran stop=t_win errpreset=moderate
+
+alt_t27  alter param=temp value=27
+tran_t27 tran stop=t_win errpreset=moderate
+
+alt_t85  alter param=temp value=85
+tran_t85 tran stop=t_win errpreset=moderate
+
+alt_t125  alter param=temp value=125
+tran_t125 tran stop=t_win errpreset=moderate
+
+// Supply sensitivity corners at 27 C: 0.9*VDD and 1.1*VDD
+alt_t_vlo alter param=temp    value=27
+alt_vlo   alter param=vdd_cur value=0.9*vdd_nom
+tran_vlo  tran stop=t_win errpreset=moderate
+
+alt_vhi   alter param=vdd_cur value=1.1*vdd_nom
+tran_vhi  tran stop=t_win errpreset=moderate
+
+save OUT VDD VSUP:p
+saveOptions options save=selected

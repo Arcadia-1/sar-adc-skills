@@ -1,0 +1,152 @@
+// Process-independent behavioral On-Chip Dual-Cap RC Relaxation Oscillator
+//
+// Models a switched-RC ping-pong relaxation oscillator with:
+//   - Physical half-period T_half = R(T, code)*C(T) + (1 - delay_cancel_eff)*t_cmp(T, VDD)
+//   - Residual 1st- and 2nd-order RC temperature curvature (tc1_rc, tc2_rc)
+//   - Supply- and temperature-dependent comparator propagation delay t_cmp(T, VDD)
+//     with configurable delay-cancellation efficiency (delay_cancel_eff in [0, 1])
+//   - 5-bit digital frequency trim code via VTRIM (0..31, mid=16, monotonic)
+//   - Cold-startup bias settling (EN rising edge -> internal RC bias node n_bias)
+//     producing realistic startup pull-in and first-cycle frequency error
+//   - Duty-cycle capacitor mismatch asymmetry (duty_asym) and finite edge times
+//   - Exact event-driven (@timer) per-cycle Gaussian thermal period jitter
+//     (zero timestep quantization error; c2c jitter = sqrt(2) * period jitter)
+//
+// Port contract: (VDD, EN, VTRIM, OUT, VSS)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_rc_osc(
+    inout  electrical VDD,
+    input  electrical EN,
+    input  electrical VTRIM,
+    output electrical OUT,
+    inout  electrical VSS
+);
+
+parameter real    f_nom            = 16.0e6   from (0:inf);   // nominal freq at T0, VDD_nom, code=16 [Hz]
+parameter real    vdd_nom          = 1.2      from (0.2:inf); // nominal supply voltage [V]
+parameter real    temp_nom_c       = 27.0;                    // reference temperature [C]
+parameter real    tc1_rc           = 18.0e-6;                 // 1st-order RC tempco [1/C]
+parameter real    tc2_rc           = -0.45e-6;                // 2nd-order RC curvature [1/C^2]
+parameter real    t_cmp0           = 2.0e-9   from [0:inf);   // raw comparator delay at T0, VDD_nom [s]
+parameter real    delay_cancel_eff = 0.85     from [0:1];     // delay-cancellation efficiency (0=none, 1=ideal)
+parameter real    vdd_exp_cmp      = 1.2      from [0:4];     // comparator delay exponent vs (vdd_nom/vdd)
+parameter real    tc_cmp           = 2500.0e-6;               // comparator delay tempco [1/C]
+parameter integer n_trim_codes     = 32       from [2:256];   // trim bank size (5-bit = 32, codes 0..31)
+parameter real    k_trim_lsb       = 0.012    from (0:0.1);   // fractional freq step per trim LSB
+parameter real    tau_start        = 150.0e-9 from (1e-12:inf); // internal bias startup time constant [s]
+parameter real    duty_asym        = 0.004    from (-0.25:0.25); // cap-pair mismatch duty offset (+0.4% -> 50.2%)
+parameter real    jitter_rms       = 25.0e-12 from [0:inf);   // full-period RMS thermal jitter [s]
+parameter integer seed             = 17;                      // PRNG seed for period jitter
+parameter real    t_edge           = 300.0e-12 from (1e-12:inf); // 0-100% output transition time [s]
+parameter real    i_active         = 60.0e-6  from [0:inf);   // active supply current [A]
+parameter real    i_shdn           = 50.0e-9  from [0:inf);   // shutdown leakage current [A]
+
+electrical n_bias;
+
+integer running, out_hi, rng_seed, code_i, code_mid;
+real vdd_eff, v_en, en_hi, en_smooth, v_bias;
+real t_c, dt_c, rc_base, rc_scale, t_cmp_eff, trim_gain;
+real t_half_nom, dt_half, dt_jit, t_next, v_out_tgt;
+real v_en_th, bias_factor;
+
+analog begin
+    vdd_eff   = V(VDD, VSS);
+    if (vdd_eff < 0.0) vdd_eff = 0.0;
+    v_en_th   = 0.5 * vdd_eff;
+    v_en      = V(EN, VSS);
+    en_hi     = (v_en > v_en_th && vdd_eff > 0.3) ? 1.0 : 0.0;
+    en_smooth = 0.25 * (1.0 + tanh((v_en - v_en_th) / 0.02))
+                     * (1.0 + tanh((vdd_eff - 0.3) / 0.05));
+
+    // Continuous passive 1st-order startup bias node (DC settles to 1.0 if EN=VDD, 0.0 if EN=0)
+    I(n_bias) <+ (V(n_bias) - en_smooth) + tau_start * ddt(V(n_bias));
+    v_bias = V(n_bias);
+
+    // Physical RC + comparator-delay half-period calculation
+    t_c      = $temperature - 273.15;
+    dt_c     = t_c - temp_nom_c;
+    code_mid = n_trim_codes / 2;
+
+    code_i = floor(V(VTRIM, VSS) + 0.5);
+    if (code_i < 0) code_i = 0;
+    if (code_i > n_trim_codes - 1) code_i = n_trim_codes - 1;
+
+    // Raw comparator delay scales inversely with VDD^alpha and rises with temperature
+    t_cmp_eff = (1.0 - delay_cancel_eff) * t_cmp0
+              * pow(vdd_nom / max(vdd_eff, 0.25 * vdd_nom), vdd_exp_cmp)
+              * max(1.0 + tc_cmp * dt_c, 0.2);
+
+    // Base RC half-period chosen so f(T0, VDD_nom, mid) == f_nom exactly
+    rc_base  = max(0.5 / f_nom - (1.0 - delay_cancel_eff) * t_cmp0, 0.05 / f_nom);
+    rc_scale = max(1.0 + tc1_rc * dt_c + tc2_rc * dt_c * dt_c, 0.2);
+
+    // Conductance-trimmed RC gives linear monotonic frequency vs trim code
+    trim_gain = max(1.0 + k_trim_lsb * (code_i - code_mid), 0.2);
+    t_half_nom = (rc_base * rc_scale) / trim_gain + t_cmp_eff;
+
+    @(initial_step) begin
+        rng_seed = seed;
+        out_hi   = 0;
+        if (en_hi > 0.5 && v_bias >= 0.45) begin
+            running = 1;
+            t_next  = t_half_nom * (1.0 - duty_asym);
+        end else begin
+            running = 0;
+            t_next  = -1.0;
+        end
+    end
+
+    // Release oscillator when cold-startup bias crosses 45% of nominal
+    @(cross(V(n_bias) - 0.45, +1)) begin
+        if (en_hi > 0.5 && running == 0) begin
+            running     = 1;
+            out_hi      = 1;
+            bias_factor = max(min(V(n_bias), 1.0), 0.45);
+            dt_half     = (t_half_nom / (0.82 + 0.18 * bias_factor)) * (1.0 + duty_asym);
+            t_next      = $abstime + dt_half;
+        end
+    end
+
+    // Immediate shutdown when EN drops
+    @(cross(V(EN, VSS) - v_en_th, -1)) begin
+        running = 0;
+        out_hi  = 0;
+        t_next  = -1.0;
+    end
+
+    // Event-driven half-period toggle with exact Gaussian thermal jitter
+    @(timer(t_next)) begin
+        if (running == 1 && en_hi > 0.5) begin
+            out_hi = 1 - out_hi;
+            bias_factor = max(min(V(n_bias), 1.0), 0.45);
+            // Residual bias pull-in slows initial cycles by up to ~10% until n_bias -> 1
+            if (out_hi == 1) begin
+                dt_half = (t_half_nom / (0.82 + 0.18 * bias_factor)) * (1.0 + duty_asym);
+            end else begin
+                dt_half = (t_half_nom / (0.82 + 0.18 * bias_factor)) * (1.0 - duty_asym);
+            end
+            if (jitter_rms > 0.0) begin
+                dt_jit = $rdist_normal(rng_seed, 0.0, jitter_rms / 1.4142135623730951);
+            end else begin
+                dt_jit = 0.0;
+            end
+            dt_half = max(dt_half + dt_jit, 0.1 * t_half_nom);
+            t_next  = $abstime + dt_half;
+        end else begin
+            running = 0;
+            out_hi  = 0;
+            t_next  = -1.0;
+        end
+    end
+
+    v_out_tgt = (running == 1 && out_hi == 1) ? vdd_eff : 0.0;
+    V(OUT, VSS) <+ transition(v_out_tgt, 0.0, t_edge, t_edge);
+
+    // Supply current: active current scales smoothly with bias enable, else leakage
+    I(VDD, VSS) <+ i_shdn + i_active * max(min(v_bias, 1.0), 0.0);
+end
+
+endmodule
