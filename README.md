@@ -4,7 +4,7 @@ Process-independent Analog & Mixed-Signal (AMS) IC design skills, Verilog-A beha
 
 > Formerly `sar-adc-skills` — organized into a clean, non-overlapping multi-skill AMS repository where every circuit domain is an independently installable AI agent skill sharing a unified, process-independent Spectre verification foundation.
 
-## Included Skills (8 Domains)
+## Included Skills (9 Domains)
 
 See [`skills/README.md`](skills/README.md) for the full domain taxonomy and canonical directory contract.
 
@@ -13,6 +13,7 @@ See [`skills/README.md`](skills/README.md) for the full domain taxonomy and cano
 | **Data Converters** | [**`skills/sar-adc/`**](skills/sar-adc/SKILL.md) | SAR ADC architecture, CDAC (binary & sub-radix-2), StrongARM & Miyahara comparators, bootstrapped switch, sync/async SAR logic, coherent FFT & ramp DNL/INL | 10 | 18 (`behavioral_10b/` + `tutorial_4b/` + block models) | 5 suites (`comparator`, `bootstrap`, `cdac`, `sar_logic`, `adc_top` — 20 `.scs` decks) | 34 |
 | **Data Converters** | [**`skills/dac/`**](skills/dac/SKILL.md) | Current-Steering (segmented thermometer+binary, Pelgrom INL yield, $Z_{\text{out}}(f)$ vs. HD2/HD3/IMD3, switch crossing-point, glitch impulse, RZ/DEM) & R-2R Ladder DACs | 3 | 4 models | 2 suites (`current_steering`, `r2r` — 5 `.scs` decks) | 12 |
 | **Clocking & RF** | [**`skills/pll/`**](skills/pll/SKILL.md) | Integer-N CP-PLL, Fractional-N $\Delta\Sigma$ (MASH 1-1-1) PLL, All-Digital PLL (TDC-ADPLL & Bang-Bang ADPLL), multi-band LC/Ring VCO & DCO, PFD/CP compliance, TSPC/MMD, AFC band-cal & lock-detect, ref-spur FFT, PSRR, noise budget & $N \times I_{\text{CP}}$ scaling | 7 | 12 models | 7 suites (`vco`, `pfd_cp`, `divider`, `tdc_dco`, `int_n_pll`, `frac_n_pll`, `adpll` — 17 `.scs` decks) | 22 |
+| **Clocking & RF** | [**`skills/oscillator/`**](skills/oscillator/SKILL.md) | Fundamental-mode Pierce Crystal Oscillators (BVD model, Vittoz negative-$R$ & $C_0$ shunting, $\ge 5\times$ startup margin, drive level $P_{\text{xtal}} < 100\ \mu\text{W}$, $C_L$ pullability, full-$Q$ PSS+PNOISE) & On-Chip Dual-Cap RC Relaxation Oscillators (composite TC, comparator-delay cancellation, 5-bit trim & cold startup, period/C2C jitter & duty) | 3 | 2 models | 2 suites (`xo`, `rc_osc` — 7 `.scs` decks) | 12 |
 | **Wireline / SerDes** | [**`skills/serdes/`**](skills/serdes/SKILL.md) | Causal lossy channels (`SDD21`/`SDD11`/`SCD21`/TDR/SBR/`nport` `.s4p`/FEXT-NEXT), CML/VML TX & 4-tap FFE, `R_term(V)`, CTLE/VGA peaking/`P1dB`/`HD3`/noise/offset cal, slicers (`trannoise`/`Clk-to-Q`/SH/VTF) & 3-tap DFE, SS-LMS, bridged T-coil ($2.83\times$ BW), CDR (BBPD/PI/JTF/JTOL), PAM4 (RLM/3-eye/1-tap DFE), half-rate DCD/IQ skew & `BER=1e-12` jitter bathtub, full link top | 6 | 15 models | 10 suites (`channel`, `tx_ffe`, `ctle_vga`, `slicer_dfe`, `sslms`, `tcoil`, `cdr`, `pam4`, `clocking_jitter`, `link_top` — 35 TB decks) | 37 |
 | **Analog Core** | [**`skills/opamp-ota/`**](skills/opamp-ota/SKILL.md) | Single-ended & fully differential OpAmps/OTAs (5T, telescopic, folded cascode, 2-stage Miller + `R_z`, CMFB), 29-item industrial signoff suite (`iprobe`/Tian DM+CM `stb`, CMRR/4R-bridge/PSRR±/noise, multi-method ICMR/swing-vs-$R_L$/VIDR, $Z_{\text{out,DM}}$/$Z_{\text{out,CM}}$/OTA $g_m$, slew, coherent THD/$\text{BW}_{\text{full}}$, power-ramp & supply-surge) | 4 | 2 models | 2 suites (`single_ended`, `fully_diff` — 16 `.scs` decks) | 20 |
 | **Power & Reference** | [**`skills/ldo/`**](skills/ldo/SKILL.md) | External-cap PMOS-pass, capless (OCL), and NMOS-pass LDOs: dropout, line/load reg, light-load `stb`, PSRR(f), $|Z_{\text{out}}(f)|$, noise, load & line step transients | 3 | 2 models | 1 suite (4 `.scs` decks) | 10 |
@@ -21,7 +22,7 @@ See [`skills/README.md`](skills/README.md) for the full domain taxonomy and cano
 
 ## Shared Verification Foundation (`common/`)
 
-All 8 skills share a single, zero-PDK verification core under [`common/`](common/README.md):
+All 9 skills share a single, zero-PDK verification core under [`common/`](common/README.md):
 
 - **[`common/psf_utils.py`](common/psf_utils.py)** — Zero-dependency Python (`numpy` only) Spectre PSF ASCII parser (real `tran`/`dc`/`noise`/`pss`/`pnoise` + complex `ac`/`stb`/`sp`), `extract_uniform_strobe`, coherent single-tone FFT (`ENOB`/`SNDR`/`SNR`/`SFDR`/`THD`/`HD2`/`HD3`), coherent two-tone `IMD3`, endpoint `DNL`/`INL`, IEEE-1139 phase-noise-to-RMS-jitter integration, and SerDes `SBR`/`eye`/`mixed-mode S-param` extractors.
 - **[`common/models_generic_bsim4.scs`](common/models_generic_bsim4.scs)** — Synthetic, foundry-free Spectre BSIM4 model pair (`nch` / `pch`) with thermal noise enabled for out-of-the-box smoke verification when no PDK is attached.
@@ -31,7 +32,7 @@ All guides, Verilog-A models, and Spectre testbenches are **100% process-indepen
 
 ## Quick Start
 
-Install all 8 skills (or only the domains you need) using [`scripts/install_skills.sh`](scripts/install_skills.sh):
+Install all 9 skills (or only the domains you need) using [`scripts/install_skills.sh`](scripts/install_skills.sh):
 
 ```bash
 # Install all skills into .claude/skills (default)
@@ -89,6 +90,11 @@ python3 -B scripts/validate_repo.py
 - **Spectre X TBs** ([index](skills/supervisor/assets/tb/README.md)): [por_bor/](skills/supervisor/assets/tb/por_bor/README.md) (4 decks: thresholds/hysteresis, 3-decade ramps, glitch immunity, 3-bit BOR levels) & [temp_sensor/](skills/supervisor/assets/tb/temp_sensor/README.md) (3 decks: `-40..125°C` linearity/curvature, supply sensitivity/noise/chopping, hysteretic TSD).
 - **Verilog-A**: `va_por_bor`, `va_temp_sensor_tsd`.
 
+### 9. Oscillator Skill (`skills/oscillator/`)
+- **References**: [crystal-oscillator-xo.md](skills/oscillator/references/crystal-oscillator-xo.md), [rc-relaxation-oscillator.md](skills/oscillator/references/rc-relaxation-oscillator.md), [simulation-and-verification.md](skills/oscillator/references/simulation-and-verification.md).
+- **Spectre X / RF TBs** ([index](skills/oscillator/assets/tb/README.md)): [xo/](skills/oscillator/assets/tb/xo/README.md) (4 `.scs` decks + `analyze_xo.py`) & [rc_osc/](skills/oscillator/assets/tb/rc_osc/README.md) (3 `.scs` decks + `analyze_rc_osc.py`).
+- **Verilog-A**: `va_xo_amp`, `va_rc_osc`.
+
 ## Repository Layout
 
 ```text
@@ -102,6 +108,7 @@ ams-skills/
 │   ├── sar-adc/                  # [Data Converters] SAR ADC (5 TB suites, 20 decks, 18 VA models)
 │   ├── dac/                      # [Data Converters] Current-Steering & R-2R DAC (2 TB suites, 5 decks, 4 VA)
 │   ├── pll/                      # [Clocking & RF]   Int-N, Frac-N, ADPLL (7 TB suites, 17 decks, 12 VA)
+│   ├── oscillator/               # [Clocking & RF]   Pierce XO & RC Relaxation Oscillator (2 TB suites, 7 decks, 2 VA)
 │   ├── serdes/                   # [Wireline/SerDes] Channel, TX FFE, CTLE, DFE, SS-LMS, T-coil, CDR, PAM4, Jitter, Link Top (10 TB suites, 35 decks, 15 VA)
 │   ├── opamp-ota/                # [Analog Core]     OpAmp/OTA & CMFB (2 TB suites, 16 decks, 2 VA)
 │   ├── ldo/                      # [Power & Ref]     LDO Regulators (4 TBs, 2 VA)

@@ -1,0 +1,72 @@
+// =============================================================================
+// Process-Independent Pierce Crystal Oscillator TB — Load-Cap Pullability & Trim
+// =============================================================================
+// Sweeps the on-chip symmetric load-capacitor trim bank (CL1 = CL2 = c_load)
+// across 5 trim codes via `alter` on the FULL unscaled BVD crystal (q_scale=1).
+//
+// Inserts a 1 V AC voltage source `VTEST` in series with the motional arm
+// (zero DC impact because Cm blocks DC), measuring exact closed-loop impedance:
+//   Z_loop(f) = -V_test / I(VTEST:p) = Z_m(f) + Z_in(f)
+// The zero-crossing Im{Z_loop(f_osc)} = 0 gives exact oscillation frequency
+// to < 0.01 ppm AND extracts per-code negative resistance R_neg and startup
+// margin |R_neg| / R_m simultaneously (checking worst-case margin at max CL!).
+//
+// DUT interface contract (4-pin Pierce sustaining amplifier w/ DC feedback):
+//   subckt dut_xo_amp XI XO VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.8 \
+    l_m=7.329368m \
+    c_m=6.0f \
+    r_m=40 \
+    c0_xtal=2.0p \
+    c_load=10p \
+    r_series=1 \
+    f_sweep_start=23.995M \
+    f_sweep_stop=24.020M \
+    n_pts=1001 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+I0  (XI XO VDD VSS) dut_xo_amp
+RS  (XO XO_P)       resistor  r=r_series
+CL1 (XI   VSS)      capacitor c=c_load
+CL2 (XO_P VSS)      capacitor c=c_load
+
+// Full unscaled BVD quartz crystal with series AC loop probe VTEST
+C0    (XI   XO_P) capacitor c=c0_xtal
+VTEST (XI   M1)   vsource   dc=0 mag=1 type=dc
+RM    (M1   M2)   resistor  r=r_m
+LM    (M2   M3)   inductor  l=l_m
+CM    (M3   XO_P) capacitor c=c_m
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 5-code load-capacitor trim bank sweep: c_load = {10p, 13p, 16p, 19p, 22p}
+ac_c0 ac start=f_sweep_start stop=f_sweep_stop lin=n_pts
+
+alt_c1 alter param=c_load value=13p
+ac_c1  ac start=f_sweep_start stop=f_sweep_stop lin=n_pts
+
+alt_c2 alter param=c_load value=16p
+ac_c2  ac start=f_sweep_start stop=f_sweep_stop lin=n_pts
+
+alt_c3 alter param=c_load value=19p
+ac_c3  ac start=f_sweep_start stop=f_sweep_stop lin=n_pts
+
+alt_c4 alter param=c_load value=22p
+ac_c4  ac start=f_sweep_start stop=f_sweep_stop lin=n_pts
+
+save XI XO_P VTEST:p VSUP:p
+saveOptions options save=selected

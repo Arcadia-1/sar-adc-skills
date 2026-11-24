@@ -1,0 +1,99 @@
+// Process-independent behavioral Pierce Crystal Oscillator sustaining amplifier
+//
+// Zero hidden states (pure smooth C-infinity algebraic + reactive equations),
+// ensuring clean convergence across Spectre DC, AC, TRAN, and autonomous
+// shooting PSS + PNOISE analyses.
+//
+// Models:
+//   - Small-signal inverting transconductance `gm` with smooth tanh compression
+//     bounded by `i_max` (models current-starved / amplitude-regulated Pierce core)
+//   - Finite output resistance `r_out` and self-biasing DC feedback resistor `r_fb`
+//   - Input/output parasitic capacitances `c_in` (at XI) and `c_out` (at XO)
+//   - Smooth softplus rail clamping inside [VSS, VDD]
+//   - Physical thermal channel noise (`gamma_noise`), 1/f flicker noise
+//     (`kf_flicker`), and feedback resistor thermal noise
+//
+// Port contract: (XI, XO, VDD, VSS)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_xo_amp(
+    inout electrical XI,
+    inout electrical XO,
+    inout electrical VDD,
+    inout electrical VSS
+);
+
+parameter real gm          = 3.6e-3  from (0:inf);   // small-signal transconductance [S]
+parameter real i_max       = 0.20e-3 from (0:inf);   // peak output current limit [A] (amplitude-regulated)
+parameter real r_out       = 25.0e3  from (0:inf);   // small-signal output resistance [Ohm]
+parameter real r_fb        = 1.0e6   from (0:inf);   // DC self-bias feedback resistor [Ohm]
+parameter real c_in        = 0.5e-12 from [0:inf);   // XI pin parasitic capacitance [F]
+parameter real c_out       = 0.5e-12 from [0:inf);   // XO pin parasitic capacitance [F]
+parameter real v_trip_frac = 0.5     from (0.1:0.9); // self-bias threshold fraction of VDD
+parameter real i_q         = 250.0e-6 from [0:inf);  // quiescent core supply current [A]
+parameter real gamma_noise = 2.0     from [0:inf);   // thermal excess noise factor
+parameter real kf_flicker  = 1.5e-20 from [0:inf);   // 1/f drain current noise coeff [A^2]
+parameter real v_clamp_vt  = 0.025   from (1e-3:0.5);// soft rail-clamp thermal voltage [V]
+parameter real r_clamp     = 200.0   from (1:inf);   // rail-clamp on-resistance [Ohm]
+
+real vdd_eff, v_trip, v_xi, v_xo, v_err;
+real i_gm, i_ro, i_clamp_hi, i_clamp_lo, i_dd_dyn;
+real arg_hi, arg_lo, i_abs_smooth;
+real s_therm_gm, s_therm_rfb;
+
+analog begin
+    vdd_eff = V(VDD, VSS);
+    if (vdd_eff < 0.0) vdd_eff = 0.0;
+    v_trip = v_trip_frac * vdd_eff;
+
+    v_xi  = V(XI, VSS);
+    v_xo  = V(XO, VSS);
+    v_err = v_xi - v_trip;
+
+    // Smooth inverting transconductance: d(i_gm)/d(v_xi) = +gm at v_xi = v_trip
+    i_gm = i_max * tanh((gm / i_max) * v_err);
+
+    // Output resistance referenced to mid-rail self-bias point
+    i_ro = (v_xo - v_trip) / r_out;
+
+    // Smooth C-infinity softplus rail clamp to keep XO physically within [VSS, VDD]
+    arg_hi = (v_xo - vdd_eff) / v_clamp_vt;
+    if (arg_hi > 40.0) begin
+        i_clamp_hi = (v_xo - vdd_eff) / r_clamp;
+    end else if (arg_hi < -40.0) begin
+        i_clamp_hi = 0.0;
+    end else begin
+        i_clamp_hi = (v_clamp_vt / r_clamp) * ln(1.0 + exp(arg_hi));
+    end
+
+    arg_lo = (-v_xo) / v_clamp_vt;
+    if (arg_lo > 40.0) begin
+        i_clamp_lo = (-v_xo) / r_clamp;
+    end else if (arg_lo < -40.0) begin
+        i_clamp_lo = 0.0;
+    end else begin
+        i_clamp_lo = (v_clamp_vt / r_clamp) * ln(1.0 + exp(arg_lo));
+    end
+
+    // Self-biasing DC feedback resistor and its thermal noise
+    s_therm_rfb = 4.0 * `P_K * $temperature / r_fb;
+    I(XO, XI) <+ V(XO, XI) / r_fb + white_noise(s_therm_rfb, "rfb_thermal");
+
+    // Sustaining output branch (inverting: positive v_err sinks current from XO)
+    s_therm_gm = 4.0 * `P_K * $temperature * gamma_noise * gm;
+    I(XO, VSS) <+ i_gm + i_ro + i_clamp_hi - i_clamp_lo + c_out * ddt(v_xo)
+                + white_noise(s_therm_gm, "gm_thermal")
+                + flicker_noise(kf_flicker, 1.0, "gm_flicker");
+
+    // Input capacitance at XI
+    I(XI, VSS) <+ c_in * ddt(v_xi);
+
+    // Smooth class-AB supply current model (C-infinity around i_gm = 0)
+    i_abs_smooth = sqrt(i_gm * i_gm + 1.0e-12);
+    i_dd_dyn = i_q + 0.5 * i_abs_smooth;
+    I(VDD, VSS) <+ i_dd_dyn * tanh(vdd_eff / 0.15);
+end
+
+endmodule

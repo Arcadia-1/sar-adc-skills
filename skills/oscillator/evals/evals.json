@@ -1,0 +1,77 @@
+{
+  "skill_name": "oscillator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Using Vittoz's negative-resistance theory for a 24 MHz Pierce crystal oscillator (Rm=40 Ohm, C0=2 pF, CL1=CL2=16 pF), explain why raising transconductance gm arbitrarily high can actually kill oscillation, and derive gm_crit and gm_opt.",
+      "expected_output": "Should present Vittoz's exact formula Re{Z_in} = -gm*C1*C2 / ((gm*C0)^2 + w^2*(C1*C2 + C0*(C1+C2))^2), show that above gm_opt = w*(C1 + C2 + C1*C2/C0) shunt capacitance C0 shorts XI to XO collapsing |R_neg| back toward zero, derive gm_crit ~= 4*w^2*Rm*(C0 + CL)^2, and explain the >= 5x industrial startup margin criterion.",
+      "files": ["references/crystal-oscillator-xo.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I measure Pierce XO small-signal negative resistance and startup margin across frequency in Spectre, and why must crystal shunt capacitance C0 remain connected during the AC test?",
+      "expected_output": "Should point to assets/tb/xo/tb_xo_neg_resistance.scs and analyze_xo.py neg_r: replace only the motional arm (Lm-Cm-Rm) with a 1 A AC test current source while retaining C0, CL1, CL2, extract R_neg(f0) = -Re{Z_in(f0)} and startup_margin_x = |R_neg|/Rm >= 5x, and explain that omitting C0 overestimates margin by 30-60% and hides high-gm C0-shunting collapse.",
+      "files": ["references/crystal-oscillator-xo.md", "references/simulation-and-verification.md", "assets/tb/xo/tb_xo_neg_resistance.scs"]
+    },
+    {
+      "id": 3,
+      "prompt": "My 24 MHz 1.8 V CMOS Pierce XO swings rail-to-rail at 1.8 Vpp on XI with CL1=CL2=16 pF, C0=2 pF, and Rm=40 Ohm. Compute the crystal drive power P_xtal and recommend two ways to bring it safely below 100 uW.",
+      "expected_output": "Should compute Im_pk ~= w*(C0+CL1)*V_XI,pk ~= 1.508e8*18p*0.9 ~= 2.44 mA (or ~2.6 mA with parasitics) -> P_xtal = 0.5*Im_pk^2*Rm ~= 119-135 uW (> 100 uW reliability limit), and recommend adding a series drive-limiting resistor Rd between XO_INT and XO (forming a voltage divider with CL2) or using an amplitude-regulated / current-starved sustaining core (e.g. supply-limiting RLIM or ALC loop).",
+      "files": ["references/crystal-oscillator-xo.md", "assets/tb/xo/tb_xo_startup_drive.scs"]
+    },
+    {
+      "id": 4,
+      "prompt": "Why did my Spectre X (+preset=cx) transient simulation of a 24 MHz Pierce crystal oscillator fail to start up even though AC analysis showed 9x negative-resistance margin, and why did setting ic= on the motional inductor Lm blow up to >200 V?",
+      "expected_output": "Should explain both pitfalls from references/simulation-and-verification.md: (1) Spectre X +preset=cx forces method=gear2only and overrides maxstep, introducing Gear-2 numerical damping that kills high-Q resonators — run tb_xo_startup_drive.scs with +aps and method=traponly + maxstep <= T0/40; (2) setting ic= on series LM next to DC-blocking CM forces DC inductor current into gmin (1e-12 S), charging the internal node to hundreds of volts — use a brief zero-DC AC current kick pulse IKICK instead.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/xo/tb_xo_startup_drive.scs"]
+    },
+    {
+      "id": 5,
+      "prompt": "How do I sweep a Pierce XO's on-chip load-capacitor trim bank (CL1=CL2) to extract exact ppm pullability, monotonicity, and worst-case startup margin without running slow full-Q transients?",
+      "expected_output": "Should point to assets/tb/xo/tb_xo_pullability_cload.scs and analyze_xo.py pullability: insert a 1 V AC loop probe VTEST in series with the full-Q (q_scale=1) motional arm RM-LM-CM (zero DC perturbation), alter c_load across trim codes, solve Im{Z_loop(f_osc)}=0 to < 0.01 ppm, and verify both negative pullability S_pull = -Cm/(2*(C0+CL)^2) and worst_startup_margin_x >= 5x at max CL.",
+      "files": ["references/crystal-oscillator-xo.md", "references/simulation-and-verification.md", "assets/tb/xo/tb_xo_pullability_cload.scs"]
+    },
+    {
+      "id": 6,
+      "prompt": "How should I set up Spectre RF PSS + PNOISE on a Q = 27,600 quartz crystal oscillator so it converges in seconds without degrading phase-noise accuracy?",
+      "expected_output": "Should point to assets/tb/xo/tb_xo_pss_pnoise.scs and analyze_xo.py pss_pnoise: NEVER Q-scale during PSS/PNOISE (since Leeson L(df) scales as 1/Q^2, 20x Q-scaling adds +26 dB false phase noise!), keep q_scale=1, run autonomous Harmonic-Balance PSS with flexbalance=yes oscic=lin (+aps) and relative PM pnoise (10 Hz - 1 MHz), and verify non-minimum L in the Pierce inverter to suppress 1/f^3 close-in phase noise.",
+      "files": ["references/crystal-oscillator-xo.md", "references/simulation-and-verification.md", "assets/tb/xo/tb_xo_pss_pnoise.scs"]
+    },
+    {
+      "id": 7,
+      "prompt": "Compare single-cap hysteretic vs. dual-cap ping-pong on-chip RC relaxation oscillators, and explain why comparator propagation delay t_cmp is the hidden PVT killer at 16 MHz.",
+      "expected_output": "Should contrast single-cap (asymmetric duty, reset switch dead-time error) with dual-cap ping-pong (inherent ~50% duty, zero offline reset dead-time, ratiometric Vref cancellation), and show that at 16 MHz (T_half=31.25 ns) a 2 ns comparator delay is 6.4% of the period with strong VDD^-alpha and +2000-3000 ppm/C temp sensitivity, requiring delay-cancellation feedback (averaging loop or replica offset) and/or local LDO regulation.",
+      "files": ["references/rc-relaxation-oscillator.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "How do you design a first-order temperature-compensated resistor network for an on-chip RC relaxation oscillator, and how do you verify full -40 C to +125 C and +/-10% VDD drift in Spectre?",
+      "expected_output": "Should derive the composite positive-TC + negative-TC series resistor ratio Rp/Rn = -(TC1n + TC_C)/(TC1p + TC_C) leaving small parabolic TC2 curvature (~25-50 ppm/C), and point to assets/tb/rc_osc/tb_rc_osc_temp_vdd.scs + analyze_rc_osc.py temp_vdd running a 7-corner alter sweep (-40/0/27/85/125 C and 0.9/1.0/1.1 VDD).",
+      "files": ["references/rc-relaxation-oscillator.md", "references/simulation-and-verification.md", "assets/tb/rc_osc/tb_rc_osc_temp_vdd.scs"]
+    },
+    {
+      "id": 9,
+      "prompt": "How do I verify a 5-bit digital frequency trim bank and EN rising-edge cold startup settling time (within +/-1% of steady-state frequency) for a 16 MHz RC relaxation oscillator in Spectre?",
+      "expected_output": "Should point to assets/tb/rc_osc/tb_rc_osc_trim_startup.scs and analyze_rc_osc.py trim_startup: Part A sweeps VTRIM across 8 codes (0..31) extracting trim_range_pct (~+/-18%), step %/LSB, and monotonicity; Part B pulses EN from 0 to VDD measuring shutdown leakage i_shdn_na, first_cycle_err_pct, t_startup_1pct_us, startup_cycles_to_1pct, and active i_dd_ua, and recommend masking the first 4-8 cycles from digital logic.",
+      "files": ["references/rc-relaxation-oscillator.md", "references/simulation-and-verification.md", "assets/tb/rc_osc/tb_rc_osc_trim_startup.scs"]
+    },
+    {
+      "id": 10,
+      "prompt": "In a 16 MHz RC relaxation oscillator, how are RMS period jitter and cycle-to-cycle (C2C) jitter related for white thermal noise, what does it cost in power to cut jitter by 2x, and how do I measure both in Spectre?",
+      "expected_output": "Should derive sigma_T,per = (T_per/sqrt(2))*(sigma_v/V_th) and sigma_T,c2c = sqrt(2)*sigma_T,per (~1.414x) for uncorrelated white noise (explaining that ratio << 1.414 indicates low-frequency 1/f or supply ripple modulation), note that halving RMS jitter costs 4x power, and point to assets/tb/rc_osc/tb_rc_osc_jitter_duty.scs + analyze_rc_osc.py jitter_duty over >= 400 cycles.",
+      "files": ["references/rc-relaxation-oscillator.md", "references/simulation-and-verification.md", "assets/tb/rc_osc/tb_rc_osc_jitter_duty.scs"]
+    },
+    {
+      "id": 11,
+      "prompt": "Which process-independent Verilog-A behavioral models are bundled in skills/oscillator/ to bring up XO and RC relaxation oscillator testbenches before designing transistors?",
+      "expected_output": "Should reference assets/va/va_xo_amp.va (zero-hidden-state C-infinity Pierce sustaining amplifier with gm, i_max, r_out, r_fb, c_in/c_out, thermal + 1/f noise compatible with AC/TRAN/PSS/PNOISE) and assets/va/va_rc_osc.va (dual-cap switched-RC oscillator with tc1_rc/tc2_rc, comparator delay_cancel_eff, 5-bit VTRIM, cold-startup tau_start, duty_asym, and @timer Gaussian jitter_rms).",
+      "files": ["SKILL.md", "assets/va/va_xo_amp.va", "assets/va/va_rc_osc.va"]
+    },
+    {
+      "id": 12,
+      "prompt": "How can I build fault-injection negative tests to verify that my XO and RC oscillator signoff analyzers actually catch marginal startup or excessive jitter failures?",
+      "expected_output": "Should demonstrate two fault-injection tests using the bundled VA models and analyzers: (1) starving gm in va_xo_amp (e.g., gm=0.6 mS) in tb_xo_neg_resistance.scs so analyze_xo.py neg_r reports startup_margin_x < 3x and margin_pass=false; (2) elevating jitter_rms (e.g., 180 ps) in va_rc_osc inside tb_rc_osc_jitter_duty.scs so analyze_rc_osc.py jitter_duty flags jitter_pass=false.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/xo/analyze_xo.py", "assets/tb/rc_osc/analyze_rc_osc.py"]
+    }
+  ]
+}

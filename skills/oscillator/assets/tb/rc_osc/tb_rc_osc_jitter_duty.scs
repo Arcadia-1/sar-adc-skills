@@ -1,0 +1,45 @@
+// =============================================================================
+// Process-Independent RC Relaxation Oscillator TB — Period/C2C Jitter & Duty Cycle
+// =============================================================================
+// Long steady-state transient (> 450 cycles at 16 MHz) with thermal/comparator
+// jitter enabled in the DUT (run with Spectre X `+preset=cx`).
+//
+// Measures exact edge-crossing statistics:
+//   - Mean oscillation frequency f_mean_mhz and period t_per_mean_ns
+//   - RMS period jitter [ps], peak-to-peak period jitter [ps], and C2C jitter [ps]
+//   - Mean duty cycle [%] and |duty - 50%| error [%]
+//   - Mean 10%-90% rise time t_r_ps and 90%-10% fall time t_f_ps
+//
+// DUT interface contract (5-pin RC Relaxation Oscillator):
+//   subckt dut_rc_osc VDD EN VTRIM OUT VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.2 \
+    trim_code=16 \
+    cload=100f \
+    t_stop=30u \
+    temp_c=27
+
+VSUP   (VDD   0) vsource dc=vdd       type=dc
+VGND   (VSS   0) vsource dc=0         type=dc
+VEN    (EN    0) vsource dc=vdd       type=dc
+VTRIMS (VTRIM 0) vsource dc=trim_code type=dc
+
+I0 (VDD EN VTRIM OUT VSS) dut_rc_osc
+CL (OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran_jit tran stop=t_stop errpreset=conservative
+
+save OUT VDD VSUP:p
+saveOptions options save=selected

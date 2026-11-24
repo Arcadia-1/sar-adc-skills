@@ -1,0 +1,7 @@
+interface:
+  display_name: "Oscillator Design"
+  short_description: "Process-independent Pierce Crystal Oscillator (XO) & RC Relaxation Oscillator design and Spectre TBs"
+  default_prompt: "Use $oscillator to design, size, or verify a Pierce Crystal Oscillator (negative resistance, startup margin, crystal drive level, CL pullability, PSS/PNOISE) or On-Chip RC Relaxation Oscillator (PVT drift, delay cancellation, trim, startup, period/C2C jitter)."
+
+policy:
+  allow_implicit_invocation: true

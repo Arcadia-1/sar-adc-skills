@@ -1,0 +1,64 @@
+// =============================================================================
+// Process-Independent Pierce Crystal Oscillator TB — Autonomous PSS + PNOISE
+// =============================================================================
+// Runs true autonomous Harmonic-Balance PSS (`flexbalance=yes oscic=lin`) +
+// relative single-sideband PM PNOISE on the FULL unscaled high-Q BVD quartz
+// resonator (q_scale=1, Q ~ 27,600) — never Q-scale during phase-noise
+// verification because Leeson L(df) scales as 1/Q^2!
+//
+// `flexbalance=yes` with `oscic=lin` locks directly onto the high-Q crystal
+// limit cycle in ~1-2 seconds without long transient `tstab` settling or
+// DC inductor `ic` blowup. Run with Spectre `+aps`.
+//
+// DUT interface contract (4-pin Pierce sustaining amplifier w/ DC feedback):
+//   subckt dut_xo_amp XI XO VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.8 \
+    l_m=7.329368m \
+    c_m=6.0f \
+    r_m=40 \
+    c0_xtal=2.0p \
+    c_l1=16p \
+    c_l2=16p \
+    r_series=1 \
+    f_est=24.0075M \
+    harms=15 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+I0  (XI XO VDD VSS) dut_xo_amp
+RS  (XO XO_P)       resistor  r=r_series
+CL1 (XI   VSS)      capacitor c=c_l1
+CL2 (XO_P VSS)      capacitor c=c_l2
+
+// Full unscaled high-Q BVD quartz resonator (no Q-scaling!)
+C0 (XI   XO_P) capacitor c=c0_xtal
+RM (XI   M1)   resistor  r=r_m
+LM (M1   M2)   inductor  l=l_m
+CM (M2   XO_P) capacitor c=c_m
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Autonomous Harmonic-Balance PSS with linear eigenmode initialization (ideal for Q > 10,000)
+pss (XO 0) pss fund=f_est harms=harms errpreset=conservative \
+    flexbalance=yes oscic=lin annotate=status
+
+// Relative single-sideband PM phase noise from 10 Hz to 1 MHz
+pnoise (XO 0) pnoise sweeptype=relative relharmnum=1 \
+    start=10 stop=1M dec=15 pnoisemethod=fullspectrum \
+    noisetype=timeaverage noiseout=[pm] annotate=status
+
+save XI XO VSUP:p
+saveOptions options save=selected
