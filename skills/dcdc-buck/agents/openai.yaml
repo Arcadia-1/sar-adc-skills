@@ -1,0 +1,7 @@
+interface:
+  display_name: "Synchronous Buck DC-DC Converter"
+  short_description: "Engineering guide and 8-testbench Spectre X verification toolkit for synchronous step-down Buck converters"
+  default_prompt: "Use $dcdc-buck to design, compensate, size, or verify a synchronous step-down Buck DC-DC converter in Spectre X."
+
+policy:
+  allow_implicit_invocation: true

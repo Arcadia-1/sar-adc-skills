@@ -1,0 +1,190 @@
+// Process-independent Peak Current-Mode (PCMC) PWM Buck Controller
+//
+// Models a textbook integrated synchronous Buck PWM controller:
+//   - Active-high enable (`EN`) with slew-limited internal soft-start ramp (`t_ss`)
+//   - Transconductance error amplifier (`gm_ea`, `ro_ea`, `i_ea_max`) driving an
+//     external Type-II compensation network on `COMP` with smooth rail clamps
+//   - Fixed-frequency clock (`f_sw`) with leading-edge blanking (`t_leb`),
+//     maximum duty clamp (`d_max`), and stabilizing slope compensation (`m_slope`)
+//   - Cycle-by-cycle peak inductor current limit (`i_ocp`) sensed on `ISNS`
+//   - Configurable non-overlapping dead-time generator (`t_dead`) producing
+//     `GH` and `GL` logic commands (supports positive dead-time or negative
+//     overlap for shoot-through fault injection)
+//
+// Interface contract (9-pin Buck controller):
+//   VIN  : Supply rail for gate-command amplitude [V]
+//   VREF : Reference voltage input (e.g. 0.6 V) [V]
+//   EN   : Active-high enable input [V]
+//   FB   : Voltage feedback from output resistor divider [V]
+//   COMP : Error-amplifier output / Type-II compensation pin [V]
+//   ISNS : Inductor current sense voltage V(ISNS) = r_sns * I_L [V]
+//   GH   : High-side active-high gate command [0..VIN]
+//   GL   : Low-side active-high gate command [0..VIN]
+//   VSS  : Ground reference [0 V]
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_buck_controller(
+    input  electrical VIN,
+    input  electrical VREF,
+    input  electrical EN,
+    input  electrical FB,
+    inout  electrical COMP,
+    input  electrical ISNS,
+    output electrical GH,
+    output electrical GL,
+    input  electrical VSS
+);
+
+// Switching, PWM modulator & current-limit parameters
+parameter real f_sw       = 2.0e6   from (1e3:inf);    // Switching frequency [Hz]
+parameter real r_sns      = 1.0     from (0:inf);      // Current-sense gain [V/A]
+parameter real i_ocp      = 0.85    from (0:inf);      // Cycle-by-cycle peak OCP limit [A]
+parameter real m_slope    = 0.45e6  from [0:inf);      // Slope compensation ramp [V/s]
+parameter real d_max      = 0.90    from (0.1:0.98);   // Maximum duty cycle
+parameter real t_leb      = 15.0e-9 from (0:inf);      // Leading-edge blanking [s]
+parameter real t_dead     = 10.0e-9 from (-100e-9:200e-9); // Non-overlap dead-time [s]
+parameter real t_rf       = 1.0e-9  from (10e-12:50e-9);   // Gate-command edge rise/fall [s]
+
+// Error amplifier & soft-start parameters
+parameter real gm_ea      = 400e-6  from (0:inf);      // Error amplifier gm [S]
+parameter real ro_ea      = 5.0e6   from (0:inf);      // Error amplifier Rout [ohm]
+parameter real i_ea_max   = 100e-6  from (0:inf);      // EA output slew-limit current [A]
+parameter real v_comp_max = 1.15    from (0.1:5.0);    // COMP upper clamp [V]
+parameter real v_comp_min = 0.03    from (0:0.5);      // Pulse-skip threshold on COMP [V]
+parameter real t_ss       = 80.0e-6 from (1e-9:inf);   // Soft-start ramp time [s]
+parameter real v_ref_nom  = 0.60    from (0.1:5.0);    // Nominal VREF for soft-start slew [V]
+parameter real v_en_th    = 0.60    from (0.05:5.0);   // Enable threshold [V]
+
+electrical v_ss;
+
+integer pwm_on;
+real t_sw, t_cyc_start, dt_cyc, v_slope;
+real en_eff, v_target, c_ss, i_ss_max, v_ss_err;
+real v_err, i_ea, v_comp, arg_lo, arg_hi, sp_lo, sp_hi;
+real v_ocp, v_in_eff;
+real v_pwm, v_dly, d_abs_safe, gh_norm, gl_norm, en_gate;
+
+analog begin
+    t_sw  = 1.0 / f_sw;
+    v_ocp = r_sns * i_ocp;
+
+    @(initial_step) begin
+        pwm_on      = 0;
+        t_cyc_start = 0.0;
+    end
+
+    // High-impedance inputs
+    I(VREF, VSS) <+ V(VREF, VSS) * 1.0e-12;
+    I(FB,   VSS) <+ V(FB,   VSS) * 1.0e-12;
+    I(EN,   VSS) <+ V(EN,   VSS) * 1.0e-12;
+    I(ISNS, VSS) <+ V(ISNS, VSS) * 1.0e-12;
+
+    // 1. Enable & slew-limited soft-start reference ramp
+    en_eff   = 0.5 * (1.0 + tanh((V(EN, VSS) - v_en_th) / 0.05));
+    v_target = en_eff * V(VREF, VSS);
+    c_ss     = 1.0e-9;
+    i_ss_max = c_ss * (v_ref_nom / max(t_ss, 1.0e-9));
+    v_ss_err = v_target - V(v_ss, VSS);
+
+    I(v_ss, VSS) <+ c_ss * ddt(V(v_ss, VSS))
+                  - i_ss_max * tanh(v_ss_err / 0.005)
+                  - 1.0e-9 * v_ss_err
+                  + (1.0 - en_eff) * V(v_ss, VSS) / 1.0e3;
+
+    // 2. Transconductance error amplifier driving external Type-II network on COMP
+    v_err  = V(v_ss, VSS) - V(FB, VSS);
+    i_ea   = en_eff * i_ea_max * tanh(gm_ea * v_err / i_ea_max);
+    v_comp = V(COMP, VSS);
+
+    // Smooth COMP rail clamps [0, v_comp_max]
+    arg_lo = -v_comp / 0.01;
+    if (arg_lo > 30.0)       sp_lo = arg_lo;
+    else if (arg_lo < -30.0) sp_lo = exp(-30.0);
+    else                     sp_lo = ln(1.0 + exp(arg_lo));
+
+    arg_hi = (v_comp - v_comp_max) / 0.01;
+    if (arg_hi > 30.0)       sp_hi = arg_hi;
+    else if (arg_hi < -30.0) sp_hi = exp(-30.0);
+    else                     sp_hi = ln(1.0 + exp(arg_hi));
+
+    I(COMP, VSS) <+ -i_ea
+                  + v_comp / ro_ea
+                  + (1.0 - en_eff) * v_comp / 1.0e3
+                  - 1.0e-2 * 0.01 * sp_lo
+                  + 1.0e-2 * 0.01 * sp_hi;
+
+    // 3. Peak current-mode PWM latch with slope compensation, LEB & cycle-by-cycle OCP
+    dt_cyc = $abstime - t_cyc_start;
+    if (dt_cyc < 0.0)  dt_cyc = 0.0;
+    if (dt_cyc > t_sw) dt_cyc = t_sw;
+    v_slope = m_slope * dt_cyc;
+
+    // Clock edge: start HS conduction pulse if enabled and COMP > skip threshold
+    @(timer(0.1 * t_sw, t_sw)) begin
+        t_cyc_start = $abstime;
+        if ((en_eff > 0.5) && (V(COMP, VSS) > v_comp_min) && (V(ISNS, VSS) < v_ocp)) begin
+            pwm_on = 1;
+        end else begin
+            pwm_on = 0;
+        end
+    end
+
+    // End of leading-edge blanking: terminate immediately if already over threshold
+    @(timer(0.1 * t_sw + t_leb, t_sw)) begin
+        if (pwm_on == 1) begin
+            if ((V(ISNS, VSS) + m_slope * t_leb >= V(COMP, VSS)) || (V(ISNS, VSS) >= v_ocp)) begin
+                pwm_on = 0;
+            end
+        end
+    end
+
+    // Maximum duty-cycle clamp
+    @(timer(0.1 * t_sw + d_max * t_sw, t_sw)) begin
+        pwm_on = 0;
+    end
+
+    // Peak current + slope comparator reset
+    @(cross((V(ISNS, VSS) + v_slope) - V(COMP, VSS), +1, 1.0e-12)) begin
+        if ((pwm_on == 1) && (($abstime - t_cyc_start) >= 0.9 * t_leb)) begin
+            pwm_on = 0;
+        end
+    end
+
+    // Hard cycle-by-cycle peak over-current limit reset
+    @(cross(V(ISNS, VSS) - v_ocp, +1, 1.0e-12)) begin
+        if (pwm_on == 1) begin
+            pwm_on = 0;
+        end
+    end
+
+    // Shutdown forces PWM off
+    @(cross(V(EN, VSS) - v_en_th, -1, 1.0e-12)) begin
+        pwm_on = 0;
+    end
+
+    // 4. Non-overlapping dead-time gate-command generator
+    v_pwm = transition((pwm_on == 1) ? 1.0 : 0.0, 0.0, t_rf, t_rf);
+    d_abs_safe = (abs(t_dead) > 1.0e-12) ? abs(t_dead) : 1.0e-12;
+    v_dly = absdelay(v_pwm, d_abs_safe, 250.0e-9);
+
+    if (t_dead > 1.0e-12) begin
+        gh_norm = min(v_pwm, v_dly);
+        gl_norm = 1.0 - max(v_pwm, v_dly);
+    end else if (t_dead < -1.0e-12) begin
+        gh_norm = max(v_pwm, v_dly);
+        gl_norm = 1.0 - min(v_pwm, v_dly);
+    end else begin
+        gh_norm = v_pwm;
+        gl_norm = 1.0 - v_pwm;
+    end
+
+    en_gate  = transition((en_eff > 0.5) ? 1.0 : 0.0, 0.0, 5.0e-9, 5.0e-9);
+    v_in_eff = 0.5 * (V(VIN, VSS) + sqrt(V(VIN, VSS) * V(VIN, VSS) + 0.04));
+
+    V(GH, VSS) <+ en_gate * gh_norm * v_in_eff;
+    V(GL, VSS) <+ en_gate * gl_norm * v_in_eff;
+end
+
+endmodule

@@ -1,0 +1,93 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Dead-Time & Shoot-Through Sweep
+// =============================================================================
+// Drives the synchronous half-bridge power stage (`dut_halfbridge`) directly
+// at fixed CCM duty cycle (f_sw = 2 MHz, T_sw = 500 ns, D ~ 0.365) while
+// sweeping gate-drive dead-time `t_dead` via `alter` across 3 regimes:
+//   1. `tran_overlap` (-5 ns) : Negative dead-time -> cross-conduction shoot-through!
+//   2. `tran_opt`     (10 ns) : Optimal non-overlapping dead-time -> peak efficiency
+//   3. `tran_long`    (60 ns) : Excessive dead-time -> heavy body-diode loss!
+//
+// Plug-in contract (`subckt dut_halfbridge VIN SW GH GL VSS`):
+//   Replace the default `va_buck_power_stage` wrapper with a transistor-level
+//   BSIM4 / PDK half-bridge power-FET pair to verify real silicon shoot-through.
+//
+// Extracts (via `analyze_buck.py deadtime`):
+//   - Per-case: i_shoot_peak_ma, p_sw_loss_mw, eff_pct, sw_min_v, deadtime_safe
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_deadtime_shoot.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_power_stage.va"
+
+parameters \
+    v_in=3.3 \
+    v_drv=3.3 \
+    t_sw=500n \
+    t_on=192n \
+    t_rf=2n \
+    t_dead=-5n \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_load=4.0 \
+    v_out_init=1.2 \
+    i_l_init=0.3 \
+    t_stop=100u \
+    temp_c=27
+
+// Default behavioral half-bridge (swap with BSIM4/PDK power-FET subckt for transistor signoff)
+subckt dut_halfbridge (VIN SW GH GL VSS)
+    I_STG (VIN SW GH GL VSS) va_buck_power_stage \
+        r_on_hs=120m r_on_ls=90m c_g_hs=120p c_g_ls=120p \
+        r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=0 i_q=150u
+ends dut_halfbridge
+
+VSUP    (VIN 0)   vsource dc=v_in type=dc
+VGND    (VSS 0)   vsource dc=0    type=dc
+
+// High-side gate pulse: rises [100n, 102n], falls [284n, 286n]
+VGH     (GH  VSS) vsource type=pulse val0=0 val1=v_drv \
+    delay=100n rise=t_rf width=t_on fall=t_rf period=t_sw
+
+// Complementary low-side gate pulse with exact symmetric dead-time `t_dead`:
+//   rises at (100n + t_on + 2*t_rf + t_dead), falls `t_dead` before next GH rise
+VGL     (GL  VSS) vsource type=pulse val0=0 val1=v_drv \
+    delay=(100n + t_on + 2*t_rf + t_dead) rise=t_rf \
+    width=(t_sw - t_on - 4*t_rf - 2*t_dead) fall=t_rf period=t_sw
+
+I_HB    (VIN SW GH GL VSS) dut_halfbridge
+
+VMEAS_L (SW   N_L1)   vsource   dc=0 type=dc
+L_OUT   (N_L1 N_L2)   inductor  l=l_out ic=i_l_init
+R_DCR   (N_L2 VOUT)   resistor  r=r_dcr
+R_ESR   (VOUT V_CESR) resistor  r=r_esr
+C_OUT   (V_CESR VSS)  capacitor c=c_out
+
+VMEAS_O (VOUT VOUT_L) vsource   dc=0 type=dc
+R_LOAD  (VOUT_L VSS)  resistor  r=r_load
+
+ic VOUT=v_out_init V_CESR=v_out_init
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Regime 1: Negative dead-time (-5 ns overlap -> shoot-through cross-conduction!)
+tran_overlap tran stop=t_stop errpreset=conservative maxstep=2n
+
+// Regime 2: Optimal dead-time (+10 ns -> zero shoot-through, minimal body-diode loss)
+alt_opt      alter param=t_dead value=10n
+tran_opt     tran stop=t_stop errpreset=conservative maxstep=2n
+
+// Regime 3: Excessive dead-time (+60 ns -> heavy body-diode freewheeling loss)
+alt_long     alter param=t_dead value=60n
+tran_long    tran stop=t_stop errpreset=conservative maxstep=2n
+
+save VIN VOUT SW GH GL VSUP:p VMEAS_L:p VMEAS_O:p
+saveOptions options save=selected

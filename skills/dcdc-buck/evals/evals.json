@@ -1,0 +1,77 @@
+{
+  "skill_name": "dcdc-buck",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Compute the CCM inductor current ripple and CCM/DCM boundary current for a 3.3 V to 1.2 V synchronous Buck converter switching at 2 MHz with L = 2.2 uH, and explain what happens to light-load efficiency with vs. without zero-current detection (ZCD).",
+      "expected_output": "Should derive D = Vout/Vin = 0.364, dI_L = Vout*(1-D)/(L*f_sw) ~= 174 mApp, and I_crit = dI_L/2 ~= 87 mA; explain that without ZCD (forced CCM), inductor current reverses below 87 mA and circulates reactive loss back to ground, whereas ZCD turns off LS at I_L=0 to enter DCM and preserve light-load efficiency.",
+      "files": ["references/buck-fundamentals-and-losses.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I measure multi-load Buck efficiency across both DCM and CCM in a single Spectre X run without fractional-cycle integration error?",
+      "expected_output": "Should point to assets/tb/tb_buck_eff_ccm_dcm.scs and analyze_buck.py efficiency: run alter across 20 mA (DCM) to 500 mA (CCM), settle to steady state, integrate V_in*(-I_VSUP) and V_out*I_load over an exact integer number of switching periods (e.g., last 10 cycles), and classify DCM vs. CCM via zero-current dwell fraction.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_buck_eff_ccm_dcm.scs", "assets/tb/analyze_buck.py"]
+    },
+    {
+      "id": 3,
+      "prompt": "Why does a Peak Current-Mode Controlled (PCMC) Buck converter exhibit subharmonic oscillation for duty cycles D > 0.5, and how should the slope-compensation ramp m_a be sized?",
+      "expected_output": "Should derive the cycle-to-cycle current perturbation factor -m2/m1 = -D/(1-D) which exceeds magnitude 1 for D > 0.5, and show that adding ramp slope m_a >= 0.5*m2 (where m2 = R_sns*V_out/L) stabilizes all D < 1 while damping the Ridley sampling double-pole Q_p at f_sw/2.",
+      "files": ["references/control-loop-and-compensation.md"]
+    },
+    {
+      "id": 4,
+      "prompt": "Step through sizing a Type-II OTA compensator (R_c, C_c, C_hf) for a 2 MHz PCMC Buck converter with C_out = 10 uF (ESR = 15 mOhm), R_sns = 1 Ohm, beta = 0.5, and gm_ea = 400 uS.",
+      "expected_output": "Should pick f_c <= f_sw/10 (~120-160 kHz), solve R_c = 2*pi*f_c*R_sns*C_out/(beta*gm_ea) (~47 kOhm), place zero f_zc = 1/(2*pi*R_c*C_c) near the output load pole (~10 kHz -> C_c ~330 pF), and place HF pole f_phf = 1/(2*pi*R_c*C_hf) below f_z_ESR and f_sw/2 (~650 kHz -> C_hf ~5 pF) for >60 deg PM.",
+      "files": ["references/control-loop-and-compensation.md", "assets/tb/tb_buck_loop_stb.scs"]
+    },
+    {
+      "id": 5,
+      "prompt": "How do I run fast small-signal stability (stb) across V_in and I_load corners for a switching Buck converter in Spectre X without waiting for switching transient or PSS?",
+      "expected_output": "Should point to assets/va/va_buck_avg_model.va, assets/tb/tb_buck_loop_stb.scs, and analyze_buck.py stb: use the continuous Erickson-Maksimovic/Ridley averaged PCMC model with iprobe inserted in the feedback divider and alter across low/nom/high V_in and light/heavy CCM loads, checking PM >= 45 deg and GM >= 10 dB.",
+      "files": ["references/simulation-and-verification.md", "assets/va/va_buck_avg_model.va", "assets/tb/tb_buck_loop_stb.scs"]
+    },
+    {
+      "id": 6,
+      "prompt": "Explain the two-sided dead-time tradeoff in a synchronous Buck half-bridge and how to test shoot-through vs. optimal vs. excessive dead-time in Spectre X.",
+      "expected_output": "Should contrast negative/zero dead-time (cross-conduction shoot-through current V_in/(R_hs+R_ls) collapsing efficiency) against excessive dead-time (2*I_load*V_f*t_dead*f_sw body-diode conduction loss and reverse recovery), and reference assets/tb/tb_buck_deadtime_shoot.scs + analyze_buck.py deadtime (noting >=5 LC settling constants and diffusion area ad/as for BSIM4 FETs).",
+      "files": ["references/buck-fundamentals-and-losses.md", "references/simulation-and-verification.md", "assets/tb/tb_buck_deadtime_shoot.scs"]
+    },
+    {
+      "id": 7,
+      "prompt": "Why does an under-sized soft-start ramp time (t_ss too small) cause both excessive inductor inrush current and output voltage overshoot during Buck startup?",
+      "expected_output": "Should show I_inrush ~= I_load + C_out*V_out/t_ss + dI_L/2 (surging into i_ocp when t_ss is too small) and explain that error-amp COMP cap windup during the fast slewing transient causes V_out overshoot when FB reaches V_ref; point to assets/tb/tb_buck_softstart_inrush.scs and analyze_buck.py softstart.",
+      "files": ["references/control-loop-and-compensation.md", "assets/tb/tb_buck_softstart_inrush.scs"]
+    },
+    {
+      "id": 8,
+      "prompt": "How do I separate capacitive vs. ESR output ripple and cross-check Spectre steady-state ripple and switch-node stress against analytical equations?",
+      "expected_output": "Should decompose dV_C = dI_L/(8*f_sw*C_out) and dV_ESR = dI_L*R_ESR, explain package/bondwire L_par ringing on SW overshoot and LS body-diode -Vf undershoot, and reference assets/tb/tb_buck_ripple_sw.scs + analyze_buck.py ripple.",
+      "files": ["references/buck-fundamentals-and-losses.md", "assets/tb/tb_buck_ripple_sw.scs"]
+    },
+    {
+      "id": 9,
+      "prompt": "What physical limit sets the minimum possible output voltage overshoot on a fast heavy-to-light load step in a Buck converter, and which testbench verifies load-step and line-step response?",
+      "expected_output": "Should derive the stored inductor magnetic energy dump floor dV_over_min = L*(dI_load)^2 / (2*C_out*V_out) (which cannot be reduced by loop bandwidth alone), contrast it with bandwidth-limited load-step undershoot, and reference assets/tb/tb_buck_load_line_tran.scs + analyze_buck.py tran.",
+      "files": ["references/control-loop-and-compensation.md", "assets/tb/tb_buck_load_line_tran.scs"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do I verify cycle-by-cycle over-current protection and latch-up-free recovery from a hard output short, and why can leading-edge blanking (t_LEB) cause short-circuit runaway?",
+      "expected_output": "Should point to assets/tb/tb_buck_ocp_short.scs and analyze_buck.py ocp (0.2 Ohm relay short & release checking il_ocp_peak_ma, vout_short_mv, vout_recover_ok, t_recover_us), and explain that if V_in*t_LEB*f_sw exceeds I_ocp*(R_short+R_DCR+R_on_ls), inductor current ratchets up despite OCP unless frequency foldback or hiccup mode is added.",
+      "files": ["references/control-loop-and-compensation.md", "references/simulation-and-verification.md", "assets/tb/tb_buck_ocp_short.scs"]
+    },
+    {
+      "id": 11,
+      "prompt": "How do I measure both small-signal audio susceptibility PSRR(f) and exact switching output spurs at f_sw and 2*f_sw without FFT spectral leakage?",
+      "expected_output": "Should point to assets/tb/tb_buck_psrr_noise.scs and analyze_buck.py psrr_spur: run AC on the averaged PCMC replica for PSRR(f) (DC, 10 kHz, min around crossover) alongside a coherently strobed switching transient (strobeperiod = T_sw/32, N=1024 exact cycles, filtered with extract_uniform_strobe) to read exact f_sw and 2*f_sw spurs in dBV/mVrms.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_buck_psrr_noise.scs"]
+    },
+    {
+      "id": 12,
+      "prompt": "How should I size the high-side vs. low-side power FET widths in a low-duty-cycle synchronous Buck converter (3.3 V to 1.2 V) to maximize peak efficiency?",
+      "expected_output": "Should derive W_opt balancing conduction loss (proportional to 1/W, weighted by D for HS and 1-D for LS) against gate-charge switching loss (proportional to W*Vin^2*f_sw), noting that because 1-D (~0.64) > D (~0.36) at low Vout/Vin, the low-side synchronous NMOS conducts longer and warrants lower R_on_ls.",
+      "files": ["references/buck-fundamentals-and-losses.md", "assets/va/va_buck_power_stage.va"]
+    }
+  ]
+}

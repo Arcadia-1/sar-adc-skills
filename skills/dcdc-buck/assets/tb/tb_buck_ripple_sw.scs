@@ -1,0 +1,89 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Steady-State CCM Ripple & SW Node
+// =============================================================================
+// High-resolution steady-state CCM transient (`+preset=cx`) at nominal load
+// (`300 mA`, `R_load = 4.0 ohm`) capturing inductor current I_L, output voltage
+// ripple V_out, and switching node SW overshoot/undershoot with realistic
+// power-loop parasitic inductance (`l_par = 1 nH`).
+//
+// Extracts (via `analyze_buck.py ripple`):
+//   - vout_avg_v, vout_ripple_pp_mv
+//   - il_avg_ma, il_ripple_pp_ma vs. analytical V_out*(1-D)/(L*f_sw)
+//   - duty_cycle_meas vs. V_out/V_in
+//   - sw_overshoot_v (above VIN) and sw_undershoot_v (below VSS)
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_ripple_sw.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_power_stage.va"
+ahdl_include "../va/va_buck_controller.va"
+
+parameters \
+    v_in=3.3 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    t_dead=10n \
+    l_par=1.0n \
+    r_par_damp=6.0 \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    i_ocp=0.85 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    r_load=4.0 \
+    t_stop=45u \
+    temp_c=27
+
+VSUP    (VIN  0)       vsource dc=v_in  type=dc
+VGND    (VSS  0)       vsource dc=0     type=dc
+VVREF   (VREF 0)       vsource dc=v_ref type=dc
+VEN     (EN   0)       vsource dc=v_in  type=dc
+
+// Damped parasitic input bondwire / PCB loop inductance
+L_PAR   (VIN  VIN_PWR) inductor l=l_par
+R_PDAMP (VIN  VIN_PWR) resistor r=r_par_damp
+
+I_CTRL  (VIN VREF EN FB COMP ISNS GH GL VSS) va_buck_controller \
+    f_sw=f_sw r_sns=r_sns i_ocp=i_ocp m_slope=m_slope t_dead=t_dead \
+    gm_ea=400u ro_ea=5M i_ea_max=100u t_ss=80u v_ref_nom=v_ref
+
+I_PWR   (VIN_PWR SW GH GL VSS) va_buck_power_stage \
+    r_on_hs=r_on_hs r_on_ls=r_on_ls c_g_hs=120p c_g_ls=120p \
+    r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=1 i_q=150u
+
+R_COMP  (COMP N_CC)   resistor  r=r_comp
+C_COMP  (N_CC VSS)    capacitor c=c_comp
+C_HF    (COMP VSS)    capacitor c=c_hf
+
+R_FB1   (VOUT FB)     resistor  r=100k
+R_FB2   (FB   VSS)    resistor  r=100k
+
+VMEAS_L (SW   N_L1)   vsource   dc=0 type=dc
+H_ISNS  (ISNS VSS)    ccvs      rm=r_sns probe=VMEAS_L
+L_OUT   (N_L1 N_L2)   inductor  l=l_out ic=0.3
+R_DCR   (N_L2 VOUT)   resistor  r=r_dcr
+R_ESR   (VOUT V_CESR) resistor  r=r_esr
+C_OUT   (V_CESR VSS)  capacitor c=c_out
+R_LOAD  (VOUT VSS)    resistor  r=r_load
+
+ic VOUT=1.2 V_CESR=1.2 COMP=0.47
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=2n
+
+save VIN VOUT SW GH GL VMEAS_L:p
+saveOptions options save=selected

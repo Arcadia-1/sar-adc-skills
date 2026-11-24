@@ -1,0 +1,147 @@
+// Process-independent Continuous State-Space Averaged PCMC Buck Model
+//
+// Exact continuous-time averaged Peak Current-Mode (PCMC) Buck power stage +
+// error amplifier (Erickson-Maksimovic & Ridley formulation) for Spectre `dc`,
+// `ac` (PSRR / audio susceptibility), and `iprobe` `stb` (loop gain, crossover
+// frequency, phase margin, and gain margin) without switching ripple overhead.
+//
+// Models:
+//   - Error amplifier OTA (`gm_ea`, `ro_ea`) with smooth COMP rail clamps
+//     driving external Type-II/III compensation on `COMP`
+//   - Exact Erickson-Maksimovic peak-to-average inductor current law with
+//     slope compensation (`m_slope`, `r_sns`, `f_sw`, `l_nom`), capturing exact
+//     modulator gain F_m, input feedforward k_f, and output feedback k_r with a
+//     strictly monotonic globally unique DC operating point
+//   - Second-order Ridley sampling double-pole at f_sw / 2 with exact damping
+//     Q_p = 1 / (pi * (m_c * (1 - D) - 0.5))
+//   - Averaged switch-node source V(SW_OUT) = D * V_in - I_L * (D*R_hs + (1-D)*R_ls)
+//     and input current conservation I(VIN) = D * I_L + I_q
+//
+// Interface contract (6-pin averaged Buck core):
+//   VIN    : Input supply rail [V]
+//   VREF   : Reference voltage input (e.g. 0.6 V) [V]
+//   FB     : Breakable voltage feedback pin (insert `iprobe` before divider/VOUT)
+//   COMP   : Error-amplifier compensation node (connect external R_c, C_c, C_hf)
+//   SW_OUT : Averaged switch-node output driving external L, DCR, C_out, ESR
+//   VSS    : Ground reference [0 V]
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_buck_avg_model(
+    inout  electrical VIN,
+    input  electrical VREF,
+    input  electrical FB,
+    inout  electrical COMP,
+    output electrical SW_OUT,
+    inout  electrical VSS
+);
+
+// Power stage & PCMC modulator parameters (match switching transient models)
+parameter real f_sw       = 2.0e6   from (1e3:inf);   // Switching frequency [Hz]
+parameter real l_nom      = 2.2e-6  from (1e-9:inf);  // Output inductance [H]
+parameter real r_on_hs    = 0.120   from [0:inf);     // High-side switch Ron [ohm]
+parameter real r_on_ls    = 0.090   from [0:inf);     // Low-side switch Ron [ohm]
+parameter real r_sns      = 1.0     from (0:inf);     // Current-sense gain [V/A]
+parameter real m_slope    = 0.45e6  from (0:inf);     // Slope compensation ramp [V/s]
+parameter real d_max      = 0.90    from (0.1:0.98);  // Max duty cycle clamp
+parameter real i_q        = 150e-6  from [0:inf);     // Quiescent current [A]
+
+// Error amplifier parameters (match va_buck_controller.va)
+parameter real gm_ea      = 400e-6  from (0:inf);     // Error amplifier gm [S]
+parameter real ro_ea      = 5.0e6   from (0:inf);     // Error amplifier Rout [ohm]
+parameter real v_comp_max = 1.15    from (0.2:5.0);   // COMP upper rail clamp [V]
+
+branch (SW_OUT, VSS) b_sw;
+electrical vd0, vd, vd_dot;
+
+real t_sw, w_n;
+real v_in, v_in_pos, v_sw_pos, v_err, v_c;
+real arg_lo, arg_hi, sp_lo, sp_hi;
+real i_L, d0, d_q, arg_dq_lo, arg_dq_hi, sp_dq_lo, sp_dq_hi;
+real phi_rip, m1, mc, denom_qp, q_p;
+real d_raw, d_eff, r_sw_eq;
+
+analog begin
+    t_sw = 1.0 / f_sw;
+    w_n  = `M_PI * f_sw;
+
+    // High-impedance inputs
+    I(VREF, VSS) <+ V(VREF, VSS) * 1.0e-12;
+    I(FB,   VSS) <+ V(FB,   VSS) * 1.0e-12;
+
+    // 1. Transconductance error amplifier with smooth COMP rail clamps [0, v_comp_max]
+    v_err = V(VREF, VSS) - V(FB, VSS);
+    v_c   = V(COMP, VSS);
+
+    arg_lo = -v_c / 0.01;
+    if (arg_lo > 30.0)       sp_lo = arg_lo;
+    else if (arg_lo < -30.0) sp_lo = exp(-30.0);
+    else                     sp_lo = ln(1.0 + exp(arg_lo));
+
+    arg_hi = (v_c - v_comp_max) / 0.01;
+    if (arg_hi > 30.0)       sp_hi = arg_hi;
+    else if (arg_hi < -30.0) sp_hi = exp(-30.0);
+    else                     sp_hi = ln(1.0 + exp(arg_hi));
+
+    I(COMP, VSS) <+ -gm_ea * v_err
+                  + v_c / ro_ea
+                  - 1.0e-2 * 0.01 * sp_lo
+                  + 1.0e-2 * 0.01 * sp_hi;
+
+    // 2. Exact Erickson-Maksimovic PCMC equilibrium:
+    //    V(COMP) = r_sns*I_L + m_slope*T_sw*d0
+    //              + (r_sns*T_sw/(2*L)) * [d^2*(Vin - Vsw) + (1-d)^2*Vsw]
+    //    Strictly convex & globally unique root (d(phi)/dd = d*Vin - Vsw = 0 at DC).
+    v_in     = V(VIN, VSS);
+    v_in_pos = 0.5 * (v_in + sqrt(v_in * v_in + 0.04));
+    v_sw_pos = 0.5 * (V(SW_OUT, VSS) + sqrt(V(SW_OUT, VSS) * V(SW_OUT, VSS) + 1.0e-4));
+    i_L      = -I(b_sw);
+    d0       = V(vd0, VSS);
+
+    // Smoothly clamp d_q inside [0.02, d_max] for ripple term (exact identity inside operating range)
+    arg_dq_lo = (d0 - 0.02) / 0.01;
+    if (arg_dq_lo > 30.0)       sp_dq_lo = arg_dq_lo;
+    else if (arg_dq_lo < -30.0) sp_dq_lo = exp(-30.0);
+    else                        sp_dq_lo = ln(1.0 + exp(arg_dq_lo));
+    d_q = 0.02 + 0.01 * sp_dq_lo;
+
+    arg_dq_hi = (d_q - d_max) / 0.01;
+    if (arg_dq_hi > 30.0)       sp_dq_hi = arg_dq_hi;
+    else if (arg_dq_hi < -30.0) sp_dq_hi = exp(-30.0);
+    else                        sp_dq_hi = ln(1.0 + exp(arg_dq_hi));
+    d_q = d_q - 0.01 * sp_dq_hi;
+
+    phi_rip = 0.5 * (d_q * d_q * (v_in_pos - v_sw_pos) + (1.0 - d_q) * (1.0 - d_q) * v_sw_pos);
+
+    I(vd0, VSS) <+ (r_sns * i_L
+                  + m_slope * t_sw * d0
+                  + (r_sns * t_sw / l_nom) * phi_rip)
+                 - v_c;
+
+    // 3. Second-order Ridley sampling double-pole at f_sw / 2
+    //    H_s(s) = 1 / (1 + s/(w_n*Q_p) + s^2/w_n^2)
+    m1       = r_sns * max(v_in_pos - v_sw_pos, 0.1) / l_nom;
+    mc       = 1.0 + m_slope / max(m1, 1.0);
+    denom_qp = mc * (1.0 - d_q) - 0.5;
+    if (denom_qp < 0.08) denom_qp = 0.08;
+    q_p = 1.0 / (`M_PI * denom_qp);
+
+    I(vd_dot, VSS) <+ V(vd_dot, VSS) - ddt(V(vd, VSS)) / w_n;
+    I(vd, VSS)     <+ ddt(V(vd_dot, VSS)) / w_n
+                    + V(vd_dot, VSS) / q_p
+                    + V(vd, VSS) - d_q;
+
+    // 4. Averaged Buck switch-node output & input current conservation
+    d_raw = V(vd, VSS);
+    if (d_raw < 0.0)        d_eff = 0.0;
+    else if (d_raw > d_max) d_eff = d_max;
+    else                    d_eff = d_raw;
+
+    r_sw_eq = d_eff * r_on_hs + (1.0 - d_eff) * r_on_ls;
+
+    V(b_sw)     <+ d_eff * v_in - i_L * r_sw_eq;
+    I(VIN, VSS) <+ d_eff * i_L + i_q * tanh(v_in_pos / 0.4);
+end
+
+endmodule

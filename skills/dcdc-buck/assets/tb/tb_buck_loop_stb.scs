@@ -1,0 +1,90 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Averaged Control Loop Stability
+// =============================================================================
+// Uses the continuous state-space averaged PCMC Buck model (`va_buck_avg_model`)
+// with `iprobe` (`stb`) across 4 V_in x I_load CCM corners via `alter`:
+//   1. `stb_vinlo_ilo`  : V_in = 2.7 V, I_load = 100 mA (R_load = 12.0 ohm)
+//   2. `stb_vinnom_ilo` : V_in = 3.3 V, I_load = 100 mA (R_load = 12.0 ohm)
+//   3. `stb_vinnom_ihi` : V_in = 3.3 V, I_load = 500 mA (R_load =  2.4 ohm)
+//   4. `stb_vinhi_ihi`  : V_in = 4.5 V, I_load = 500 mA (R_load =  2.4 ohm)
+//
+// Extracts (via `analyze_buck.py stb`):
+//   - Per-corner: dc_loop_gain_db, f_crossover_khz, phase_margin_deg, gain_margin_db
+//   - Summary   : pm_min_deg, worst_corner, gm_min_db, stb_pass
+//
+// Fault-injection negative test:
+//   Set `r_comp=50 c_comp=500p c_hf=100p` (wrong-zero/uncompensated) -> PM < 20 deg!
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_loop_stb.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_avg_model.va"
+
+parameters \
+    v_in=2.7 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    r_load=12.0 \
+    temp_c=27
+
+VSUP   (VIN  0) vsource dc=v_in  type=dc
+VGND   (VSS  0) vsource dc=0     type=dc
+VVREF  (VREF 0) vsource dc=v_ref type=dc
+
+I_AVG  (VIN VREF FB COMP SW_OUT VSS) va_buck_avg_model \
+    f_sw=f_sw l_nom=l_out r_on_hs=r_on_hs r_on_ls=r_on_ls \
+    r_sns=r_sns m_slope=m_slope gm_ea=400u ro_ea=5M i_q=150u
+
+// Type-II compensation network on COMP
+R_COMP (COMP N_CC)   resistor  r=r_comp
+C_COMP (N_CC VSS)    capacitor c=c_comp
+C_HF   (COMP VSS)    capacitor c=c_hf
+
+// Breakable feedback loop via iprobe
+IPRB   (VOUT FB_TOP) iprobe
+R_FB1  (FB_TOP FB)   resistor  r=100k
+R_FB2  (FB     VSS)  resistor  r=100k
+
+// Output LC filter + load
+L_OUT  (SW_OUT N_L)   inductor  l=l_out
+R_DCR  (N_L    VOUT)  resistor  r=r_dcr
+R_ESR  (VOUT   V_ESR) resistor  r=r_esr
+C_OUT  (V_ESR  VSS)   capacitor c=c_out
+R_LOAD (VOUT   VSS)   resistor  r=r_load
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Corner 1: Low Vin (2.7 V), Light CCM load (100 mA)
+stb_vinlo_ilo  stb start=10 stop=10M dec=30 probe=IPRB annotate=status
+
+// Corner 2: Nominal Vin (3.3 V), Light CCM load (100 mA)
+alt_c2_v alter param=v_in value=3.3
+stb_vinnom_ilo stb start=10 stop=10M dec=30 probe=IPRB annotate=status
+
+// Corner 3: Nominal Vin (3.3 V), Full load (500 mA)
+alt_c3_r alter param=r_load value=2.4
+stb_vinnom_ihi stb start=10 stop=10M dec=30 probe=IPRB annotate=status
+
+// Corner 4: High Vin (4.5 V), Full load (500 mA)
+alt_c4_v alter param=v_in value=4.5
+stb_vinhi_ihi  stb start=10 stop=10M dec=30 probe=IPRB annotate=status
+
+save VOUT COMP
+saveOptions options save=selected

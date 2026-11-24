@@ -1,0 +1,169 @@
+// Process-independent synchronous step-down Buck half-bridge power stage
+//
+// Models a textbook integrated CMOS synchronous Buck switching half-bridge:
+//   - High-side (HS) PMOS and low-side (LS) NMOS power switches with realistic
+//     on-state resistances (`r_on_hs`, `r_on_ls`), square-law softplus gate
+//     overdrive (zero subthreshold leakage when off), and finite off leakage
+//   - Internal VIN-powered tapered gate drivers with 100% passive two-terminal
+//     gate-source (`c_gs`) and Miller gate-drain (`c_gd`) capacitances, giving
+//     physical Miller plateau SW slew control and conserving gate-drive energy
+//   - Switch-node parasitic drain capacitance (`c_sw`) and HS/LS body diodes
+//     with smooth C1-continuous exponential clamping during dead-time
+//   - Optional zero-current detection (`zcd_en=1`) using strictly monotonic
+//     negative-softplus blocking on LS reverse current (enabling clean DCM at
+//     light load while preserving full cross-conduction shoot-through whenever
+//     GH and GL overlap!)
+//   - Quiescent bias current (`i_q`) drawn from VIN to VSS
+//
+// Interface contract (5-pin half-bridge power stage):
+//   VIN : Power input rail [V]
+//   SW  : Switching node connected to external inductor L [V]
+//   GH  : Active-high high-side gate logic command [0..VIN]
+//   GL  : Active-high low-side gate logic command [0..VIN]
+//   VSS : Power ground reference [0 V]
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_buck_power_stage(
+    inout  electrical VIN,
+    inout  electrical SW,
+    input  electrical GH,
+    input  electrical GL,
+    inout  electrical VSS
+);
+
+// Switch conduction and parasitic parameters
+parameter real    r_on_hs   = 0.120   from (0:inf);   // High-side switch Ron [ohm]
+parameter real    r_on_ls   = 0.090   from (0:inf);   // Low-side sync switch Ron [ohm]
+parameter real    r_off     = 1.0e7   from (0:inf);   // Off-state leakage resistance [ohm]
+parameter real    c_g_hs    = 120e-12 from (0:inf);   // High-side total gate cap [F]
+parameter real    c_g_ls    = 120e-12 from (0:inf);   // Low-side total gate cap [F]
+parameter real    k_miller  = 0.25    from [0:0.8];   // Passive Miller C_gd / C_g fraction
+parameter real    r_drv_hs  = 18.0    from (0:inf);   // HS gate-driver output resistance [ohm]
+parameter real    r_drv_ls  = 18.0    from (0:inf);   // LS gate-driver output resistance [ohm]
+parameter real    c_sw      = 100e-12 from [0:inf);   // Switch-node parasitic capacitance [F]
+
+// Body diode parameters (conducts during dead-time freewheeling / overshoot)
+parameter real    i_s_bd    = 1.0e-11 from (0:inf);   // Body-diode saturation current [A]
+parameter real    n_bd      = 1.25    from (0.5:5.0); // Body-diode ideality factor
+
+// Zero-current detection (DCM) and quiescent current parameters
+parameter integer zcd_en    = 1       from [0:1];     // 1: DCM ZCD enabled, 0: forced CCM
+parameter real    v_zcd_eps = 1.0e-3  from (1e-5:0.1);// Smooth ZCD turn-off knee [V]
+parameter real    i_q       = 150e-6  from [0:inf);   // Quiescent supply current [A]
+
+electrical vg_hs_b, vg_ls;
+
+real v_in_raw, v_in_eff, v_th_in, v_w_in;
+real c_gs_hs, c_gd_hs, c_gs_ls, c_gd_ls;
+real cmd_hs, cmd_ls;
+real v_sub, v_ov_span, vsg_hs, vgs_ls, arg_h, arg_l, sp_h, sp_l;
+real u_hs, u_ls, g_hs, g_ls;
+real v_sw, i_hs, i_ls;
+real arg_zcd, sp_zcd, v_neg, v_ls_eff;
+real nvt, v_bd_ls, arg_ls, i_bd_ls, v_bd_hs, arg_hs, i_bd_hs;
+real exp_max;
+
+analog begin
+    // Smooth positive supply voltage floor for logic thresholds
+    v_in_raw = V(VIN, VSS);
+    v_in_eff = 0.5 * (v_in_raw + sqrt(v_in_raw * v_in_raw + 0.04));
+    if (v_in_eff < 0.5) v_in_eff = 0.5;
+    v_th_in = 0.5 * v_in_eff;
+    v_w_in  = 0.05 * v_in_eff;
+
+    // Split passive gate-source and Miller gate-drain capacitances
+    c_gd_hs = k_miller * c_g_hs;
+    c_gs_hs = (1.0 - k_miller) * c_g_hs;
+    c_gd_ls = k_miller * c_g_ls;
+    c_gs_ls = (1.0 - k_miller) * c_g_ls;
+
+    // High-impedance gate-command inputs
+    I(GH, VSS) <+ V(GH, VSS) * 1.0e-6;
+    I(GL, VSS) <+ V(GL, VSS) * 1.0e-6;
+
+    cmd_hs = 0.5 * (1.0 + tanh((V(GH, VSS) - v_th_in) / v_w_in));
+    cmd_ls = 0.5 * (1.0 + tanh((V(GL, VSS) - v_th_in) / v_w_in));
+
+    // High-side PMOS gate driver (vg_hs_b: VIN=OFF, VSS=ON) + 100% passive C_gs / C_gd
+    I(VIN, vg_hs_b) <+ ((1.0 - cmd_hs) / r_drv_hs + 1.0e-9) * V(VIN, vg_hs_b)
+                     + c_gs_hs * ddt(V(VIN, vg_hs_b));
+    I(vg_hs_b, VSS) <+ (cmd_hs / r_drv_hs + 1.0e-9) * V(vg_hs_b, VSS);
+    I(vg_hs_b, SW)  <+ c_gd_hs * ddt(V(vg_hs_b, SW));
+
+    // Low-side NMOS gate driver (vg_ls: VSS=OFF, VIN=ON) + 100% passive C_gs / C_gd
+    I(VIN, vg_ls) <+ (cmd_ls / r_drv_ls + 1.0e-9) * V(VIN, vg_ls);
+    I(vg_ls, VSS) <+ ((1.0 - cmd_ls) / r_drv_ls + 1.0e-9) * V(vg_ls, VSS)
+                   + c_gs_ls * ddt(V(vg_ls, VSS));
+    I(vg_ls, SW)  <+ c_gd_ls * ddt(V(vg_ls, SW));
+
+    // Square-law softplus MOSFET channel turn-on (zero subthreshold leakage when off!)
+    v_sub     = 0.03 * v_in_eff;
+    v_ov_span = 0.55 * v_in_eff;
+
+    vsg_hs = V(VIN, vg_hs_b);
+    arg_h  = (vsg_hs - 0.45 * v_in_eff) / v_sub;
+    if (arg_h > 30.0)       sp_h = arg_h;
+    else if (arg_h < -30.0) sp_h = exp(-30.0);
+    else                    sp_h = ln(1.0 + exp(arg_h));
+    u_hs = (v_sub * sp_h) / v_ov_span;
+    if (u_hs > 1.0) u_hs = 1.0;
+    g_hs = u_hs * u_hs;
+
+    vgs_ls = V(vg_ls, VSS);
+    arg_l  = (vgs_ls - 0.45 * v_in_eff) / v_sub;
+    if (arg_l > 30.0)       sp_l = arg_l;
+    else if (arg_l < -30.0) sp_l = exp(-30.0);
+    else                    sp_l = ln(1.0 + exp(arg_l));
+    u_ls = (v_sub * sp_l) / v_ov_span;
+    if (u_ls > 1.0) u_ls = 1.0;
+    g_ls = u_ls * u_ls;
+
+    // High-side power switch conduction (VIN -> SW)
+    i_hs = V(VIN, SW) * (g_hs / r_on_hs + 1.0 / r_off);
+
+    // Low-side synchronous rectifier conduction (SW -> VSS)
+    // When zcd_en=1 and HS is off, negative-softplus allows freewheeling (V(SW)<0)
+    // while strictly blocking reverse current (V(SW)>0) with zero NDR.
+    // When HS and LS overlap (g_hs>0), full bidirectional shoot-through conducts.
+    v_sw = V(SW, VSS);
+    if (zcd_en == 1) begin
+        arg_zcd = -v_sw / v_zcd_eps;
+        if (arg_zcd > 30.0)       sp_zcd = arg_zcd;
+        else if (arg_zcd < -30.0) sp_zcd = exp(-30.0);
+        else                      sp_zcd = ln(1.0 + exp(arg_zcd));
+        v_neg    = -v_zcd_eps * sp_zcd;
+        v_ls_eff = (1.0 - g_hs) * v_neg + g_hs * v_sw;
+        i_ls     = g_ls * v_ls_eff / r_on_ls + v_sw / r_off;
+    end else begin
+        i_ls = v_sw * (g_ls / r_on_ls + 1.0 / r_off);
+    end
+
+    // Smooth C1-continuous HS and LS body diodes (overflow-safe linear extension)
+    nvt     = n_bd * $vt;
+    exp_max = exp(26.0);
+
+    // LS body diode: anode=VSS, cathode=SW (clamps SW ~ -0.75 V during dead-time)
+    v_bd_ls = V(VSS, SW);
+    arg_ls  = v_bd_ls / nvt;
+    if (arg_ls > 26.0)        i_bd_ls = i_s_bd * (exp_max * (1.0 + (arg_ls - 26.0)) - 1.0);
+    else if (arg_ls < -30.0)  i_bd_ls = -i_s_bd;
+    else                      i_bd_ls = i_s_bd * (exp(arg_ls) - 1.0);
+
+    // HS body diode: anode=SW, cathode=VIN (clamps SW overshoot above VIN + 0.75 V)
+    v_bd_hs = V(SW, VIN);
+    arg_hs  = v_bd_hs / nvt;
+    if (arg_hs > 26.0)        i_bd_hs = i_s_bd * (exp_max * (1.0 + (arg_hs - 26.0)) - 1.0);
+    else if (arg_hs < -30.0)  i_bd_hs = -i_s_bd;
+    else                      i_bd_hs = i_s_bd * (exp(arg_hs) - 1.0);
+
+    // Combine power-stage branch currents
+    I(VIN, SW)  <+ i_hs - i_bd_hs;
+    I(SW, VSS)  <+ i_ls - i_bd_ls + c_sw * ddt(V(SW, VSS));
+
+    // Quiescent bias current
+    I(VIN, VSS) <+ i_q * tanh(v_in_eff / 0.4);
+end
+
+endmodule
