@@ -32,8 +32,8 @@ SKILLS_ROOT = ROOT / "skills"
 
 # Terms prohibited in public process-independent documentation and assets
 LEAK_RE = re.compile(
-    r"tsmc|gf22|fdx|globalfoundries|28nm|28 nm|22nm|22 nm|\bzzs\b|nch_|pch_|"
-    r"_mac\b|crn28|hpc\+|thu-|nesthorn|larain|zhangz|/home/|/usr/pack|"
+    r"tsmc|gf22|fdx|globalfoundries|gpdk045|nmos1v|pmos1v|28nm|28 nm|22nm|22 nm|\bzzs\b|nch_|pch_|"
+    r"_mac\b|crn28|hpc\+|thu-|nesthorn|larain|zhangz|/home/|/usr/pack|peters_01|"
     r"cfmom|rupolym|sc8t|slvt|ulvt|ehvt|raw_materials|sar_logic_11b_diff|"
     r"01-course|02-design|03-nonidealities|04-sampling|05-pvt|06-image|"
     r"taped-out|11b_zzs|sar_11b|bwp12t|sar-adc-11b-zzs|wait --|wait —|ajdust",
@@ -274,6 +274,31 @@ def main() -> int:
     jit = psf_mod.integrate_phase_noise_jitter(f_pn, l_pn, f_carrier_hz=1.0e9, f_low_hz=1e5, f_high_hz=1.1e6)
     expected_rad = math.sqrt(2.0 * 1e-12 * 1.0e6)
     assert abs(jit["rms_phase_rad"] - expected_rad) / expected_rad < 1e-3
+
+    # Test SerDes helpers: sbr_cursor_metrics, eye_diagram_metrics, mixed_mode_s_params
+    t_sbr = np.linspace(0.0, 2.0e-9, 2001)
+    # 1-UI=100ps pulse peaking at 0.5ns with h0=0.3V, h1=0.1V
+    h_syn = 0.3 * np.exp(-0.5 * ((t_sbr - 0.5e-9) / 20e-12) ** 2) + 0.1 * np.exp(-0.5 * ((t_sbr - 0.6e-9) / 20e-12) ** 2)
+    v_sbr = -0.3 + 2.0 * h_syn
+    m_sbr = psf_mod.sbr_cursor_metrics(t_sbr, v_sbr, ui_s=100e-12, t_base_end=0.2e-9)
+    assert abs(m_sbr["h0_mv"] - 300.0) < 2.0 and abs(m_sbr["cursors_mv"]["h1"] - 100.0) < 2.0
+    assert m_sbr["pda_eye_open"] is True
+
+    # Ideal alternating NRZ square wave eye -> full height & width
+    t_eye = np.linspace(0.0, 2.0e-9, 4001)
+    bits_eye = np.where((np.floor(t_eye / 100e-12).astype(int) % 2) == 0, 0.25, -0.25)
+    m_eye = psf_mod.eye_diagram_metrics(t_eye, bits_eye, ui_s=100e-12, t_skip=0.2e-9)
+    assert m_eye["eye_open"] is True and abs(m_eye["eye_height_mv"] - 500.0) < 1.0
+
+    # Mixed-mode S-parameters on symmetric differential through (s31=s42=0.5, cross=0)
+    sp_mock = {
+        "s11": np.array([0.1 + 0j]), "s12": np.array([0.0 + 0j]),
+        "s21": np.array([0.0 + 0j]), "s22": np.array([0.1 + 0j]),
+        "s31": np.array([0.5 + 0j]), "s32": np.array([0.0 + 0j]),
+        "s41": np.array([0.0 + 0j]), "s42": np.array([0.5 + 0j]),
+    }
+    mm = psf_mod.mixed_mode_s_params(sp_mock)
+    assert abs(mm["sdd21"][0] - 0.5) < 1e-12 and abs(mm["sdd11"][0] - 0.1) < 1e-12
 
     # Unit tests for comparator run_cmp_tb.py
     runner_path = SKILLS_ROOT / "sar-adc/assets/tb/comparator/run_cmp_tb.py"

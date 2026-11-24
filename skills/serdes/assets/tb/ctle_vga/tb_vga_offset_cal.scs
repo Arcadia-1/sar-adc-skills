@@ -1,0 +1,57 @@
+// =============================================================================
+// Process-Independent SerDes CTLE / VGA TB — Closed-Loop Offset Calibration
+// =============================================================================
+// Shorts the CTLE/VGA differential inputs (INP = INN = vcm_in), senses the output
+// offset polarity on each slow calibration clock edge, and runs `va_offset_cal_fsm`
+// driving `VOFF_CAL` until the differential output offset crosses zero and `DONE`
+// asserts (verifying residual offset < 1 calibration LSB).
+//
+// DUT interface contract:
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_offset_cal_fsm.va"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    t_clk_cal=10n \
+    n_cycles=160 \
+    v_lsb=1.5m \
+    cload=50f \
+    temp_c=27
+
+parameters t_stop=n_cycles*t_clk_cal
+
+VSUP  (VDD 0) vsource dc=vdd    type=dc
+VGND  (VSS 0) vsource dc=0      type=dc
+VINP  (INP VSS) vsource dc=vcm_in type=dc
+VINN  (INN VSS) vsource dc=vcm_in type=dc
+VBST  (VBOOST VSS) vsource dc=0   type=dc
+VCLK  (CLK_CAL 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_clk_cal delay=t_clk_cal rise=50p fall=50p width=0.5*t_clk_cal
+
+I0 (INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN) dut_ctle_vga
+CLP (OUTP VSS) capacitor c=cload
+CLN (OUTN VSS) capacitor c=cload
+
+// Sense output polarity centered at vdd/2 for the offset calibration FSM
+VBIAS_S (V_MID VSS) vsource dc=0.5*vdd type=dc
+E_SENS  (DATA_SENS V_MID OUTP OUTN) vcvs gain=50
+
+I_CAL (DATA_SENS CLK_CAL VSS CODE_MON VOFF_CAL DONE) va_offset_cal_fsm \
+    vdd=vdd vth=0.5*vdd max_code=31 v_lsb=v_lsb vote_th=4
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate
+
+save OUTP OUTN VOFF_CAL CODE_MON DONE
+saveOptions options save=selected

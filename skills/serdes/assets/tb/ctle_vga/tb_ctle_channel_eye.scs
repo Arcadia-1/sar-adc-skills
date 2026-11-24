@@ -1,0 +1,63 @@
+// =============================================================================
+// Process-Independent SerDes CTLE / VGA TB — Channel + CTLE Eye Opening
+// =============================================================================
+// Drives a PRBS-7 stream (`10 Gb/s`) through `channel_diff_lossy.scs` into the
+// CTLE/VGA DUT and compares the RX eye BEFORE CTLE (`RX_INP - RX_INN`) against
+// the equalized eye AFTER CTLE (`OUTP - OUTN`), plus a parallel SBR replica.
+//
+// DUT interface contract:
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+include "../channel/channel_diff_lossy.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    vdd=1.0 \
+    bit_rate=10G \
+    v_swing=1.6 \
+    v_cm=0.5 \
+    z0=50 \
+    ch_len=0.50 \
+    vboost=0.0 \
+    cload=50f \
+    n_ui=180 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0 rise=5p fall=5p width=0.5*ui
+VBST (VBOOST   VSS) vsource dc=vboost type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0      type=dc
+
+// --- Replica A: PRBS-7 Eye through Channel -> CTLE ---
+I_PRBS (CLK VSS TXP TXN BIT_MON) va_prbs_gen mode=0 v_swing=v_swing v_cm=v_cm t_rf=15p r_src=z0
+I_CH   (TXP TXN RX_INP RX_INN VSS) channel_diff_lossy ch_len=ch_len
+I_CTLE (RX_INP RX_INN VBOOST VOFF_CAL VDD VSS OUTP OUTN) dut_ctle_vga
+CLP    (OUTP VSS) capacitor c=cload
+CLN    (OUTN VSS) capacitor c=cload
+
+// --- Replica B: 1-UI Pulse SBR through Channel -> CTLE ---
+I_SBR_G (CLK VSS STXP STXN SBIT) va_prbs_gen mode=2 pulse_idx=15 v_swing=v_swing v_cm=v_cm t_rf=15p r_src=z0
+I_CH_S  (STXP STXN SRX_INP SRX_INN VSS) channel_diff_lossy ch_len=ch_len
+I_CTLE_S (SRX_INP SRX_INN VBOOST VOFF_CAL VDD VSS SOUTP SOUTN) dut_ctle_vga
+SCLP    (SOUTP VSS) capacitor c=cload
+SCLN    (SOUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save RX_INP RX_INN OUTP OUTN SRX_INP SRX_INN SOUTP SOUTN
+saveOptions options save=selected

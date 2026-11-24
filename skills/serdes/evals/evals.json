@@ -1,0 +1,101 @@
+{
+  "skill_name": "serdes-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How should I partition equalization across TX FFE, RX CTLE, and RX DFE for a 20 dB Nyquist loss backplane link, and why can't DFE replace TX FFE?",
+      "expected_output": "Should explain that TX FFE cancels pre-cursor h_-1 (which causal DFE cannot touch) and light h1 de-emphasis under the sum(|w_k|)=1 peak-power constraint without amplifying RX noise; CTLE cancels broadband channel roll-off at the cost of high-frequency noise boost; DFE cancels sharp post-cursors h1..hN noiselessly subject to the 1-UI timing loop.",
+      "files": ["references/serdes-architecture-and-channel.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I compute mixed-mode differential insertion loss SDD21 and return loss SDD11 from 4-port S-parameters, and verify them alongside differential TDR in Spectre X?",
+      "expected_output": "Should give SDD21 = 0.5*(S31 - S32 - S41 + S42) and SDD11 = 0.5*(S11 - S12 - S21 + S22), Z_TDR = Z0_diff*(1+rho)/(1-rho), and point to assets/tb/channel/tb_channel_sp_tdr.scs, channel_diff_lossy.scs, and analyze_channel.py.",
+      "files": ["references/serdes-architecture-and-channel.md", "assets/tb/channel/tb_channel_sp_tdr.scs"]
+    },
+    {
+      "id": 3,
+      "prompt": "Explain Single-Bit Response (SBR) Peak-Distortion Analysis (PDA) eye height and how to extract pre/main/post cursors alongside a folded PRBS eye in Spectre.",
+      "expected_output": "Should define V_eye_PDA = 2*(|h0| - sum_{k!=0}|h_k|) from an isolated 1-UI pulse response and point to assets/tb/channel/tb_channel_sbr_eye.scs, va_prbs_gen.va (mode=2 SBR, mode=0 PRBS-7), and analyze_channel.py sbr_eye.",
+      "files": ["references/serdes-architecture-and-channel.md", "assets/tb/channel/tb_channel_sbr_eye.scs", "assets/va/va_prbs_gen.va"]
+    },
+    {
+      "id": 4,
+      "prompt": "Size a constant-resistance Butterworth bridged T-coil for R_L = 50 ohm and C_L = 500 fF ESD/pad capacitance, and state the expected bandwidth boost and S11.",
+      "expected_output": "Should use zeta = 1/sqrt(2) (4*zeta^2 = 2): L1 = L2 = 0.375*C_L*R_L^2 = 468.75 pH, series-aiding coupling k = +1/3 (0.333), C_B = C_L/8 = 62.5 fF, achieving constant Z_in = 50 ohm (ideal S11 -> -inf) and ~2.83x (sqrt(8)) -3 dB BW boost (~6.37 GHz -> ~18.0 GHz), referencing assets/tb/tcoil/tb_tcoil_bw.scs.",
+      "files": ["references/serdes-architecture-and-channel.md", "assets/tb/tcoil/tb_tcoil_bw.scs"]
+    },
+    {
+      "id": 5,
+      "prompt": "Compare CML and VML/SST SerDes TX output drivers in terms of power, supply headroom, SDD11 return loss, and PSRR.",
+      "expected_output": "Should show VML/SST draws ~4x lower static current than CML for the same swing into 100 ohm and runs at lower VDD, while CML naturally provides superior wideband SDD11 and supply rejection (VML requires ZQ impedance calibration and an LDO).",
+      "files": ["references/tx-cml-vml-and-ffe.md"]
+    },
+    {
+      "id": 6,
+      "prompt": "Calculate the de-emphasis in dB for a 2-tap TX FFE with w0 = 0.75 and w1 = -0.25, and explain how to verify 4-tap FFE channel equalization and SDD11 in Spectre X.",
+      "expected_output": "Should compute 20*log10((0.75 - 0.25)/(0.75 + 0.25)) = -6.02 dB under |w0|+|w1|=1, note over-emphasis shrinks SNR, and reference assets/tb/tx_ffe/ (tb_tx_s11.scs, tb_tx_ffe_channel.scs, analyze_tx_ffe.py) and assets/va/va_tx_ffe_4tap.va.",
+      "files": ["references/tx-cml-vml-and-ffe.md", "assets/tb/tx_ffe/tb_tx_ffe_channel.scs", "assets/va/va_tx_ffe_4tap.va"]
+    },
+    {
+      "id": 7,
+      "prompt": "Derive the zero, poles, DC gain, and peaking boost of a source-degenerated RC CTLE and explain where to place f_p1 and f_p2 for a 10 Gb/s NRZ link.",
+      "expected_output": "Should give w_z = 1/(Rs*Cs), w_p1 = (1 + gm*Rs/2)/(Rs*Cs), w_p2 = 1/(Rd*Cp), peaking ~= 20*log10(1 + gm*Rs/2), place f_p1 near Nyquist (~5-6 GHz) with f_p2 >= 1.5-2x f_p1, and warn against single-stage over-peaking and noise amplification.",
+      "files": ["references/rx-ctle-vga-and-offset.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "How do I measure CTLE peaking, -3 dB bandwidth, high-frequency-shaped output RMS noise, and before/after channel eye opening in Spectre X?",
+      "expected_output": "Should point to assets/tb/ctle_vga/tb_ctle_ac_noise.scs, tb_ctle_channel_eye.scs, analyze_ctle_vga.py, and assets/va/va_ctle_vga.va.",
+      "files": ["references/rx-ctle-vga-and-offset.md", "assets/tb/ctle_vga/tb_ctle_ac_noise.scs", "assets/tb/ctle_vga/tb_ctle_channel_eye.scs"]
+    },
+    {
+      "id": 9,
+      "prompt": "Why does a multi-stage CTLE + VGA front end require digital offset calibration, and how do I verify the calibration loop in Spectre?",
+      "expected_output": "Should explain that 10-20 dB DC gain amplifies a few mV of input mismatch into tens of mV of eye-closing output offset, describe shorted-input majority-vote FSM + signed offset IDAC convergence, and reference assets/tb/ctle_vga/tb_vga_offset_cal.scs and va_offset_cal_fsm.va.",
+      "files": ["references/rx-ctle-vga-and-offset.md", "assets/tb/ctle_vga/tb_vga_offset_cal.scs", "assets/va/va_offset_cal_fsm.va"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do I separate static input offset from dynamic hysteresis/memory when characterizing a high-speed CML or StrongARM data slicer in Spectre?",
+      "expected_output": "Should recommend a bidirectional triangle input ramp (-V_span -> +V_span -> -V_span) clocked across cycles, extracting V_os = 0.5*(V_th,up + V_th,dn) and Hys = V_th,up - V_th,dn via assets/tb/slicer_dfe/tb_slicer_hys_vtf.scs and analyze_slicer_dfe.py vtf.",
+      "files": ["references/dfe-slicer-and-sslms.md", "assets/tb/slicer_dfe/tb_slicer_hys_vtf.scs"]
+    },
+    {
+      "id": 11,
+      "prompt": "What is the 1-UI timing bottleneck in a DFE, and how does speculative (loop-unrolled) 1st-tap DFE solve it?",
+      "expected_output": "Should state t_ck2q + t_tap1_DAC + t_sum_settle + t_setup < 1 UI, explain that loop-unrolling uses two parallel slicers with pre-shifted +/-h1 thresholds selected by a 2:1 MUX to remove slicer regeneration from the 1-UI critical path, while taps h2..hM use direct current summing.",
+      "files": ["references/dfe-slicer-and-sslms.md"]
+    },
+    {
+      "id": 12,
+      "prompt": "How do I verify a 3-tap DFE opening a completely closed post-cursor ISI eye with zero bit errors in Spectre X?",
+      "expected_output": "Should reference assets/tb/slicer_dfe/tb_dfe_3tap_eye.scs, analyze_slicer_dfe.py dfe_eye, va_dfe_3tap.va, and va_channel_isi.va, comparing closed before-DFE eye against open after-DFE summer eye and checking latency-aligned bit errors.",
+      "files": ["references/dfe-slicer-and-sslms.md", "assets/tb/slicer_dfe/tb_dfe_3tap_eye.scs", "assets/va/va_dfe_3tap.va"]
+    },
+    {
+      "id": 13,
+      "prompt": "Write the Sign-Sign LMS (SS-LMS) update equations for VGA gain and DFE taps h1..h3, and explain why wrong sign polarity or an un-gated DONE signal breaks adaptation.",
+      "expected_output": "Should give g[k+1] = g[k] - mu_g*sgn(e[k])*sgn(d[k]) (negative polarity) and h_m[k+1] = h_m[k] + mu_h*sgn(e[k])*sgn(d[k-m]) (positive polarity), warn that flipped polarity drives taps to rails and that DONE must gate the weight update (1 - frozen), referencing assets/va/va_sslms_adapt.va and assets/tb/sslms/tb_sslms_adapt.scs.",
+      "files": ["references/dfe-slicer-and-sslms.md", "assets/va/va_sslms_adapt.va", "assets/tb/sslms/tb_sslms_adapt.scs"]
+    },
+    {
+      "id": 14,
+      "prompt": "When running SerDes Spectre simulations, how should I choose between Spectre X (+preset=cx, +preset=ax, +preset=mx, +postlpreset), Spectre XPS, and legacy APS, and what solver-override gotcha should I watch for?",
+      "expected_output": "Should recommend Spectre X +preset=cx for golden signoff (T-coil, S-param, SBR, slicer, precision eye), +preset=ax for fast analog iteration, +preset=mx for large digital-heavy top-level runs, +postlpreset for post-layout RC optimization, note XPS requires +cktpreset and is FastSPICE-only, and highlight that Spectre X ignores netlist reltol/errpreset unless -preset_override is passed.",
+      "files": ["references/simulation-and-verification.md"]
+    },
+    {
+      "id": 15,
+      "prompt": "Why can a lossy Spectre mtline channel with gdloss produce unphysical pre-cursor ringing before the propagation delay, and how do I fix it?",
+      "expected_output": "Should explain that bare G(f) = g + gdloss*f has zero imaginary part and violates Kramers-Kronig causality; fix by specifying causal Djordjevic-Sarkar cutoff/onset frequencies fgdloss and fgdloss1 (as in assets/tb/channel/channel_diff_lossy.scs), or enabling causality/passivity enforcement on nport Touchstone files.",
+      "files": ["references/serdes-architecture-and-channel.md", "references/simulation-and-verification.md", "assets/tb/channel/channel_diff_lossy.scs"]
+    },
+    {
+      "id": 16,
+      "prompt": "Which behavioral Verilog-A models are bundled in skills/serdes/assets/va/ to build a full Phase-1 behavioral SerDes transceiver link in Spectre X?",
+      "expected_output": "Should list va_prbs_gen.va, va_tx_ffe_4tap.va, va_ctle_vga.va, va_dfe_3tap.va, va_sslms_adapt.va, va_offset_cal_fsm.va, and va_channel_isi.va (paired with passive channel_diff_lossy.scs).",
+      "files": ["SKILL.md", "assets/va/va_prbs_gen.va", "assets/va/va_tx_ffe_4tap.va", "assets/va/va_ctle_vga.va", "assets/va/va_dfe_3tap.va"]
+    }
+  ]
+}

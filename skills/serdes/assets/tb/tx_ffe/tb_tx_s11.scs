@@ -1,0 +1,48 @@
+// =============================================================================
+// Process-Independent SerDes TX TB — Differential Output Return Loss (SDD11)
+// =============================================================================
+// Measures TX differential output return loss `SDD11(f)` from 10 MHz to 20 GHz
+// using 2-port `sp` analysis (`P1` on `OUTP`, `P2` on `OUTN`, 50 ohm each) to
+// verify 100-ohm differential impedance matching for CML or VML/SST drivers.
+//
+// DUT interface contract (7-pin TX driver / FFE):
+//   subckt dut_tx INP INN CLK VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    z0=50 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Hold TX inputs at a static DC logic level while probing output impedance
+VINP (INP VSS) vsource dc=(vcm_in+0.2) type=dc
+VINN (INN VSS) vsource dc=(vcm_in-0.2) type=dc
+VCLK (CLK VSS) vsource dc=0            type=dc
+
+I0 (INP INN CLK VDD VSS OUTP OUTN) dut_tx
+
+// AC-coupled 50-ohm S-parameter ports so TX DC bias is undisturbed
+CBP (OUTP PORT_P) capacitor c=1u
+CBN (OUTN PORT_N) capacitor c=1u
+P1  (PORT_P VSS)  port r=z0 num=1 type=sine
+P2  (PORT_N VSS)  port r=z0 num=2 type=sine
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dcOp dc
+sp   sp ports=[P1 P2] start=10M stop=20G dec=40 annotate=status
+
+save OUTP OUTN
+saveOptions options save=selected

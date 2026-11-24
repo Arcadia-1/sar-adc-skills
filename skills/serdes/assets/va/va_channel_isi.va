@@ -1,0 +1,59 @@
+// Process-independent Controlled-Cursor SerDes ISI Channel Behavioral Model
+//
+// Produces an exact discrete-symbol ISI response with smooth continuous edges:
+//   y[k] = h_pre * d[k] + h0 * d[k-1] + h1 * d[k-2] + h2 * d[k-3] + h3 * d[k-4]
+//
+// Use for deterministic DFE tap-cancellation and Sign-Sign LMS convergence
+// benchmarking where exact ground-truth cursors (h0, h1, h2, h3) must be known.
+// For full-wave frequency-domain SDD21/SDD11 + TDR + continuous-time eye
+// verification, use the passive RLGC channel `assets/tb/channel/channel_diff_lossy.scs`
+// (or your own Touchstone `nport file="channel.s4p"`).
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_channel_isi(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real vth   = 0.50   from (0:inf);
+parameter real v_cm  = 0.50;
+parameter real h_pre = 0.0;   // pre-cursor weight [V per +/-1 symbol]
+parameter real h0    = 0.25;  // main cursor weight [V per +/-1 symbol]
+parameter real h1    = 0.14;  // 1st post-cursor ISI [V per +/-1 symbol]
+parameter real h2    = 0.06;  // 2nd post-cursor ISI [V per +/-1 symbol]
+parameter real h3    = 0.03;  // 3rd post-cursor ISI [V per +/-1 symbol]
+parameter real t_rf  = 15e-12 from (1e-12:inf);
+
+real d0, d1, d2, d3, d4, y_out, y_sm;
+
+analog begin
+    @(initial_step) begin
+        d0 = -1.0;
+        d1 = -1.0;
+        d2 = -1.0;
+        d3 = -1.0;
+        d4 = -1.0;
+        y_out = h_pre * d0 + h0 * d1 + h1 * d2 + h2 * d3 + h3 * d4;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        d4 = d3;
+        d3 = d2;
+        d2 = d1;
+        d1 = d0;
+        d0 = (V(INP, INN) >= 0.0) ? 1.0 : -1.0;
+        y_out = h_pre * d0 + h0 * d1 + h1 * d2 + h2 * d3 + h3 * d4;
+    end
+
+    y_sm = transition(y_out, 0.0, t_rf, t_rf);
+    V(OUTP, VSS) <+ v_cm + 0.5 * y_sm;
+    V(OUTN, VSS) <+ v_cm - 0.5 * y_sm;
+end
+
+endmodule

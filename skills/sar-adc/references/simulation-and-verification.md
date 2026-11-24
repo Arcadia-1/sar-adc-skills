@@ -44,14 +44,15 @@ Use `adctoolbox.find_coherent_frequency(fs, fin_target, N)` to pick $M$ cleanly.
 
 ### Solver Modes
 
-| Mode | Flag | Accuracy vs. APS (typical 11-bit SAR) | Use case |
+| Mode | Flag | Accuracy vs. Golden Reference | Use case |
 |---|---|---|---|
-| Classic Spectre / APS | `(none)` / `+aps` | Reference | Final signoff, comparator noise/metastability |
-| Spectre X `cx` / `ax` | `+preset=cx` / `+preset=ax +mt` | `ax` within ~0.03 bit ENOB of APS | Fast accurate iteration when Spectre X is licensed |
-| Spectre X `mx` | `+preset=mx +mt` | ~0.3 bit ENOB loss possible | Fast coarse functional sweeps only — **validate against `aps`/`ax` before signoff** |
-| Spectre X `lx` / `vx` | `+preset=lx` / `+preset=vx +mt` | Multi-bit ENOB degradation | Do **not** use for SAR ADC ENOB or comparator accuracy |
+| **Spectre X `cx`** | `+preset=cx +mt` | **Golden highest accuracy** (`conservative_sigglobal`) | **Preferred signoff**, comparator PSS+PNOISE/metastability, precision ENOB |
+| **Spectre X `ax`** | `+preset=ax +mt` | Within ~0.03 bit ENOB of `cx` / APS | Fast accurate iteration when Spectre X is licensed |
+| Classic Spectre / APS | `(none)` / `+aps` | Reference fallback | Fallback when Spectre X licenses are unavailable |
+| Spectre X `mx` | `+preset=mx +mt` | ~0.3 bit ENOB loss possible | Fast coarse functional sweeps only — **validate against `cx`/`ax` before signoff** |
+| Spectre X `lx` / `vx` | `+preset=lx` / `+preset=vx +mt` | Multi-bit ENOB degradation | Large post-layout RC screening only (pair with `+postlpreset=cx|ax`); do **not** use for SAR ADC ENOB signoff |
 
-*(Always verify solver tolerances on your own circuit; regenerative comparators are especially sensitive to loose presets.)*
+*(Note: Spectre X overrides netlist `reltol`/`errpreset` by default unless `-preset_override` is passed; always verify solver tolerances on regenerative comparators and high-ENOB ADCs.)*
 
 ### Controlling PSF Size & Speed (Critical Gotchas)
 
