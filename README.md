@@ -4,7 +4,7 @@ Process-independent Analog & Mixed-Signal (AMS) IC design skills, Verilog-A beha
 
 > Formerly `sar-adc-skills` — organized into a clean, non-overlapping multi-skill AMS repository where every circuit domain is an independently installable AI agent skill sharing a unified, process-independent Spectre verification foundation.
 
-## Included Skills (7 Domains)
+## Included Skills (8 Domains)
 
 See [`skills/README.md`](skills/README.md) for the full domain taxonomy and canonical directory contract.
 
@@ -17,10 +17,11 @@ See [`skills/README.md`](skills/README.md) for the full domain taxonomy and cano
 | **Analog Core** | [**`skills/opamp-ota/`**](skills/opamp-ota/SKILL.md) | Single-ended & fully differential OpAmps/OTAs (5T, telescopic, folded cascode, 2-stage Miller + `R_z`, CMFB), 29-item industrial signoff suite (`iprobe`/Tian DM+CM `stb`, CMRR/4R-bridge/PSRR±/noise, multi-method ICMR/swing-vs-$R_L$/VIDR, $Z_{\text{out,DM}}$/$Z_{\text{out,CM}}$/OTA $g_m$, slew, coherent THD/$\text{BW}_{\text{full}}$, power-ramp & supply-surge) | 4 | 2 models | 2 suites (`single_ended`, `fully_diff` — 16 `.scs` decks) | 20 |
 | **Power & Reference** | [**`skills/ldo/`**](skills/ldo/SKILL.md) | External-cap PMOS-pass, capless (OCL), and NMOS-pass LDOs: dropout, line/load reg, light-load `stb`, PSRR(f), $|Z_{\text{out}}(f)|$, noise, load & line step transients | 3 | 2 models | 1 suite (4 `.scs` decks) | 10 |
 | **Power & Reference** | [**`skills/bandgap/`**](skills/bandgap/SKILL.md) | Classic Kuijk/Brokaw (~1.22 V) & Banba sub-1 V bandgap references: PTAT+CTAT cancellation, 2nd-order curvature TC (`ppm/C`), trimming, PTAT/ZTC bias, startup dead-state, dual-feedback core `stb`, PSRR/noise | 2 | 2 models | 1 suite (4 `.scs` decks) | 10 |
+| **Power & Reference** | [**`skills/supervisor/`**](skills/supervisor/SKILL.md) | Nano-power Power-On Reset (POR), 3-bit programmable Brown-Out Reset (BOR), ratiometric BJT/CMOS On-Chip Temperature Sensor, & hysteretic Over-Temperature Shutdown (TSD): thresholds/hysteresis, low-VDD clamp, 3-decade ramp rates, glitch immunity, `-40..125°C` 1-pt/2-pt curvature, `°C/V` PSRR, `mK_rms` noise & chopping | 3 | 2 models | 2 suites (`por_bor`, `temp_sensor` — 7 `.scs` decks) | 12 |
 
 ## Shared Verification Foundation (`common/`)
 
-All 7 skills share a single, zero-PDK verification core under [`common/`](common/README.md):
+All 8 skills share a single, zero-PDK verification core under [`common/`](common/README.md):
 
 - **[`common/psf_utils.py`](common/psf_utils.py)** — Zero-dependency Python (`numpy` only) Spectre PSF ASCII parser (real `tran`/`dc`/`noise`/`pss`/`pnoise` + complex `ac`/`stb`/`sp`), `extract_uniform_strobe`, coherent single-tone FFT (`ENOB`/`SNDR`/`SNR`/`SFDR`/`THD`/`HD2`/`HD3`), coherent two-tone `IMD3`, endpoint `DNL`/`INL`, IEEE-1139 phase-noise-to-RMS-jitter integration, and SerDes `SBR`/`eye`/`mixed-mode S-param` extractors.
 - **[`common/models_generic_bsim4.scs`](common/models_generic_bsim4.scs)** — Synthetic, foundry-free Spectre BSIM4 model pair (`nch` / `pch`) with thermal noise enabled for out-of-the-box smoke verification when no PDK is attached.
@@ -30,7 +31,7 @@ All guides, Verilog-A models, and Spectre testbenches are **100% process-indepen
 
 ## Quick Start
 
-Install all 7 skills (or only the domains you need) using [`scripts/install_skills.sh`](scripts/install_skills.sh):
+Install all 8 skills (or only the domains you need) using [`scripts/install_skills.sh`](scripts/install_skills.sh):
 
 ```bash
 # Install all skills into .claude/skills (default)
@@ -83,6 +84,11 @@ python3 -B scripts/validate_repo.py
 - **Spectre TBs**: [assets/tb/](skills/bandgap/assets/tb/README.md) (`tb_bgr_temp_line.scs`, `tb_bgr_startup.scs`, `tb_bgr_psrr_noise.scs`, `tb_bgr_stb.scs`, `analyze_bandgap.py`).
 - **Verilog-A**: `va_bandgap`, `va_bgr_core`.
 
+### 8. Supervisor (POR/BOR & Temperature Sensor / TSD) Skill (`skills/supervisor/`)
+- **References**: [por-bor-design.md](skills/supervisor/references/por-bor-design.md), [temperature-sensor-and-tsd.md](skills/supervisor/references/temperature-sensor-and-tsd.md), [simulation-and-verification.md](skills/supervisor/references/simulation-and-verification.md).
+- **Spectre X TBs** ([index](skills/supervisor/assets/tb/README.md)): [por_bor/](skills/supervisor/assets/tb/por_bor/README.md) (4 decks: thresholds/hysteresis, 3-decade ramps, glitch immunity, 3-bit BOR levels) & [temp_sensor/](skills/supervisor/assets/tb/temp_sensor/README.md) (3 decks: `-40..125°C` linearity/curvature, supply sensitivity/noise/chopping, hysteretic TSD).
+- **Verilog-A**: `va_por_bor`, `va_temp_sensor_tsd`.
+
 ## Repository Layout
 
 ```text
@@ -99,7 +105,8 @@ ams-skills/
 │   ├── serdes/                   # [Wireline/SerDes] Channel, TX FFE, CTLE, DFE, SS-LMS, T-coil, CDR, PAM4, Jitter, Link Top (10 TB suites, 35 decks, 15 VA)
 │   ├── opamp-ota/                # [Analog Core]     OpAmp/OTA & CMFB (2 TB suites, 16 decks, 2 VA)
 │   ├── ldo/                      # [Power & Ref]     LDO Regulators (4 TBs, 2 VA)
-│   └── bandgap/                  # [Power & Ref]     Bandgap References (4 TBs, 2 VA)
+│   ├── bandgap/                  # [Power & Ref]     Bandgap References (4 TBs, 2 VA)
+│   └── supervisor/               # [Power & Ref]     POR/BOR & Temp Sensor / TSD (2 TB suites, 7 decks, 2 VA)
 └── .github/workflows/
     └── validate.yml              # GitHub Actions validation workflow
 ```

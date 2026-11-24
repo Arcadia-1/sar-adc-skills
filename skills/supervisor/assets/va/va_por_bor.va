@@ -1,0 +1,112 @@
+// Process-independent Nano-Power Power-On Reset (POR) & Programmable Brown-Out
+// Reset (BOR) Supervisor Verilog-A Behavioral Model
+//
+// Models physical supervisory IC behavior:
+//   - 3-bit programmable threshold ladder via `VTRIM` (codes 0..7):
+//       V_POR+(code) = v_por_base + code * v_step (+ optional MSB DNL mismatch)
+//       Default code = 3 -> V_POR+ = 1.050 V, V_POR- = 0.950 V (100 mV hysteresis)
+//   - Saddle-node-compensated continuous hysteretic comparator (C-infinity smooth,
+//     exact rising/falling trip points without discontinuous event traps)
+//   - Asymmetric analog RC brown-out deglitcher (`tau_glitch` falling, fast rising):
+//       rejects short negative VDD spikes (< 0.693 * tau_glitch) while reliably
+//       detecting sustained brown-out events
+//   - Constant-current linear release delay timer (`t_rst`), immediately reset on
+//     any qualified brown-out so full hold time is guaranteed on recovery
+//   - Active-low `RSTB` output with low-VDD pull-down clamp (zero cold-boot glitch;
+//     optional `fault_low_vdd_glitch=1` injects a weak-NMOS cold-boot bump)
+//   - Nano-power quiescent current (`i_q`, default 150 nA)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_por_bor(
+    input  electrical VDD,
+    input  electrical VTRIM,
+    output electrical RSTB,
+    input  electrical VSS
+);
+
+parameter real v_por_base   = 0.90    from (0.2:4.5);   // rising threshold at code 0 [V]
+parameter real v_step       = 0.050   from (0.005:0.5); // BOR threshold step [V/LSB]
+parameter real v_hys        = 0.100   from [0.0:1.0);   // comparator hysteresis V_POR+ - V_POR- [V]
+parameter real dnl_msb_lsb  = 0.04    from (-0.5:0.5);  // MSB (code 3->4) resistor-ladder mismatch [LSB]
+parameter real tau_glitch   = 3.5e-6  from (1e-9:inf);  // falling brown-out RC deglitcher tau [s]
+parameter real t_rst        = 20.0e-6 from (1e-7:inf);  // POR/BOR release delay timer [s]
+parameter real tau_cmp      = 20.0e-9 from (1e-10:inf); // comparator core time constant [s]
+parameter real v_cmp_soft   = 0.5e-3  from (1e-5:0.05); // comparator transition softness [V]
+parameter real i_q          = 150.0e-9 from [0.0:inf);  // nominal quiescent supply current [A]
+parameter real vdd_nom      = 1.8     from (0.5:5.5);   // nominal supply voltage [V]
+parameter real r_out        = 2.0e3   from (10.0:1e6);  // RSTB driver output resistance [ohm]
+parameter integer fault_low_vdd_glitch = 0 from [0:1];  // 1=inject cold-boot low-VDD spurious pulse
+
+electrical n_cmp, n_flt, n_tmr;
+real v_dd, code, b2, v_rise, v_mid, v_hys_int;
+real r_sn, root_sn, s_sn, u_sn, v_corr;
+real s_cmp, v_eff_th, cmp_tgt;
+real v_flt, d_flt, g_fall, tau_rise, tau_eff, ok_flt;
+real v_tmr, k_chg, i_chg, i_dis, rst_logic;
+real g_bump, v_glitch, v_rstb_tgt, g_iq, i_dd_q;
+
+analog begin
+    v_dd = V(VDD, VSS);
+
+    // 3-bit programmable BOR threshold code (0..7; nominal code 3 -> 1.05 V)
+    code = V(VTRIM, VSS);
+    if (code < 0.0)
+        code = 0.0;
+    if (code > 7.0)
+        code = 7.0;
+    b2     = 0.5 * (1.0 + tanh((code - 3.5) / 0.05));
+    v_rise = v_por_base + (code + dnl_msb_lsb * b2) * v_step;
+    v_mid  = v_rise - 0.5 * v_hys;
+
+    // Exact saddle-node offset compensation so physical trip points hit
+    // v_rise (rising) and v_rise - v_hys (falling) cleanly
+    if (v_hys > 2.2 * v_cmp_soft) begin
+        r_sn      = 2.0 * v_cmp_soft / v_hys;
+        root_sn   = sqrt(1.0 - r_sn);
+        s_sn      = 0.5 * (1.0 - root_sn);
+        u_sn      = 0.5 * ln((1.0 + root_sn) / (1.0 - root_sn));
+        v_corr    = v_hys * s_sn + v_cmp_soft * u_sn;
+        v_hys_int = v_hys + 2.0 * v_corr;
+    end else begin
+        v_hys_int = 0.0;
+    end
+
+    // Stage 1: Hysteretic supply comparator state s_cmp in [0, 1]
+    s_cmp    = V(n_cmp, VSS);
+    v_eff_th = v_mid + 0.5 * v_hys_int * (1.0 - 2.0 * s_cmp);
+    cmp_tgt  = 0.5 * (1.0 + tanh((v_dd - v_eff_th) / v_cmp_soft));
+    I(n_cmp, VSS) <+ tau_cmp * ddt(s_cmp) + (s_cmp - cmp_tgt);
+
+    // Stage 2: Asymmetric RC brown-out deglitcher (tau_glitch on falling dips,
+    // fast recovery on rising edges so rejected glitches clear quickly)
+    v_flt    = V(n_flt, VSS);
+    d_flt    = s_cmp - v_flt;
+    g_fall   = 0.5 * (1.0 - tanh(d_flt / 0.02));
+    tau_rise = (tau_glitch < 0.2e-6) ? tau_glitch : 0.2e-6;
+    tau_eff  = tau_rise + (tau_glitch - tau_rise) * g_fall;
+    I(n_flt, VSS) <+ ddt(v_flt) - d_flt / tau_eff;
+    ok_flt   = 0.5 * (1.0 + tanh((v_flt - 0.50) / 0.02));
+
+    // Stage 3: Linear POR/BOR release delay timer (exact t_rst rise, 50 ns reset)
+    v_tmr = V(n_tmr, VSS);
+    k_chg = 0.90 / t_rst;
+    i_chg = ok_flt * k_chg * tanh((1.0 - v_tmr) / 0.02);
+    i_dis = (1.0 - ok_flt) * (-v_tmr / 50.0e-9);
+    I(n_tmr, VSS) <+ ddt(v_tmr) - i_chg - i_dis;
+    rst_logic = 0.5 * (1.0 + tanh((v_tmr - 0.90) / 0.015));
+
+    // Stage 4: Active-low RSTB driver with low-VDD clamp (optional fault injection)
+    g_bump     = exp(-pow((v_dd - 0.45) / 0.12, 2.0));
+    v_glitch   = (fault_low_vdd_glitch != 0) ? (0.38 * g_bump * (1.0 - rst_logic)) : 0.0;
+    v_rstb_tgt = v_dd * rst_logic + v_glitch;
+    I(RSTB, VSS) <+ (V(RSTB, VSS) - v_rstb_tgt) / r_out;
+
+    // Nano-power quiescent current draw from VDD
+    g_iq   = 0.5 * (1.0 + tanh((v_dd - 0.35) / 0.08));
+    i_dd_q = i_q * g_iq * (1.0 + 0.04 * (v_dd - vdd_nom)) + v_dd * 1e-10;
+    I(VDD, VSS) <+ i_dd_q;
+end
+
+endmodule

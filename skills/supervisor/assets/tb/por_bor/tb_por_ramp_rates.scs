@@ -1,0 +1,82 @@
+// =============================================================================
+// Process-Independent POR/BOR TB — Multi-Decade Supply Ramp-Rate Stress
+// =============================================================================
+// Exercises three cold-boot power-up ramp speeds spanning >2.5 decades via
+// `alter` switching:
+//   1. `tran_fast` : 10 us fast ramp   (0 -> 1.8 V)
+//   2. `tran_med`  : 200 us medium ramp (0 -> 1.8 V)
+//   3. `tran_slow` : 4 ms slow ramp    (0 -> 1.8 V)
+// Verifies monotonic RSTB release, consistent release delay timer `t_rst`,
+// and absence of cold-boot low-VDD spurious pulses across all ramp rates.
+//
+// DUT interface contract (4-pin POR/BOR Supervisor):
+//   subckt dut_por_bor VDD VTRIM RSTB VSS
+//   ends dut_por_bor
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.8 \
+    vtrim_code=3 \
+    en_fast=1 \
+    en_med=0 \
+    en_slow=0 \
+    cload=1p \
+    temp_c=27
+
+// 1. Fast 10 us supply ramp (1 us .. 11 us)
+VSUP_FAST (v_fast 0) vsource type=pwl wave=[ \
+    0     0 \
+    1u    0 \
+    11u   vdd_nom \
+    60u   vdd_nom ]
+
+// 2. Medium 200 us supply ramp (5 us .. 205 us)
+VSUP_MED (v_med 0) vsource type=pwl wave=[ \
+    0     0 \
+    5u    0 \
+    205u  vdd_nom \
+    300u  vdd_nom ]
+
+// 3. Slow 4 ms supply ramp (20 us .. 4020 us)
+VSUP_SLOW (v_slow 0) vsource type=pwl wave=[ \
+    0      0 \
+    20u    0 \
+    4.02m  vdd_nom \
+    4.50m  vdd_nom ]
+
+// Multiplexed VDD drive + 0 V ammeter
+E_F (v_drv v_m1  v_fast 0) vcvs gain=en_fast
+E_M (v_m1  v_m2  v_med  0) vcvs gain=en_med
+E_S (v_m2  0     v_slow 0) vcvs gain=en_slow
+VSUP_MON (v_drv VDD) vsource dc=0 type=dc
+VGND     (VSS   0)   vsource dc=0 type=dc
+VTRM     (VTRIM 0)   vsource dc=vtrim_code type=dc
+
+I0 (VDD VTRIM RSTB VSS) dut_por_bor
+CL (RSTB VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Run 1: Fast 10 us ramp
+tran_fast tran stop=60u errpreset=conservative maxstep=0.2u
+
+// Run 2: Medium 200 us ramp
+alt_m1 alter param=en_fast value=0
+alt_m2 alter param=en_med  value=1
+tran_med tran stop=300u errpreset=conservative maxstep=1u
+
+// Run 3: Slow 4 ms ramp
+alt_s1 alter param=en_med  value=0
+alt_s2 alter param=en_slow value=1
+tran_slow tran stop=4.5m errpreset=conservative maxstep=10u
+
+save VDD RSTB VSUP_MON:p
+saveOptions options save=selected
