@@ -1,0 +1,50 @@
+// =============================================================================
+// Process-Independent LDO Testbench — PSRR(f), Output Impedance |Zout(f)| & Noise
+// =============================================================================
+// Two matched closed-loop LDO replicas in one fast run:
+//   - I_PSRR : 1 V AC on VDD -> PSRR(f) = -20*log10(|VOUT/VDD|) + integrated `noise`
+//   - I_ZOUT : 1 A AC injected into VOUT_Z -> |Z_out(f)| = |V(VOUT_Z)| [ohm]
+//
+// DUT interface contract:
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    iload=1m \
+    cload=100p \
+    resr=0.5 \
+    temp_c=27
+
+// 1. PSRR & Noise replica
+VSUP   (VDD 0)      vsource dc=vdd_in mag=1 type=dc
+VGND   (VSS 0)      vsource dc=0            type=dc
+VVREF  (VREF 0)     vsource dc=vref         type=dc
+I_PSRR (VDD VREF VOUT VOUT VSS) dut_ldo
+ILOAD1 (VOUT VSS)    isource dc=iload type=dc
+RESR1  (VOUT V_C1)   resistor r=resr
+CLOAD1 (V_C1 VSS)    capacitor c=cload
+
+// 2. Output Impedance |Zout(f)| replica (1 A AC current injection into VOUT_Z)
+VSUP2  (VDD2 0)     vsource dc=vdd_in type=dc
+I_ZOUT (VDD2 VREF VOUT_Z VOUT_Z VSS) dut_ldo
+ILOAD2 (VOUT_Z VSS) isource dc=iload mag=1 type=dc
+RESR2  (VOUT_Z V_C2) resistor r=resr
+CLOAD2 (V_C2 VSS)    capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac    ac start=1 stop=10G dec=20 annotate=status
+noise (VOUT 0) noise start=10 stop=100M dec=20 annotate=status
+
+save VOUT VDD VOUT_Z
+saveOptions options save=selected

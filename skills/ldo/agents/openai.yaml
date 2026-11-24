@@ -1,0 +1,7 @@
+interface:
+  display_name: "LDO Regulator Design"
+  short_description: "Engineering guide and Spectre verification toolkit for PMOS-pass and capless LDOs"
+  default_prompt: "Use $ldo-skill to design, compensate, size, or verify an LDO regulator in Spectre."
+
+policy:
+  allow_implicit_invocation: true

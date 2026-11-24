@@ -1,0 +1,37 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — Temperature & Supply Line Sweeps
+// =============================================================================
+// Runs two DC sweeps in one simulation:
+//   - `dc_temp`: sweeps `temp` from -40 C to +125 C -> box-method TC [ppm/C], peak T
+//   - `dc_line`: sweeps `vdd_in` from 0 V to 1.4 V  -> V_DD,min headroom & line reg
+//
+// DUT interface contract (3-pin Bandgap Reference):
+//   subckt dut_bandgap VDD VREF VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.0 \
+    cload=1p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd_in type=dc
+VGND (VSS 0) vsource dc=0      type=dc
+
+I0 (VDD VREF VSS) dut_bandgap
+CL (VREF VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_temp dc param=temp   start=-40 stop=125 step=5
+dc_line dc param=vdd_in start=0.0 stop=1.4 step=0.02
+
+save VREF VDD VSUP:p
+saveOptions options save=selected

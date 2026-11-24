@@ -1,0 +1,67 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Differential Step & Settling
+// =============================================================================
+// Applies a large-signal differential input step in resistive inverting-gain (-1)
+// configuration and measures:
+//   - Differential slew rate SR_diff [V/us]
+//   - Differential 0.1% and 0.01% settling time [ns]
+//   - Output common-mode disturbance max(|0.5*(VOP+VON) - VOCM|) [mV]
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    vstep_diff=0.4 \
+    cload=2p \
+    rf=100k \
+    rcm=500k \
+    t_step=100n \
+    t_stop=600n \
+    tr=100p \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+// Differential step from -vstep_diff/2 to +vstep_diff/2
+VSP (IN_P 0) vsource type=pwl wave=[ \
+    0           (vocm-0.25*vstep_diff) \
+    t_step      (vocm-0.25*vstep_diff) \
+    (t_step+tr) (vocm+0.25*vstep_diff) \
+    t_stop      (vocm+0.25*vstep_diff) ]
+VSN (IN_N 0) vsource type=pwl wave=[ \
+    0           (vocm+0.25*vstep_diff) \
+    t_step      (vocm+0.25*vstep_diff) \
+    (t_step+tr) (vocm-0.25*vstep_diff) \
+    t_stop      (vocm-0.25*vstep_diff) ]
+
+// Inverting gain = -1 differential feedback (VOP - VON = -(IN_P - IN_N))
+RG_P (IN_P VIN) resistor r=rf
+RG_N (IN_N VIP) resistor r=rf
+RF_P (VOP  VIN) resistor r=rf
+RF_N (VON  VIP) resistor r=rf
+
+I0    (VIP VIN VOCM VCM_FB VOP VON VDD VSS) dut_fd_ota
+RCM_P (VOP VCM_FB) resistor r=rcm
+RCM_N (VON VCM_FB) resistor r=rcm
+CL_P  (VOP VSS) capacitor c=cload
+CL_N  (VON VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=1n
+
+save VOP VON IN_P IN_N VSUP:p
+saveOptions options save=selected

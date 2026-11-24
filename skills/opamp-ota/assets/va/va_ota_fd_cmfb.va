@@ -1,0 +1,75 @@
+// Process-independent Fully Differential OTA + CMFB macro-model
+//
+// Models independent Differential-Mode (DM) and Common-Mode Feedback (CMFB)
+// dynamics, making it ideal for verifying simultaneous DM + CM `stb` and
+// large-signal differential settling:
+//   - DM path: 2-stage Miller-like response (gm_dm, ro_dm, fp2_dm, i_tail_dm slew limit)
+//   - CMFB path: compares 0.5*(VOP + VON) against VOCM with independent DC gain
+//     (a0_cm), bandwidth (gm_cm, ro_cm, c_cm), and secondary pole (fp2_cm)
+//   - Input-referred thermal white noise on the differential channel
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_ota_fd_cmfb(
+    input  electrical VIP,
+    input  electrical VIN,
+    input  electrical VOCM,
+    input  electrical VCM_FB,
+    output electrical VOP,
+    output electrical VON,
+    input  electrical VDD,
+    input  electrical VSS
+);
+
+parameter real gm_dm      = 400e-6 from (0:inf);   // DM transconductance [S]
+parameter real ro_dm      = 2.5e6  from (0:inf);   // DM output resistance per side [ohm] (A0_dm = gm_dm*ro_dm = 60 dB)
+parameter real i_tail_dm  = 80e-6  from (0:inf);   // DM slew tail current [A]
+parameter real fp2_dm     = 300e6  from (0:inf);   // DM internal non-dominant pole [Hz]
+parameter real gm_cm      = 250e-6 from (0:inf);   // CMFB loop transconductance [S]
+parameter real ro_cm      = 1.0e6  from (0:inf);   // CMFB output resistance [ohm] (A0_cm = 48 dB)
+parameter real fp2_cm     = 200e6  from (0:inf);   // CMFB internal non-dominant pole [Hz]
+parameter real vn_th      = 12e-9  from [0:inf);   // input-referred white noise [V/sqrt(Hz)]
+parameter real i_q        = 160e-6 from [0:inf);   // quiescent supply current [A]
+
+electrical n_dm_p, n_cm_p;
+real vid, v_lin_dm, i_dm_raw, v_dm_filt;
+real vocm_meas, vcm_err, v_cm_filt;
+real c_p2_dm, c_p2_cm;
+
+analog begin
+    // Internal 1-ohm RC filter nodes creating physical non-dominant poles fp2_dm & fp2_cm
+    c_p2_dm = 1.0 / (2.0 * `M_PI * fp2_dm);
+    c_p2_cm = 1.0 / (2.0 * `M_PI * fp2_cm);
+
+    vid      = V(VIP, VIN);
+    v_lin_dm = i_tail_dm / gm_dm;
+    i_dm_raw = i_tail_dm * tanh(vid / v_lin_dm);
+
+    // 1-pole filtered DM drive voltage (n_dm_p = i_dm_raw / (1 + s/wp2_dm))
+    I(n_dm_p, VSS) <+ (V(n_dm_p, VSS) - i_dm_raw) + c_p2_dm * ddt(V(n_dm_p, VSS));
+    v_dm_filt = V(n_dm_p, VSS);
+
+    // CMFB error sensing via breakable VCM_FB (allows Tian balun CM stb probing!)
+    vocm_meas = V(VCM_FB);
+    vcm_err   = V(VOCM) - vocm_meas;
+    I(n_cm_p, VSS) <+ (V(n_cm_p, VSS) - gm_cm * vcm_err) + c_p2_cm * ddt(V(n_cm_p, VSS));
+    v_cm_filt = V(n_cm_p, VSS);
+
+    // Complementary DM currents + common-mode restoring CMFB currents + output resistance
+    // VIP > VIN -> v_dm_filt > 0 -> sources into VOP (-v_dm_filt), sinks from VON (+v_dm_filt)
+    // vocm_meas < VOCM -> v_cm_filt > 0 -> sources equally into VOP & VON (-v_cm_filt)
+    I(VOP, VSS) <+ -v_dm_filt - v_cm_filt
+                   + (V(VOP) - V(VOCM)) / ro_dm
+                   + (vocm_meas - V(VOCM)) / ro_cm
+                   + white_noise(0.5 * (gm_dm * vn_th) * (gm_dm * vn_th), "fd_ota_th_p");
+
+    I(VON, VSS) <+ +v_dm_filt - v_cm_filt
+                   + (V(VON) - V(VOCM)) / ro_dm
+                   + (vocm_meas - V(VOCM)) / ro_cm
+                   + white_noise(0.5 * (gm_dm * vn_th) * (gm_dm * vn_th), "fd_ota_th_n");
+
+    I(VDD, VSS) <+ i_q;
+end
+
+endmodule

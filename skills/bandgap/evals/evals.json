@@ -1,0 +1,53 @@
+{
+  "skill_name": "bandgap-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How do I design a bandgap voltage reference that operates cleanly at VDD = 1.0 V when a classic silicon bandgap sits at ~1.22 V?",
+      "expected_output": "Should recommend the Banba current-mode sub-1V architecture summing I_CTAT = V_BE/R2 and I_PTAT = (V_T*ln(M))/R1 into a matched mirror and scaling across R3 (V_ref = (R3/R2)*(V_BE + (R2/R1)*V_T*ln(M)), e.g. 0.5-0.6 V).",
+      "files": ["references/bandgap-fundamentals.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "Why does a 3 mV opamp input offset cause ~30 mV error and severe temperature drift in a bandgap reference?",
+      "expected_output": "Should show that opamp V_os adds directly to Delta_V_BE and is amplified by (1 + R2/R1) ~= 10x, producing both large DC error and an uncompensated PTAT TC drift; recommend large-area PMOS input pair, larger emitter ratio M (8-24), chopping/auto-zeroing, and trimming.",
+      "files": ["references/bandgap-fundamentals.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "Why does a first-order bandgap reference still exhibit ~10-25 ppm/C temperature variation across -40 C to 125 C even with ideal matched components?",
+      "expected_output": "Should explain the inherent 2nd-order nonlinear -(eta-1)*V_T*ln(T/T0) curvature of V_BE(T), creating a downward concave parabola peaking near room temperature, and define the box-method TC formula.",
+      "files": ["references/bandgap-fundamentals.md", "assets/va/va_bandgap.va"]
+    },
+    {
+      "id": 4,
+      "prompt": "How should I verify a bandgap startup circuit in Spectre so it neither gets stuck in the zero-current state nor ruins TC at ff/125 C?",
+      "expected_output": "Should reference assets/tb/tb_bgr_startup.scs: test both fast (100 ns) and slow (1 ms) VDD ramps from 0 V with ic VREF=0 across ss/ff and -40/125 C, and confirm startup current shuts completely off in steady state so leakage does not degrade TC.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_startup.scs"]
+    },
+    {
+      "id": 5,
+      "prompt": "Why must I verify loop stability on a bandgap core opamp when the bandgap has both positive and negative feedback loops?",
+      "expected_output": "Should explain that the 1:M BJT legs create simultaneous positive and negative feedback paths, so negative feedback gain must strictly dominate and stb phase margin must exceed 60 deg across PVT.",
+      "files": ["references/simulation-and-verification.md"]
+    },
+    {
+      "id": 6,
+      "prompt": "How do I extract box-method TC [ppm/C], minimum operating VDD, and line regulation of a bandgap in Spectre?",
+      "expected_output": "Should point to assets/tb/tb_bgr_temp_line.scs and analyze_bandgap.py temp_line running dc_temp (-40..125 C) and dc_line (0..1.4 V).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_temp_line.scs"]
+    },
+    {
+      "id": 7,
+      "prompt": "Why is an emitter area ratio of M = 8 (a 3x3 common-centroid BJT array) so commonly chosen in CMOS bandgaps?",
+      "expected_output": "Should explain that 1 unit BJT surrounded by 8 matched units in a 3x3 common-centroid array maximizes matching while giving ln(8) = 2.079, keeping the required gain ratio R2/R1 (~10) and offset amplification moderate.",
+      "files": ["references/bandgap-fundamentals.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "How do I measure bandgap PSRR(f) and integrated output noise in Spectre, and which behavioral model lets me test the flow before transistor design?",
+      "expected_output": "Should point to assets/tb/tb_bgr_psrr_noise.scs, analyze_bandgap.py psrr_noise, and assets/va/va_bandgap.va.",
+      "files": ["SKILL.md", "assets/tb/tb_bgr_psrr_noise.scs", "assets/va/va_bandgap.va"]
+    }
+  ]
+}

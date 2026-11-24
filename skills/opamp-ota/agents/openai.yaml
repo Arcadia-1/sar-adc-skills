@@ -1,0 +1,7 @@
+interface:
+  display_name: "OpAmp & OTA Design"
+  short_description: "Engineering guide and Spectre verification toolkit for single-ended and fully differential OpAmps/OTAs"
+  default_prompt: "Use $opamp-ota-skill to design, compensate, size, or verify an OpAmp, OTA, or CMFB loop in Spectre."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,77 @@
+{
+  "skill_name": "opamp-ota-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Compare 5T OTA, telescopic cascode, folded cascode, and two-stage Miller opamp for a 1.0 V low-voltage switched-capacitor integrator needing > 65 dB DC gain and wide swing.",
+      "expected_output": "Should rule out 5T OTA (gain too low) and telescopic cascode (5*Vov headroom stack limits swing at 1.0 V), and compare folded cascode (single-stage speed, 4*Vov stack) vs. two-stage Miller (highest gain and rail-to-rail swing at the cost of Miller compensation and 2nd-stage power).",
+      "files": ["references/ota-topologies-and-sizing.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "In a two-stage Miller opamp, what happens to the Miller zero as I increase the nulling resistor Rz from 0 to 1/gm2 and beyond?",
+      "expected_output": "Should give omega_z = 1/(Cc*(Rz - 1/gm2)): Rz=0 produces an RHP zero at +gm2/Cc degrading PM; Rz=1/gm2 moves the zero to infinity; Rz=(1/gm2)*(1+(CL+Cc)/Cc) places an LHP zero on top of the non-dominant pole omega_p2 = gm2/CL to cancel it.",
+      "files": ["references/ota-topologies-and-sizing.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "Why does my two-stage Miller opamp slew much slower on falling edges than predicted by I_tail / Cc?",
+      "expected_output": "Should identify second-stage current starvation: SR = min(I_tail/Cc, (I_D2_max - I_tail)/(CL + Cc)), so if I_D2 <= I_tail*(1 + CL/Cc), the output stage limits slew rate; recommend increasing I_D2 or using a Class-AB output stage.",
+      "files": ["references/ota-topologies-and-sizing.md", "assets/tb/single_ended/tb_ota_slew_settle.scs"]
+    },
+    {
+      "id": 4,
+      "prompt": "How should I distribute gm/ID between the input pair and active current-mirror load of an OTA to minimize input-referred thermal noise?",
+      "expected_output": "Should derive Sv_in = (8*kT*gamma/gm1)*(1 + gm_load/gm1), recommending high gm/ID (weak/moderate inversion, 14-20 V^-1) on the input pair to maximize gm1 and low gm/ID (strong inversion, 6-10 V^-1) on the load mirror so gm_load/gm1 << 1.",
+      "files": ["references/ota-topologies-and-sizing.md"]
+    },
+    {
+      "id": 5,
+      "prompt": "How do I simulate both differential-mode and common-mode (CMFB) stability of a fully differential OTA in standalone Spectre without analogLib?",
+      "expected_output": "Should reference assets/tb/fully_diff/tb_fd_ota_dm_cm_stb.scs: embed the lossless reciprocal Tian balun (diff_stb_probe) with native iprobes IPRB_DM and IPRB_CM and run stb_dm and stb_cm in the same simulation without disturbing DC bias.",
+      "files": ["references/fully-diff-and-cmfb.md", "assets/tb/fully_diff/tb_fd_ota_dm_cm_stb.scs"]
+    },
+    {
+      "id": 6,
+      "prompt": "How do I measure CMRR(f), PSRR+(f), PSRR-(f), and input-referred noise of a 90 dB opamp in Spectre without the open-loop output railing at DC?",
+      "expected_output": "Should point to assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs: use 4 matched replicas stabilized by ultra-low-frequency DC servo loops (1 Gohm + 1 F -> f_servo = 0.16 nHz) so all replicas share identical DC bias while measuring open-loop A_DM, A_CM, A_VDD, A_VSS and input-referred noise cleanly from 1 Hz upward.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs"]
+    },
+    {
+      "id": 7,
+      "prompt": "When should I pick switched-capacitor CMFB over continuous-time resistive or diff-pair CMFB in a fully differential OTA?",
+      "expected_output": "Should compare resistive loading / diff-pair input clipping of CT-CMFB against SC-CMFB's zero static loading, rail-to-rail linear sensing, and near-zero static power (at the cost of needing clocks, making SC-CMFB ideal for SC integrators and pipeline/SAR/DT-DSM).",
+      "files": ["references/fully-diff-and-cmfb.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "What phase margin minimizes 0.01% linear settling time for a closed-loop switched-capacitor amplifier, and how many time constants are required?",
+      "expected_output": "Should state that 0.01% accuracy requires ln(10000) ~= 9.2 linear time constants (plus slew time) and that PM ~= 65-72 deg yields fastest settling (too low rings, too high overdamps).",
+      "files": ["references/ota-topologies-and-sizing.md"]
+    },
+    {
+      "id": 9,
+      "prompt": "Why does a continuous-time resistive CMFB divider degrade CMFB phase margin, and what simple passive fix restores it?",
+      "expected_output": "Should identify the sensing pole omega_p_sense = 2/(R_cm * C_in_cm) formed by the sensing resistors and CMFB input capacitance, and recommend placing small feed-forward capacitors C_cm in parallel with R_cm to create a compensating zero.",
+      "files": ["references/fully-diff-and-cmfb.md"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do I compute small-signal FoM_S and large-signal FoM_L for an OTA from Spectre simulations?",
+      "expected_output": "Should give FoM_S = GBW[MHz]*CL[pF]/IDD[mA] and FoM_L = SR[V/us]*CL[pF]/IDD[mA] and point to analyze_ota.py stb and slew_settle modes.",
+      "files": ["references/ota-topologies-and-sizing.md", "assets/tb/single_ended/analyze_ota.py"]
+    },
+    {
+      "id": 11,
+      "prompt": "Why is breaking an opamp feedback loop with a 1 H inductor and 1 F capacitor inferior to Spectre stb with iprobe?",
+      "expected_output": "Should explain that large L/C breaks perturb loop loading impedance and miss bilateral feedback paths (such as Miller Cc), whereas Tian/Middlebrook stb with iprobe extracts exact true loop gain without loading distortion.",
+      "files": ["references/simulation-and-verification.md"]
+    },
+    {
+      "id": 12,
+      "prompt": "Which behavioral Verilog-A models are included in opamp-ota-skill for system-level verification before transistor design?",
+      "expected_output": "Should point to assets/va/va_ota_2stage.va (2-stage Miller with Rz, slew limit, rail clamp, CMRR/PSRR, white+1/f noise) and assets/va/va_ota_fd_cmfb.va (independent DM+CMFB dynamics and thermal noise).",
+      "files": ["SKILL.md", "assets/va/va_ota_2stage.va", "assets/va/va_ota_fd_cmfb.va"]
+    }
+  ]
+}

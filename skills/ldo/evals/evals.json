@@ -1,0 +1,65 @@
+{
+  "skill_name": "ldo-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Why does a Miller-compensated capless PMOS-pass LDO typically have its worst phase margin at the lightest load current?",
+      "expected_output": "Should explain that UGF ~= beta*gm1/Cc is roughly load-independent while the non-dominant output pole omega_p2 ~= gm2/CL drops as I_load -> I_min (since gm2 falls), pulling omega_p2 down toward UGF and collapsing PM; suggest minimum bleed/divider current, Ahuja/cascode compensation, or adaptive biasing.",
+      "files": ["references/stability-psrr-noise.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "Why does an LDO's DC PSRR drop drastically if the error amplifier's output stage is referenced to VSS instead of VDD?",
+      "expected_output": "Should explain that with a VDD-referenced PMOS mirror load, VG tracks VDD at DC so Vsg stays constant and VDD couples only via 1/ro_pass (PSRR(0) ~= 1 + T0), whereas a VSS-referenced EA lets VDD modulate Vsg directly via gm_pass, cutting DC PSRR down to ~A_ea.",
+      "files": ["references/stability-psrr-noise.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "How do I measure dropout voltage, line regulation, load regulation, and quiescent current of an LDO in Spectre?",
+      "expected_output": "Should reference assets/tb/tb_ldo_dc_reg_dropout.scs and analyze_ldo.py dc_reg: sweep VDD at I_load_max to find V_DO where VOUT drops 2% below nominal and line reg in the regulated region, and sweep ILOAD at nominal VDD for load reg, IQ, and current efficiency.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_dc_reg_dropout.scs"]
+    },
+    {
+      "id": 4,
+      "prompt": "Compare external-cap PMOS-pass, capless PMOS-pass, and NMOS-pass LDOs for powering an on-chip VCO or SAR ADC.",
+      "expected_output": "Should compare off-chip cap ESR stability vs. capless on-chip Miller/FVF compensation vs. NMOS source-follower intrinsic stability and Vth+Vov dropout headroom (unless charge-pumped).",
+      "files": ["references/ldo-architectures-and-sizing.md"]
+    },
+    {
+      "id": 5,
+      "prompt": "How do I extract both PSRR(f), closed-loop output impedance |Zout(f)|, and integrated output noise in a single Spectre run?",
+      "expected_output": "Should point to assets/tb/tb_ldo_psrr_zout_noise.scs and analyze_ldo.py psrr_zout_noise: run two matched closed-loop replicas (1 V AC on VDD for PSRR + noise; 1 A AC current injection into VOUT_Z for |Zout(f)|).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_psrr_zout_noise.scs"]
+    },
+    {
+      "id": 6,
+      "prompt": "What caps an LDO's high-frequency PSRR above its unity-gain bandwidth, and how does output capacitor ESR affect it?",
+      "expected_output": "Should explain that above UGF the loop is open so PSRR is set by passive capacitive/resistive division between C_gd/ro_pass and C_L + R_ESR; above f_ESR = 1/(2*pi*R_ESR*C_L), ESR limits HF PSRR to R_ESR/(R_ESR + ro_pass).",
+      "files": ["references/stability-psrr-noise.md"]
+    },
+    {
+      "id": 7,
+      "prompt": "What are the tradeoffs of sizing the PMOS pass transistor width W_pass much larger than needed for dropout?",
+      "expected_output": "Should explain that excessive W_pass lowers V_DO and boosts gm_pass but increases C_g_pass (slowing gate slew rate during load steps and pulling internal EA pole inward) and increases C_gd feedthrough degrading HF PSRR.",
+      "files": ["references/ldo-architectures-and-sizing.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "How does bandgap reference noise propagate to an LDO's output when VOUT > VREF?",
+      "expected_output": "Should show Sv_out ~= (1/beta^2)*(Sv_ref + Sv_ea_in) + divider resistor thermal noise, noting reference noise is amplified by 1/beta = VOUT/VREF inside UGF and recommending an RC filter on VREF.",
+      "files": ["references/stability-psrr-noise.md"]
+    },
+    {
+      "id": 9,
+      "prompt": "Which PVT and load corners are worst-case for LDO stability vs. dropout voltage?",
+      "expected_output": "Should specify lightest load I_min + max CL + ss/high-T for worst-case phase margin, heavy load I_max + ff/low-T for gain margin, and heavy load I_max + ss/high-T for worst-case dropout voltage.",
+      "files": ["references/simulation-and-verification.md"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do I test both load-step undershoot/overshoot and dynamic line-step glitch in one Spectre transient deck?",
+      "expected_output": "Should point to assets/tb/tb_ldo_load_line_tran.scs and analyze_ldo.py tran, plus va_ldo_pmos.va / va_ldo_capless.va for behavioral baseline verification.",
+      "files": ["SKILL.md", "assets/tb/tb_ldo_load_line_tran.scs", "assets/va/va_ldo_pmos.va"]
+    }
+  ]
+}

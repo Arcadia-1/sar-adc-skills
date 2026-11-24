@@ -1,0 +1,54 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Slew Rate & Settling Time
+// =============================================================================
+// Applies a large-signal rising and falling input step in unity-gain feedback
+// and extracts:
+//   - Positive & negative slew rates (SR+, SR-) [V/us] (20%..80% slope)
+//   - Overshoot (%)
+//   - 0.1% and 0.01% settling times [ns]
+//   - Large-signal FoM_L = SR * C_L / I_DD
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    v_lo=0.25 \
+    v_hi=0.65 \
+    cload=2p \
+    t_rise=200n \
+    t_fall=1.2u \
+    t_stop=2.2u \
+    tr=100p \
+    tf=100p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+VVIN (VIP 0) vsource type=pwl wave=[ \
+    0           v_lo \
+    t_rise      v_lo \
+    (t_rise+tr) v_hi \
+    t_fall      v_hi \
+    (t_fall+tf) v_lo \
+    t_stop      v_lo ]
+
+I0 (VIP VOUT VOUT VDD VSS) dut_ota
+CL (VOUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=2n
+
+save VIP VOUT VSUP:p
+saveOptions options save=selected

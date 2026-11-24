@@ -1,0 +1,75 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — CMRR, PSRR+, PSRR- & Noise
+// =============================================================================
+// Instantiates four matched DUT copies stabilized to the EXACT SAME DC operating
+// point via ultra-low-frequency DC servo loops (R_servo=1 Gohm, C_servo=1 F ->
+// f_servo = 0.16 nHz, strictly open at f >= 1 Hz!):
+//   - I_DM : Differential-mode AC gain A_DM(f) + input-referred `noise`
+//   - I_CM : Common-mode AC gain A_CM(f)     -> CMRR(f)  = 20*log10(|A_DM / A_CM|)
+//   - I_PP : Positive supply gain A_VDD(f)   -> PSRR+(f) = 20*log10(|A_DM / A_VDD|)
+//   - I_PN : Negative supply gain A_VSS(f)   -> PSRR-(f) = 20*log10(|A_DM / A_VSS|)
+//
+// Works accurately from 1 Hz to 10 GHz even for > 100 dB high-gain opamps!
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    cload=2p \
+    temp_c=27
+
+// 1. Differential-mode reference replica (also used for input-referred noise)
+VSUP_DM (VDD_DM 0) vsource dc=vdd type=dc
+VGND_DM (VSS_DM 0) vsource dc=0   type=dc
+VIN_DM  (VIP_DM 0) vsource dc=vcm mag=1 type=dc
+RS_DM   (VOUT_DM VIN_DM_N) resistor  r=1G
+CS_DM   (VIN_DM_N 0)       capacitor c=1.0
+I_DM    (VIP_DM VIN_DM_N VOUT_DM VDD_DM VSS_DM) dut_ota
+CL_DM   (VOUT_DM VSS_DM)   capacitor c=cload
+
+// 2. Common-mode stimulus replica (AC mag=1 applied identically to VIP and VIN)
+VSUP_CM (VDD_CM 0) vsource dc=vdd type=dc
+VGND_CM (VSS_CM 0) vsource dc=0   type=dc
+VAC_CM  (VCM_AC 0) vsource dc=0   mag=1 type=dc
+VDC_CM  (VIP_CM VCM_AC) vsource dc=vcm type=dc
+RS_CM   (VOUT_CM N_CM_DC) resistor  r=1G
+CS_CM   (N_CM_DC VCM_AC)  capacitor c=1.0
+I_CM    (VIP_CM N_CM_DC VOUT_CM VDD_CM VSS_CM) dut_ota
+CL_CM   (VOUT_CM VSS_CM)  capacitor c=cload
+
+// 3. PSRR+ replica (AC mag=1 on VDD)
+VSUP_PP (VDD_PP 0) vsource dc=vdd mag=1 type=dc
+VGND_PP (VSS_PP 0) vsource dc=0         type=dc
+VIP_PP  (VIP_P  0) vsource dc=vcm       type=dc
+RS_PP   (VOUT_PP VIN_PP_N) resistor  r=1G
+CS_PP   (VIN_PP_N 0)       capacitor c=1.0
+I_PP    (VIP_P VIN_PP_N VOUT_PP VDD_PP VSS_PP) dut_ota
+CL_PP   (VOUT_PP 0)        capacitor c=cload
+
+// 4. PSRR- replica (AC mag=1 on VSS)
+VSUP_PN (VDD_PN 0) vsource dc=vdd       type=dc
+VGND_PN (VSS_PN 0) vsource dc=0   mag=1 type=dc
+VIP_PN  (VIP_N  0) vsource dc=vcm       type=dc
+RS_PN   (VOUT_PN VIN_PN_N) resistor  r=1G
+CS_PN   (VIN_PN_N 0)       capacitor c=1.0
+I_PN    (VIP_N VIN_PN_N VOUT_PN VDD_PN VSS_PN) dut_ota
+CL_PN   (VOUT_PN 0)        capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac    ac start=1 stop=1G dec=20 annotate=status
+noise (VOUT_DM 0) noise start=100 stop=100M dec=20 iprobe=VIN_DM annotate=status
+
+save VOUT_DM VOUT_CM VOUT_PP VOUT_PN
+saveOptions options save=selected

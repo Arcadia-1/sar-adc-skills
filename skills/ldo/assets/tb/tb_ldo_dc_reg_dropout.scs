@@ -1,0 +1,41 @@
+// =============================================================================
+// Process-Independent LDO Testbench — DC Line Reg, Load Reg, Dropout & IQ
+// =============================================================================
+// Runs two DC sweeps in a single fast simulation:
+//   - `dc_line`: sweeps vdd_in at heavy load (iload_max) -> Dropout V_DO & Line Reg
+//   - `dc_load`: sweeps iload from iload_min to iload_max -> Load Reg & IQ / efficiency
+//
+// DUT interface contract (5-pin LDO exposing breakable FB_IN):
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    iload_min=0.1m \
+    iload_max=10m \
+    iload=10m \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd_in type=dc
+VGND  (VSS 0)  vsource dc=0      type=dc
+VVREF (VREF 0) vsource dc=vref   type=dc
+
+I0    (VDD VREF VOUT VOUT VSS) dut_ldo
+ILOAD (VOUT VSS) isource dc=iload type=dc
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_line dc param=vdd_in start=0.7 stop=1.5 step=0.01
+dc_load dc param=iload  start=iload_min stop=iload_max step=0.2m
+
+save VOUT VDD VSUP:p
+saveOptions options save=selected
