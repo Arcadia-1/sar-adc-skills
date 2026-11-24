@@ -1,0 +1,77 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — Dynamic SFDR / THD & Two-Tone IMD3
+// =============================================================================
+// Drives a 10-bit differential Current-Steering DAC with a coherent digital
+// stimulus (`va_dac_sine_gen_10b.va`):
+//   - sig_mode = 0 : coherent single-tone sine (f_sig = fs * m_bin / n_fft)
+//                    -> extracts SFDR, HD2, HD3, THD, SNDR, SNR, ENOB
+//   - sig_mode = 1 : coherent two-tone sum (m_bin1, m_bin2 at -6 dBFS each)
+//                    -> extracts IM3_lo, IM3_hi, IMD3, IM2, SFDR
+//
+// Set `osr = 1` for discrete settled-sample FFT (strobed once per clock period)
+// or `osr = 8` to capture continuous-time ZOH + switching glitch harmonics!
+//
+// DUT interface contract:
+//   subckt dut_cs_dac DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_sine_gen_10b.va"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    fs=200M \
+    sig_mode=0 \
+    n_fft=256 \
+    m_bin=29 \
+    m_bin1=59 \
+    m_bin2=61 \
+    amp_fs=0.98 \
+    n_warmup=8 \
+    osr=1 \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    t_strobe=ts/osr \
+    t_stop=(n_warmup+n_fft+1)*ts
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_GEN (CLK VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_sine_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig sig_mode=sig_mode \
+    n_fft=n_fft m_bin=m_bin m_bin1=m_bin1 m_bin2=m_bin2 amp_fs=amp_fs tr=tr
+
+I0 (DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    VDD VSS IOUTP IOUTN) dut_cs_dac
+
+RLP (IOUTP VSS) resistor  r=rload
+RLN (IOUTN VSS) resistor  r=rload
+CLP (IOUTP VSS) capacitor c=cload
+CLN (IOUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe well after settling within each clock slot (strobedelay < strobeperiod!)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.80*t_strobe strobeoutput=strobeonly
+
+save IOUTP IOUTN CODE_MON
+saveOptions options save=selected

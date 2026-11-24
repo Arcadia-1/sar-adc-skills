@@ -19,7 +19,7 @@ subckt dut_cdac VIP VIN CLKS \
     DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
     DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
     VCP VCN VDD VSS
-    // instantiate your differential CDAC (or wrap ../../va/va_cdac_10b_diff.va)
+    // instantiate your differential CDAC (or wrap ../../va/behavioral_10b/va_cdac_10b_diff.va)
 ends dut_cdac
 ```
 

@@ -1,0 +1,46 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — Core Loop Stability (`iprobe` `stb`)
+// =============================================================================
+// Measures the net small-signal loop gain T_net(f) = T_neg(f) + T_pos(f) of the
+// self-biased bandgap core amplifier without breaking its DC operating point.
+//
+// Why this check is critical for Bandgap References:
+//   A BGR core has BOTH a negative feedback path (M*Q1 + R1 branch) and a
+//   positive feedback path (unit Q1 branch). If the negative path rolls off
+//   earlier (due to M*C_j parasitics) or is wired with wrong polarity, the net
+//   loop turns unstable even when the opamp alone looks stable in unity gain!
+//
+// DUT interface contract (5-pin breakable-loop BGR):
+//   subckt dut_bandgap_stb VDD VREF LOOP_OUT LOOP_IN VSS
+//     // expose opamp output (LOOP_OUT) and mirror/core gate (LOOP_IN)
+//     // (or wrap ../va/va_bgr_core.va for behavioral baseline verification)
+//   ends dut_bandgap_stb
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.0 \
+    cload=1p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd_nom type=dc
+VGND (VSS 0) vsource dc=0       type=dc
+
+I0   (VDD VREF LOOP_OUT LOOP_IN VSS) dut_bandgap_stb
+IPRB (LOOP_OUT LOOP_IN) iprobe
+CL   (VREF VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dcOp dc
+stb  stb start=1 stop=1G dec=25 probe=IPRB localgnd=0 annotate=status
+
+save VREF LOOP_OUT LOOP_IN
+saveOptions options save=selected

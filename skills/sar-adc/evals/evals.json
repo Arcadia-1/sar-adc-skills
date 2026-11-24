@@ -240,23 +240,22 @@
     {
       "id": 27,
       "prompt": "I want to verify my 10-bit asynchronous SAR ADC architecture in Spectre before designing transistors, including comparator thermal noise, metastability delay, and top-plate parasitic attenuation. Which bundled assets should I wire together?",
-      "expected_output": "Should point to the 10-bit behavioral Verilog-A library under assets/va/ (va_cdac_10b_diff.va with c_par_ratio/dm_msb/tau_settle, va_cmp_dynamic.va with vos/vnoise_rms/tau_regen, va_sar_logic_10b_async.va, va_dac_10b_diff.va) driven by assets/tb/adc_top/tb_sar_adc_fft.scs and tb_sar_adc_ramp_dnl.scs, and explain how to incrementally swap blocks to transistor subcircuits in Phase 3.",
+      "expected_output": "Should point to the 10-bit behavioral Verilog-A library under assets/va/behavioral_10b/ (va_cdac_10b_diff.va with c_par_ratio/dm_msb/tau_settle, va_cmp_dynamic.va with vos/vnoise_rms/tau_regen, va_sar_logic_10b_async.va, va_dac_10b_diff.va) driven by assets/tb/adc_top/tb_sar_adc_fft.scs and tb_sar_adc_ramp_dnl.scs, and explain how to incrementally swap blocks to transistor subcircuits in Phase 3.",
       "files": [
         "SKILL.md",
-        "assets/va/va_cdac_10b_diff.va",
-        "assets/va/va_cmp_dynamic.va",
-        "assets/va/va_sar_logic_10b_async.va",
+        "assets/va/behavioral_10b/va_cdac_10b_diff.va",
+        "assets/va/behavioral_10b/va_cmp_dynamic.va",
+        "assets/va/behavioral_10b/va_sar_logic_10b_async.va",
         "assets/tb/adc_top/README.md"
       ]
     },
     {
       "id": 28,
       "prompt": "How do I verify an LDO powering my SAR ADC in Spectre for stability, supply rejection, noise, and CDAC burst droop without breaking the DC bias point?",
-      "expected_output": "Should reference assets/tb/ldo/ and ldo.md: expose a breakable feedback sense pin (FB_IN) and insert an iprobe for Spectre stb analysis across light-to-full load (checking DC gain T0, UGF, PM >= 45-60 deg, GM >= 10 dB), run AC PSRR(f) and integrated output noise in tb_ldo_psrr_noise.scs, and run fast load-step transient droop verification in tb_ldo_load_tran.scs.",
+      "expected_output": "Should reference references/ldo.md and delegate full standalone Spectre LDO testbenches to the canonical skills/ldo/ skill: expose a breakable feedback sense pin (FB_IN) and insert an iprobe for Spectre stb analysis across light-to-full load (checking DC gain T0, UGF, PM >= 45-60 deg, GM >= 10 dB), run AC PSRR(f), |Zout(f)|, and integrated output noise, and run fast load-step transient droop verification.",
       "files": [
         "references/ldo.md",
-        "assets/tb/ldo/tb_ldo_stb.scs",
-        "assets/tb/ldo/README.md"
+        "SKILL.md"
       ]
     }
   ]

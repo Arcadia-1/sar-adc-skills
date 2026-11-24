@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Shared Spectre PSF ASCII parser and SAR ADC signal-analysis helpers.
+"""Shared Spectre PSF ASCII parser and AMS signal-analysis helpers.
 
-Works completely standalone (only requires Python >= 3.10 and numpy). When
-`virtuoso-bridge-lite` is installed, real-valued PSF ASCII files can also be
-loaded seamlessly; complex-valued AC / STB PSF ASCII files (`(re im)`) are
-parsed directly by the built-in parser.
+Works completely standalone (only requires Python >= 3.10 and numpy). Handles
+real-valued (`tran`/`dc`/`noise`/`pss`/`pnoise`) and complex-valued (`ac`/`stb`)
+PSF ASCII outputs, strobe-grid filtering, coherent single-tone & two-tone FFT
+metrics (ENOB/SNDR/SFDR/THD/IMD3), endpoint DNL/INL, and IEEE-1139 phase-noise
+to RMS jitter integration.
 """
 
 from __future__ import annotations
@@ -156,12 +157,14 @@ def coherent_fft_metrics(
 
     # Aliased harmonic bins h = 2..num_harmonics
     harm_bins: set[int] = set()
+    hd_dbc: dict[int, float] = {}
     for h in range(2, num_harmonics + 1):
         k = (h * fund_bin) % n
         if k > n // 2:
             k = n - k
         if k != 0 and k != fund_bin:
             harm_bins.add(k)
+            hd_dbc[h] = 10.0 * math.log10(max(float(pwr[k]), 1e-30) / p_sig)
 
     p_harm = float(sum(pwr[k] for k in harm_bins))
     total_non_dc = float(np.sum(pwr[1:]))
@@ -189,11 +192,86 @@ def coherent_fft_metrics(
         "snr_db": snr_db,
         "sfdr_db": sfdr_db,
         "thd_db": thd_db,
+        "hd2_dbc": hd_dbc.get(2, float("-inf")),
+        "hd3_dbc": hd_dbc.get(3, float("-inf")),
         "amp_peak": float(math.sqrt(2.0 * p_sig)),
         "max_spur_bin": float(max_spur_bin),
     }
     if fs is not None:
         res["fin_hz"] = fs * fund_bin / n
+    return res
+
+
+def _fold_bin(k: int, n: int) -> int:
+    k_mod = abs(int(k)) % n
+    return n - k_mod if k_mod > n // 2 else k_mod
+
+
+def coherent_twotone_metrics(
+    samples: np.ndarray,
+    *,
+    m_bin1: int,
+    m_bin2: int,
+    fs: float | None = None,
+) -> dict[str, float]:
+    """Compute coherent two-tone intermodulation metrics (IM3, IMD3, IM2, SFDR).
+
+    Assumes `samples` contains `N` uniformly strobed points of two equal-amplitude
+    coherent sine tones at FFT bins `m_bin1` and `m_bin2` (`1 <= m1 < m2 < N/2`).
+    """
+    x = np.asarray(samples, dtype=float)
+    n = len(x)
+    if n < 32:
+        raise ValueError(f"Need at least 32 samples for two-tone FFT, got {n}")
+    x = x - np.mean(x)
+    spec = np.fft.rfft(x)
+    pwr = (np.abs(spec) ** 2) / (n * n)
+    pwr[1 : (n // 2 if n % 2 == 0 else (n + 1) // 2)] *= 2.0
+
+    b1, b2 = sorted((int(m_bin1), int(m_bin2)))
+    p1 = float(pwr[b1])
+    p2 = float(pwr[b2])
+    p_ref = 0.5 * (p1 + p2)
+    if p_ref <= 0.0:
+        raise RuntimeError("Zero two-tone signal power in FFT spectrum")
+
+    im3_lo_bin = _fold_bin(2 * b1 - b2, n)
+    im3_hi_bin = _fold_bin(2 * b2 - b1, n)
+    im2_diff_bin = _fold_bin(b2 - b1, n)
+    im2_sum_bin = _fold_bin(b1 + b2, n)
+
+    im3_lo_dbc = 10.0 * math.log10(max(float(pwr[im3_lo_bin]), 1e-30) / p_ref)
+    im3_hi_dbc = 10.0 * math.log10(max(float(pwr[im3_hi_bin]), 1e-30) / p_ref)
+    imd3_dbc = max(im3_lo_dbc, im3_hi_dbc)
+    im2_dbc = 10.0 * math.log10(
+        max(float(pwr[im2_diff_bin]), float(pwr[im2_sum_bin]), 1e-30) / p_ref
+    )
+
+    spur_pwr = pwr.copy()
+    spur_pwr[0] = 0.0
+    spur_pwr[b1] = 0.0
+    spur_pwr[b2] = 0.0
+    max_spur_bin = int(np.argmax(spur_pwr))
+    sfdr_db = 10.0 * math.log10(p_ref / max(float(spur_pwr[max_spur_bin]), 1e-30))
+
+    res: dict[str, float] = {
+        "n_fft": float(n),
+        "m_bin1": float(b1),
+        "m_bin2": float(b2),
+        "tone_amp_peak": float(math.sqrt(2.0 * p_ref)),
+        "tone_imbalance_db": 10.0 * math.log10(max(p1, 1e-30) / max(p2, 1e-30)),
+        "im3_lo_bin": float(im3_lo_bin),
+        "im3_hi_bin": float(im3_hi_bin),
+        "im3_lo_dbc": im3_lo_dbc,
+        "im3_hi_dbc": im3_hi_dbc,
+        "imd3_dbc": imd3_dbc,
+        "im2_dbc": im2_dbc,
+        "sfdr_db": sfdr_db,
+        "max_spur_bin": float(max_spur_bin),
+    }
+    if fs is not None:
+        res["f1_hz"] = fs * b1 / n
+        res["f2_hz"] = fs * b2 / n
     return res
 
 

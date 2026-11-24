@@ -1,0 +1,101 @@
+// Process-independent Bandgap Core-Loop Verilog-A Model (with Breakable Loop)
+//
+// Models the real dual-feedback physics of a Kuijk / Banba bandgap core:
+//   - Positive-feedback CTAT branch (unit PNP Q1):  V_pos = V_BE1(T, I_b)
+//   - Negative-feedback PTAT branch (M*Q1 + R1):    V_neg = V_BE2(T, I_b) + I_b * R1
+//   - At DC, the opamp forces V_pos == V_neg  =>  I_b = (V_T * ln(M)) / R1  (PTAT!)
+//   - Because dV_neg/dI_b = R1 + r_e > dV_pos/dI_b = r_e, net DC feedback is
+//     NEGATIVE with loop gain T_net(0) = -a_ol * gm_mir * R1.
+//   - Exposes `LOOP_OUT` (opamp output) and `LOOP_IN` (current-mirror drive) so
+//     an external `iprobe` inserted between them measures exact net loop stability
+//     via Spectre `stb` analysis!
+//   - Optional parasitic capacitance `c_neg_par` on the M-times-larger PNP branch
+//     demonstrates how slowing the negative branch relative to the positive branch
+//     erodes phase margin and can trigger positive-feedback instability.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bgr_core(
+    input  electrical VDD,
+    output electrical VREF,
+    output electrical LOOP_OUT,
+    input  electrical LOOP_IN,
+    input  electrical VSS
+);
+
+parameter real m_ratio    = 8.0    from (1.5:100);   // emitter area ratio M (e.g. 8 in 3x3 array)
+parameter real r_ptat     = 5.4e3  from (100:1e7);   // PTAT resistor R1 [ohm]
+parameter real i_nom      = 10e-6  from (1e-8:1e-2); // nominal PTAT branch current at T0 [A]
+parameter real vbe_t0     = 0.70   from (0.3:1.0);   // V_BE at T0 and i_nom [V]
+parameter real t0_c       = 27.0;                    // reference temperature [deg C]
+parameter real tc_vbe     = -1.8e-3;                 // 1st-order V_BE slope at T0 [V/K]
+parameter real c_curv     = 2.2e-4 from [0:inf);     // 2nd-order curvature coeff [V/K]
+parameter real k_ptat     = 9.56   from (1:50);      // PTAT gain factor R2/R1 (~9.56 for M=8)
+parameter real k_scale    = 0.50   from (0.1:2.0);   // output scale (0.50 -> ~0.61 V Banba; 1.0 -> ~1.22 V Kuijk)
+parameter real gm_mir     = 40e-6  from (1e-8:1.0);  // current-mirror transconductance [A/V]
+parameter real a_ol       = 2000.0 from (10:1e6);    // error-amp open-loop DC gain [V/V]
+parameter real f_p1       = 2e3    from (1:1e9);     // error-amp dominant pole [Hz]
+parameter real f_p2       = 2.5e6  from (10:1e11);   // error-amp non-dominant pole [Hz]
+parameter real r_drv      = 1e3    from (1:1e6);     // error-amp output resistance [ohm]
+parameter real c_pos_par  = 50e-15 from [0:inf);     // parasitic cap on unit PNP node [F]
+parameter real c_neg_par  = 200e-15 from [0:inf);    // parasitic cap on M*PNP + R1 node [F]
+parameter real r_out      = 1e3    from (1:1e6);     // VREF output resistance [ohm]
+parameter real vdd_min    = 0.78   from (0.1:5.0);   // supply headroom threshold [V]
+parameter integer swap_pol = 0     from [0:1];       // 0 = normal neg feedback; 1 = swapped (unstable!)
+
+electrical n_pos, n_neg, n_p1;
+real t_k, t0_k, vt, v_turnon, v_in, v_eff, i_b, vbe_base, v_pos_dc, v_neg_dc;
+real r_e, v_err, v_bias, tau_p1, tau_p2, v_ref_int;
+
+analog begin
+    t_k  = $temperature;
+    t0_k = t0_c + 273.15;
+    vt   = `P_K * t_k / `P_Q;
+
+    // Smooth supply enable
+    v_turnon = 0.5 * (1.0 + tanh((V(VDD, VSS) - vdd_min) / 0.04));
+
+    // Smooth strictly-positive branch current controlled by LOOP_IN
+    v_in  = V(LOOP_IN, VSS);
+    v_eff = 0.5 * (v_in + sqrt(v_in * v_in + 1e-4));
+    i_b   = (1e-9 + gm_mir * v_eff) * v_turnon + 1e-11;
+
+    // Base V_BE(T) with Tsividis 2nd-order logarithmic curvature
+    vbe_base = vbe_t0 + tc_vbe * (t_k - t0_k)
+               + c_curv * (t_k - t0_k - t_k * ln(t_k / t0_k));
+
+    // Unit PNP branch (V_pos) and M*PNP + R1 branch (V_neg)
+    v_pos_dc = vbe_base + vt * ln(i_b / i_nom);
+    v_neg_dc = vbe_base + vt * ln(i_b / (m_ratio * i_nom)) + i_b * r_ptat;
+
+    // Small-signal dynamic resistance seen at each branch node
+    r_e = vt / max(i_b, 1e-9);
+    I(n_pos, VSS) <+ (V(n_pos, VSS) - v_pos_dc) / r_e + c_pos_par * ddt(V(n_pos, VSS));
+    I(n_neg, VSS) <+ (V(n_neg, VSS) - v_neg_dc) / (r_e + r_ptat) + c_neg_par * ddt(V(n_neg, VSS));
+
+    // Error amplifier: normal polarity drives LOOP_OUT up when V_pos > V_neg
+    // (negative net feedback since dV_neg/dI_b = r_e + R1 > dV_pos/dI_b = r_e)
+    if (swap_pol == 0)
+        v_err = V(n_pos, VSS) - V(n_neg, VSS);
+    else
+        v_err = V(n_neg, VSS) - V(n_pos, VSS);
+
+    v_bias = i_nom / gm_mir;
+    tau_p1 = 1.0 / (2.0 * `M_PI * f_p1);
+    tau_p2 = 1.0 / (2.0 * `M_PI * f_p2);
+
+    I(n_p1, VSS) <+ (V(n_p1, VSS) - (v_bias + a_ol * v_err) * v_turnon)
+                    + tau_p1 * ddt(V(n_p1, VSS));
+    I(LOOP_OUT, VSS) <+ (V(LOOP_OUT, VSS) - V(n_p1, VSS)) / r_drv
+                        + (tau_p2 / r_drv) * ddt(V(LOOP_OUT, VSS));
+
+    // Temperature-compensated Bandgap output VREF = k_scale * (V_BE1 + k_ptat * I_b * R1)
+    v_ref_int = k_scale * (V(n_pos, VSS) + k_ptat * i_b * r_ptat) * v_turnon;
+    I(VREF, VSS) <+ (V(VREF, VSS) - v_ref_int) / r_out;
+
+    // Supply current: 2 core branches + output mirror branch + error amp
+    I(VDD, VSS) <+ (3.0 * i_b + 5e-6) * v_turnon;
+end
+
+endmodule

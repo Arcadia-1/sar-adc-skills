@@ -1,0 +1,77 @@
+{
+  "skill_name": "dac-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How should I choose the thermometer-vs-binary segmentation split for a 10-bit or 12-bit high-speed Current-Steering DAC, and does segmentation improve worst-case INL?",
+      "expected_output": "Should recommend M = 5-7 thermometer bits (e.g., 6+4 for 10-bit), explain that segmentation reduces major-carry DNL variance and glitch impulse by ~2^M, and explicitly clarify that segmentation does NOT improve mid-scale INL yield (which still sums 2^(N-1) unit current sources).",
+      "files": ["references/dac-architectures-and-sizing.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "Derive the required unit current-source mismatch sigma_I/I and transistor area WL for a 10-bit Current-Steering DAC to achieve 99.7% INL < 0.5 LSB yield.",
+      "expected_output": "Should apply sigma_I/I <= INL_spec / (C(Y) * sqrt(2^(N-1))) with C ~= 3.0 and sqrt(512) = 22.63 -> sigma_I/I <= 0.73%, then tie to Pelgrom (WL)_unit >= (A_beta^2 + 4*A_VT^2/V_ov^2)/(sigma_I/I)^2 and highlight raising V_ov to shrink area.",
+      "files": ["references/dac-architectures-and-sizing.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "Why does differential SFDR of a high-speed Current-Steering DAC degrade rapidly at -40 dB/dec at high output frequencies, and how do I size unit-cell output resistance and capacitance?",
+      "expected_output": "Should derive the Lin & Bult code-dependent impedance distortion formulas: single-ended HD2 ~= N_tot*R_L/(4*|Z_unit(f)|) and differential HD3 ~= (N_tot*R_L/(4*|Z_unit(f)|))^2, show that above the cascode pole Z_unit(f) ~= 1/(j*w*C_unit) drops at -20 dB/dec making differential HD3 degrade at -40 dB/dec, and recommend cascoding plus minimum-L switches.",
+      "files": ["references/current-steering-and-dynamic.md"]
+    },
+    {
+      "id": 4,
+      "prompt": "Why is switch driver crossing-point control so important in a Current-Steering DAC unit cell?",
+      "expected_output": "Should explain that if complementary switch gate drives cross in the both-OFF region, the common-source node discharges and pushes the tail current source/cascode into triode, causing large code-dependent glitches and HD2/HD3; recommend low-crossing (PMOS) or high-crossing (NMOS) local latches with reduced swing.",
+      "files": ["references/current-steering-and-dynamic.md"]
+    },
+    {
+      "id": 5,
+      "prompt": "How do I measure static DNL, INL, and monotonicity of a 10-bit Current-Steering DAC in Spectre without FFT/strobe endpoint artifacts?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_static_dnl_inl.scs, va_dac_ramp_gen_10b.va, and analyze_cs_dac.py static using strobeoutput=strobeonly (strobedelay < strobeperiod) filtered via extract_uniform_strobe.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_static_dnl_inl.scs"]
+    },
+    {
+      "id": 6,
+      "prompt": "How do I set up a coherent two-tone IMD3 simulation for a Current-Steering DAC in Spectre without accidentally clipping the digital input?",
+      "expected_output": "Should reference assets/tb/current_steering/tb_dac_dynamic_sfdr.scs (sig_mode=1) and va_dac_sine_gen_10b.va: back off each equal-amplitude tone to ~ -6 dBFS (0.5*amp_fs) so peak sum never clips [0..1023], use odd coherent prime bins (e.g. m_bin1=59, m_bin2=61), and run analyze_cs_dac.py twotone to extract IM3_lo, IM3_hi, and IMD3.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_dynamic_sfdr.scs", "assets/va/va_dac_sine_gen_10b.va"]
+    },
+    {
+      "id": 7,
+      "prompt": "How do I measure major-carry glitch impulse energy [pV*s] and 0.5-LSB settling time of a 10-bit DAC in Spectre, and why can default transient timesteps hide glitches?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_glitch_settle.scs and analyze_cs_dac.py glitch exercising 511 -> 512 and 512 -> 511 with tight maxstep (<= 5p) so narrow 50-200 ps skew glitches are not stepped over, and integrate excess area outside the monotonic step envelope.",
+      "files": ["references/current-steering-and-dynamic.md", "references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_glitch_settle.scs"]
+    },
+    {
+      "id": 8,
+      "prompt": "What causes static DNL/INL errors in a voltage-mode R-2R ladder DAC besides resistor mismatch, and how do I verify an R-2R DAC in Spectre?",
+      "expected_output": "Should highlight uncompensated switch ON-resistance R_sw breaking the 1:2 ladder ratio (requiring R_sw << 2R/2^N or current-mode virtual-ground summing), and point to assets/tb/r2r/ (tb_r2r_static.scs, tb_r2r_settle.scs, analyze_r2r.py) and assets/va/va_dac_r2r_8b.va.",
+      "files": ["references/dac-architectures-and-sizing.md", "assets/tb/r2r/tb_r2r_static.scs", "assets/va/va_dac_r2r_8b.va"]
+    },
+    {
+      "id": 9,
+      "prompt": "Calculate the ZOH sinc attenuation at Nyquist (f = fs/2) and the maximum allowable RMS clock jitter for a 100 MHz DAC output tone targeting 70 dB SNR.",
+      "expected_output": "Should compute H_ZOH(fs/2) = sinc(0.5) = 2/pi -> -3.92 dB droop, and apply SNR_jit = -20*log10(2*pi*f_sig*sigma_t) >= 70 dB -> sigma_t <= 1 / (2*pi*100e6 * 10^(70/20)) ~= 0.50 ps rms.",
+      "files": ["references/dac-architectures-and-sizing.md"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do Return-to-Zero (RZ) output stages and Dynamic Element Matching (DEM / DWA) improve DAC dynamic linearity, and what are their trade-offs?",
+      "expected_output": "Should explain that RZ hides code-dependent transition glitches by resetting during switching (at -6 dB signal power and higher jitter sensitivity), while DEM/DWA rotates thermometer cell selection each cycle to convert static mismatch spurs into white or shaped noise (+15-25 dB SFDR).",
+      "files": ["references/current-steering-and-dynamic.md"]
+    },
+    {
+      "id": 11,
+      "prompt": "When should I use osr=1 vs. oversampled (osr >= 8) strobing in tb_dac_dynamic_sfdr.scs?",
+      "expected_output": "Should explain that osr=1 strobing after settling isolates static mismatch, finite r_cell impedance distortion, and headroom clipping, while oversampling (osr >= 8) captures continuous-time switching glitches and ZOH sinc roll-off directly in the FFT spectrum.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_dynamic_sfdr.scs"]
+    },
+    {
+      "id": 12,
+      "prompt": "Which behavioral Verilog-A DAC model lets me inject finite unit-cell impedance (r_cell/c_cell), MSB mismatch, and switching timing skew to test my Spectre DAC verification flow before building transistors?",
+      "expected_output": "Should point to assets/va/va_dac_cs_10b.va (and va_dac_r2r_8b.va for R-2R), listing r_cell, c_cell, dm_msb, t_skew, v_ov_min, and in_lsb parameters.",
+      "files": ["SKILL.md", "assets/va/va_dac_cs_10b.va"]
+    }
+  ]
+}

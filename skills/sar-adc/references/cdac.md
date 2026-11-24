@@ -149,7 +149,7 @@ Each bit's bottom plate can be driven between `VREFP` and `VREFN` by a single PM
 
 ## How to Verify a CDAC
 
-> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/cdac/`](../assets/tb/cdac/README.md) (`tb_cdac_static_dnl_inl.scs`, `tb_cdac_settling.scs`, `analyze_cdac.py`) and the 10-bit behavioral CDAC + code-sweep models [`../assets/va/va_cdac_10b_diff.va`](../assets/va/va_cdac_10b_diff.va) and [`../assets/va/va_code_ramp_10b.va`](../assets/va/va_code_ramp_10b.va) (supporting Vcm-based & monotonic switching, `c_par_ratio`, `dm_msb`, and `tau_settle`).
+> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/cdac/`](../assets/tb/cdac/README.md) (`tb_cdac_static_dnl_inl.scs`, `tb_cdac_settling.scs`, `analyze_cdac.py`) and the 10-bit behavioral CDAC + code-sweep models [`va_cdac_10b_diff.va`](../assets/va/behavioral_10b/va_cdac_10b_diff.va) and [`va_code_ramp_10b.va`](../assets/va/behavioral_10b/va_code_ramp_10b.va) (supporting Vcm-based & monotonic switching, `c_par_ratio`, `dm_msb`, and `tau_settle`).
 
 ### 1. Static Linearity (DNL / INL)
 

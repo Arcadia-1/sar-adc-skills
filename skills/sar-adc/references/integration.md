@@ -90,7 +90,7 @@ When wiring `_tb_sar` for full-ADC verification:
 - **Coherent differential sine source:** `VIP = Vcm + (A/2)*sin(2*pi*Fin*t)`, `VIN = Vcm - (A/2)*sin(2*pi*Fin*t)`, `Fin = (M/N)*Fs` with $M, N$ coprime and $A \approx 0.85\text{–}0.95\,V_{\text{fs,diff}}$.
 - **Buffered realistic `CLKS` edge:** Drive `CLKS` with realistic rise/fall (e.g., `10 ps`) or through a clock buffer matching the target clock tree.
 - **Reference network:** Start with ideal low-impedance `VREFP`/`VREFN` in Phase 1–3, then add realistic series impedance / bondwire inductance + on-chip decap in Phase 4 to check reference recovery.
-- **Reconstruction DAC / `CODE` monitor:** Attach a behavioral ideal DAC (such as `assets/va/_va_dac_4b.va` generalized to $N$ bits) clocked on the retimed output strobe for quick waveform inspection, and run `adctoolbox.analyze_spectrum()` on strobed outputs (`strobeoutput=strobeonly`).
+- **Reconstruction DAC / `CODE` monitor:** Attach a behavioral ideal DAC (such as `assets/va/behavioral_10b/va_dac_10b_diff.va` or `assets/va/tutorial_4b/_va_dac_4b.va`) clocked on the retimed output strobe for quick waveform inspection, and run `adctoolbox.analyze_spectrum()` on strobed outputs (`strobeoutput=strobeonly`).
 
 ---
 

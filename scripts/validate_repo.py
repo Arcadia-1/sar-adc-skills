@@ -76,6 +76,13 @@ def main() -> int:
     if not skill_dirs:
         errors.append("No skill directories found under skills/")
 
+    skills_readme_path = SKILLS_ROOT / "README.md"
+    if not skills_readme_path.exists():
+        errors.append("Missing skills/README.md catalog")
+        skills_readme_text = ""
+    else:
+        skills_readme_text = skills_readme_path.read_text(encoding="utf-8")
+
     readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
     total_refs = 0
     total_evals = 0
@@ -85,6 +92,8 @@ def main() -> int:
 
     for sdir in skill_dirs:
         sname = sdir.name
+        if f"{sname}/" not in skills_readme_text:
+            errors.append(f"skills/README.md missing skill entry: {sname}/")
         skill_md = sdir / "SKILL.md"
         if not skill_md.exists():
             errors.append(f"{sname}: missing SKILL.md")
@@ -124,6 +133,16 @@ def main() -> int:
                     if not (sdir / f).exists():
                         errors.append(f"{sname} eval {e['id']} missing file: {f}")
 
+        # Canonical hierarchy checks
+        if not (sdir / "references/simulation-and-verification.md").exists():
+            errors.append(f"{sname}: missing references/simulation-and-verification.md")
+        tb_root = sdir / "assets/tb"
+        if not (tb_root / "README.md").exists():
+            errors.append(f"{sname}: missing assets/tb/README.md")
+        for sub_tb in sorted(p for p in tb_root.iterdir() if p.is_dir()):
+            if any(sub_tb.glob("*.scs")) and not (sub_tb / "README.md").exists():
+                errors.append(f"{sname}: TB suite {sub_tb.name}/ missing README.md")
+
         # References coverage in SKILL.md & root README.md
         ref_files = sorted(p.name for p in (sdir / "references").glob("*.md"))
         total_refs += len(ref_files)
@@ -138,7 +157,7 @@ def main() -> int:
             if not (sdir / path_str.rstrip("/")).exists():
                 errors.append(f"{sname}/SKILL.md backtick path missing: {path_str}")
 
-        total_va += len(list((sdir / "assets/va").glob("*.va")))
+        total_va += len(list((sdir / "assets/va").rglob("*.va")))
 
     # 6. Relative Markdown links across entire repo
     link_re = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -220,6 +239,29 @@ def main() -> int:
     q_sine = np.floor((0.5 + 0.49 * np.sin(phase)) * 1024.0)
     m_fft = psf_mod.coherent_fft_metrics(q_sine, m_bin=m_bin)
     assert 9.5 < m_fft["enob"] < 10.2, f"Unexpected 10b ENOB: {m_fft['enob']}"
+
+    # Test coherent_twotone_metrics with known 3rd-order nonlinearity (x - 0.02*x^3)
+    n_tt, m1, m2 = 256, 59, 61
+    k_idx = np.arange(n_tt)
+    x_tt = 0.5 * (np.sin(2.0 * math.pi * m1 * k_idx / n_tt) + np.sin(2.0 * math.pi * m2 * k_idx / n_tt))
+    y_tt = x_tt - 0.02 * (x_tt**3)
+    m_tt = psf_mod.coherent_twotone_metrics(y_tt, m_bin1=m1, m_bin2=m2, fs=200e6)
+    assert m_tt["im3_lo_bin"] == 57.0 and m_tt["im3_hi_bin"] == 63.0
+    # Theoretical IM3 for A=0.5, a3=-0.02: 3/4 * |a3| * A^2 = 0.00375 -> -48.5 dBc
+    assert -50.0 < m_tt["imd3_dbc"] < -47.0, f"Unexpected IMD3: {m_tt['imd3_dbc']}"
+
+    # Verify install_skills.sh syntax & --list output
+    install_sh = ROOT / "scripts/install_skills.sh"
+    if not install_sh.exists():
+        errors.append("Missing scripts/install_skills.sh")
+    else:
+        chk = subprocess.run(["bash", "-n", str(install_sh)], capture_output=True, text=True)
+        if chk.returncode != 0:
+            errors.append(f"install_skills.sh syntax error: {chk.stderr}")
+        lst = subprocess.run([str(install_sh), "--list"], capture_output=True, text=True)
+        listed = sorted(x.strip() for x in lst.stdout.splitlines() if x.strip())
+        if lst.returncode != 0 or listed != [d.name for d in skill_dirs]:
+            errors.append(f"install_skills.sh --list mismatch: got {listed}")
 
     # Test dnl_inl_from_transfer
     ramp = np.linspace(-1.0, 1.0, 64)

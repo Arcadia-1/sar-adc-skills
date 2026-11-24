@@ -27,9 +27,9 @@
     },
     {
       "id": 5,
-      "prompt": "Why must I verify loop stability on a bandgap core opamp when the bandgap has both positive and negative feedback loops?",
-      "expected_output": "Should explain that the 1:M BJT legs create simultaneous positive and negative feedback paths, so negative feedback gain must strictly dominate and stb phase margin must exceed 60 deg across PVT.",
-      "files": ["references/simulation-and-verification.md"]
+      "prompt": "Why must I verify loop stability on a bandgap core opamp when the bandgap has both positive and negative feedback loops, and how do I set up the Spectre stb testbench?",
+      "expected_output": "Should explain that the unit PNP branch forms positive feedback (r_e) while the M*PNP + R1 branch forms negative feedback (r_e + R1), giving net DC loop gain T_net(0) = -A_ol*gm_mir*R1, warn about M*C_j parasitics rolling off the negative branch early, and point to assets/tb/tb_bgr_stb.scs, analyze_bandgap.py stb, and assets/va/va_bgr_core.va.",
+      "files": ["references/bandgap-fundamentals.md", "references/simulation-and-verification.md", "assets/tb/tb_bgr_stb.scs", "assets/va/va_bgr_core.va"]
     },
     {
       "id": 6,
@@ -48,6 +48,18 @@
       "prompt": "How do I measure bandgap PSRR(f) and integrated output noise in Spectre, and which behavioral model lets me test the flow before transistor design?",
       "expected_output": "Should point to assets/tb/tb_bgr_psrr_noise.scs, analyze_bandgap.py psrr_noise, and assets/va/va_bandgap.va.",
       "files": ["SKILL.md", "assets/tb/tb_bgr_psrr_noise.scs", "assets/va/va_bandgap.va"]
+    },
+    {
+      "id": 9,
+      "prompt": "In a Banba sub-1 V bandgap reference, which resistor should I trim to zero out the temperature coefficient vs. which resistor should I trim to calibrate the absolute VREF voltage?",
+      "expected_output": "Should explain trimming R1 (or R2) to adjust the PTAT/CTAT slope ratio and center the zero-TC peak at T0, while trimming output scaling resistor R3 calibrates absolute VREF level independently without disturbing TC, with trim range sized >= +/-4 sigma across Monte Carlo mismatch and process corners.",
+      "files": ["references/bandgap-fundamentals.md", "references/simulation-and-verification.md"]
+    },
+    {
+      "id": 10,
+      "prompt": "How can I generate PTAT, CTAT, and zero-TC (ZTC) analog bias currents from a Banba bandgap core, and where is each type most useful?",
+      "expected_output": "Should derive I_PTAT = (V_T*ln(M))/R1 (ideal for constant-gm biasing of OTAs/diff pairs), I_CTAT = V_BE/R2, and I_ZTC = I_PTAT + I_CTAT = V_ref/R_ext (useful for constant-current DACs and relaxation oscillators, limited by R_ext TC).",
+      "files": ["references/bandgap-fundamentals.md"]
     }
   ]
 }

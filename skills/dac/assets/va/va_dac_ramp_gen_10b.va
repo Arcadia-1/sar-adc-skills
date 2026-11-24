@@ -1,0 +1,55 @@
+// Process-independent 10-bit Sequential Digital Code Ramp Generator
+//
+// Initializes at `start_code` at t=0 and increments by `step_size` on each rising
+// edge of CLK until `stop_code` is reached. Drives 10-bit binary bus DIN[9:0]
+// (MSB = DIN[9], LSB = DIN[0]) and exact integer `CODE_MON` voltage.
+// Reusable for 8-bit R-2R static sweeps by connecting DIN[7:0] with stop_code=255.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dac_ramp_gen_10b(
+    input  electrical       CLK,
+    input  electrical       VSS,
+    output electrical [9:0] DIN,
+    output electrical       CODE_MON
+);
+
+parameter real    vdd        = 1.0  from (0:inf);
+parameter real    vth        = 0.5  from (0:inf);
+parameter integer start_code = 0    from [0:1023];
+parameter integer stop_code  = 1023 from [0:1023];
+parameter integer step_size  = 1    from [1:512];
+parameter real    tr         = 20p  from (0:inf);
+
+integer cur_code, tmp;
+integer bits[9:0];
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        cur_code = start_code;
+        tmp = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        if (cur_code + step_size <= stop_code)
+            cur_code = cur_code + step_size;
+        tmp = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+    end
+
+    for (k = 0; k <= 9; k = k + 1) begin
+        V(DIN[k], VSS) <+ transition(bits[k] * vdd, 0.0, tr, tr);
+    end
+    V(CODE_MON, VSS) <+ transition(cur_code, 0.0, tr, tr);
+end
+
+endmodule

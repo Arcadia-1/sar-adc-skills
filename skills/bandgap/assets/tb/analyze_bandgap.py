@@ -5,6 +5,7 @@ Usage:
   python analyze_bandgap.py temp_line <psf_dir>
   python analyze_bandgap.py startup <psf_dir> [--t-delay 2e-6]
   python analyze_bandgap.py psrr_noise <psf_dir>
+  python analyze_bandgap.py stb <psf_dir>
 """
 
 from __future__ import annotations
@@ -121,6 +122,46 @@ def analyze_psrr_noise(psf_dir: Path) -> dict[str, float]:
     }
 
 
+def analyze_stb(psf_dir: Path) -> dict[str, object]:
+    f = find_single(psf_dir, ["stb.stb", "*.stb.stb"])
+    d = parse_psf_ascii(f)
+    freq = np.real(d["freq"])
+    lg_raw = d["loopGain"]
+    dc_phase_raw = float(math.degrees(math.atan2(float(np.imag(lg_raw[0])), float(np.real(lg_raw[0])))))
+    # Spectre `stb` outputs loopGain = T(s): negative DC feedback has Re(T(0)) < 0
+    # (phase ~= +/-180 deg) when iprobe is oriented forward (LOOP_OUT -> LOOP_IN).
+    neg_fb = bool(float(np.real(lg_raw[0])) < 0.0)
+    lg = -lg_raw if neg_fb else lg_raw
+
+    mag_db = 20.0 * np.log10(np.maximum(np.abs(lg), 1e-30))
+    phase_deg = np.degrees(np.unwrap(np.angle(lg)))
+
+    ugf = float("nan")
+    pm_deg = float("nan")
+    for i in range(len(mag_db) - 1):
+        if mag_db[i] >= 0.0 > mag_db[i + 1]:
+            frac = (0.0 - mag_db[i]) / (mag_db[i + 1] - mag_db[i])
+            ugf = float(10.0 ** (math.log10(freq[i]) + frac * (math.log10(freq[i + 1]) - math.log10(freq[i]))))
+            pm_deg = 180.0 + float(phase_deg[i] + frac * (phase_deg[i + 1] - phase_deg[i]))
+            break
+
+    gm_db = float("inf")
+    for i in range(len(phase_deg) - 1):
+        if phase_deg[i] >= -180.0 > phase_deg[i + 1]:
+            frac = (-180.0 - phase_deg[i]) / (phase_deg[i + 1] - phase_deg[i])
+            gm_db = -float(mag_db[i] + frac * (mag_db[i + 1] - mag_db[i]))
+            break
+
+    return {
+        "net_negative_feedback": neg_fb,
+        "dc_phase_raw_deg": dc_phase_raw,
+        "dc_loop_gain_db": float(mag_db[0]),
+        "ugf_hz": ugf,
+        "phase_margin_deg": pm_deg,
+        "gain_margin_db": gm_db,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze Bandgap Reference Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -135,13 +176,18 @@ def main(argv: list[str] | None = None) -> int:
     p_pn = sub.add_parser("psrr_noise")
     p_pn.add_argument("psf_dir", type=Path)
 
+    p_sb = sub.add_parser("stb")
+    p_sb.add_argument("psf_dir", type=Path)
+
     args = ap.parse_args(argv)
     if args.mode == "temp_line":
-        res = analyze_temp_line(args.psf_dir)
+        res: object = analyze_temp_line(args.psf_dir)
     elif args.mode == "startup":
         res = analyze_startup(args.psf_dir, t_delay=args.t_delay)
-    else:
+    elif args.mode == "psrr_noise":
         res = analyze_psrr_noise(args.psf_dir)
+    else:
+        res = analyze_stb(args.psf_dir)
     print(json.dumps(res, indent=2))
     return 0
 

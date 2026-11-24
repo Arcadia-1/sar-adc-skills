@@ -1,0 +1,70 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — Major-Carry Glitch & Settling
+// =============================================================================
+// Exercises both worst-case mid-scale major-carry transitions:
+//   - Rising  (t = t_rise): code 511 (0111111111) -> 512 (1000000000)
+//   - Falling (t = t_fall): code 512 (1000000000) -> 511 (0111111111)
+//
+// Uses fine `maxstep = 5p` and `errpreset = conservative` so narrow 50-200 ps
+// switching glitches are resolved accurately for computing peak glitch [mV],
+// glitch impulse energy [pV*s], and 0.5-LSB settling time [ns].
+//
+// DUT interface contract:
+//   subckt dut_cs_dac DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    t_rise=10n \
+    t_fall=20n \
+    t_stop=30n \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// MSB bit DIN9: 0 -> 1 at t_rise, 1 -> 0 at t_fall
+VMSB (DIN_MSB 0) vsource type=pwl wave=[ \
+    0            0 \
+    t_rise       0 \
+    (t_rise+tr)  vdd_dig \
+    t_fall       vdd_dig \
+    (t_fall+tf)  0 \
+    t_stop       0 ]
+
+// Lower 9 bits DIN[8:0]: 1 -> 0 at t_rise, 0 -> 1 at t_fall
+VLOW (DIN_LOW 0) vsource type=pwl wave=[ \
+    0            vdd_dig \
+    t_rise       vdd_dig \
+    (t_rise+tf)  0 \
+    t_fall       0 \
+    (t_fall+tr)  vdd_dig \
+    t_stop       vdd_dig ]
+
+I0 (DIN_MSB DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW DIN_LOW \
+    VDD VSS IOUTP IOUTN) dut_cs_dac
+
+RLP (IOUTP VSS) resistor  r=rload
+RLN (IOUTN VSS) resistor  r=rload
+CLP (IOUTP VSS) capacitor c=cload
+CLN (IOUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save IOUTP IOUTN DIN_MSB DIN_LOW
+saveOptions options save=selected
