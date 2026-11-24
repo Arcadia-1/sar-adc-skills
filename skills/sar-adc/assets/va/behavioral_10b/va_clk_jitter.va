@@ -1,0 +1,79 @@
+// Process-independent sampling clock aperture-jitter injector
+//
+// Passes CLK_IN to CLK_OUT with optional zero-mean Gaussian RMS timing jitter
+// (t_jitter_rms) on each falling (sampling) edge.
+//
+// Uses a strictly causal constant pedestal delay (t_ped = 6 * t_jitter_rms) so
+// negative Gaussian jitter draws remain causal without distorting coherent FFT
+// SNR/ENOB. When t_jitter_rms == 0.0, behaves as a zero-delay ideal buffer.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_clk_jitter(
+    input  electrical CLK_IN,
+    output electrical CLK_OUT
+);
+
+parameter real    vdd          = 0.9 from (0:inf);
+parameter real    t_jitter_rms = 0.0 from [0:inf);  // RMS sampling-edge jitter [s]
+parameter integer seed         = 1;                 // PRNG seed
+parameter real    tr           = 15p from (0:inf);
+parameter real    tf           = 15p from (0:inf);
+
+integer clk_state, armed_rise, armed_fall, rng_seed;
+real t_rise_fire, t_fall_fire, t_ped, dt_jit, dly, v_jit;
+
+analog begin
+    @(initial_step) begin
+        clk_state   = (V(CLK_IN) > vdd/2) ? 1 : 0;
+        armed_rise  = 0;
+        armed_fall  = 0;
+        t_rise_fire = -1.0;
+        t_fall_fire = -1.0;
+        rng_seed    = seed;
+        t_ped       = (t_jitter_rms > 0.0) ? (6.0 * t_jitter_rms) : 0.0;
+    end
+
+    @(cross(V(CLK_IN) - vdd/2, +1)) begin
+        if (t_jitter_rms > 0.0) begin
+            armed_rise  = 1;
+            t_rise_fire = $abstime + t_ped;
+        end else begin
+            clk_state = 1;
+        end
+    end
+
+    @(cross(V(CLK_IN) - vdd/2, -1)) begin
+        if (t_jitter_rms > 0.0) begin
+            dt_jit = $rdist_normal(rng_seed, 0.0, t_jitter_rms);
+            if (dt_jit >  5.0 * t_jitter_rms) dt_jit =  5.0 * t_jitter_rms;
+            if (dt_jit < -5.0 * t_jitter_rms) dt_jit = -5.0 * t_jitter_rms;
+            dly = t_ped + dt_jit;
+            if (dly < 1e-15) dly = 1e-15;
+            armed_fall  = 1;
+            t_fall_fire = $abstime + dly;
+        end else begin
+            clk_state = 0;
+        end
+    end
+
+    @(timer(t_rise_fire)) begin
+        if (armed_rise) begin
+            clk_state  = 1;
+            armed_rise = 0;
+        end
+    end
+
+    @(timer(t_fall_fire)) begin
+        if (armed_fall) begin
+            clk_state  = 0;
+            armed_fall = 0;
+        end
+    end
+
+    v_jit = transition(clk_state * vdd, 0, tr, tf);
+    V(CLK_OUT) <+ (t_jitter_rms > 0.0) ? v_jit : V(CLK_IN);
+end
+
+endmodule

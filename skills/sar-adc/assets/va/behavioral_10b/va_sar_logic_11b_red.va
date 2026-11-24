@@ -1,0 +1,179 @@
+// Process-independent 11-trial Asynchronous SAR Logic for Sub-Radix-2 Redundant CDAC
+//
+// Companion async state machine for `va_cdac_10b_redundant.va`:
+//   - Executes 11 bit trials (step = 10 down to 0) per conversion
+//   - Drives DCTRLP[10:1] / DCTRLN[10:1] on steps 10..1
+//   - Latches completed raw 11-bit decisions into DOUT[10:0] at EOC, and exposes
+//     the exact integer raw decision word `RAW_CODE = sum_{k=0}^{10} b_k * 2^k`
+//     (0..2047) latched on CLKS rising edge for glitch-free strobing and digital
+//     weight calibration in Python.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_sar_logic_11b_red(
+    input  electrical        CLKS,
+    input  electrical        DCMPP,
+    input  electrical        DCMPN,
+    output electrical        CMPCK,
+    output electrical        EOC,
+    output electrical [10:0] DOUT,
+    output electrical [10:1] DCTRLP,
+    output electrical [10:1] DCTRLN,
+    output electrical        RAW_CODE
+);
+
+parameter real vdd            = 0.9  from (0:inf);
+parameter real t_start_delay  = 120p from [0:inf);
+parameter real t_valid_to_rst = 50p  from [0:inf);
+parameter real t_rst_to_cmp   = 200p from [0:inf);
+parameter real tr             = 15p  from (0:inf);
+
+integer step, active, cmpck_st, eoc_st, decided;
+integer bit_reg[10:0], dout_reg[10:0];
+integer dctrlp_reg[10:1], dctrln_reg[10:1];
+integer armed_cmp_hi, armed_cmp_lo;
+real t_cmp_hi, t_cmp_lo, raw_code_val;
+integer raw_int;
+genvar i;
+
+analog begin
+    @(initial_step) begin
+        step         = 10;
+        active       = 0;
+        cmpck_st     = 0;
+        eoc_st       = 0;
+        decided      = 0;
+        armed_cmp_hi = 0;
+        armed_cmp_lo = 0;
+        t_cmp_hi     = -1.0;
+        t_cmp_lo     = -1.0;
+        raw_code_val = 1024.0;
+        for (i = 0; i <= 10; i = i + 1) begin
+            bit_reg[i]  = 0;
+            dout_reg[i] = 0;
+        end
+        for (i = 1; i <= 10; i = i + 1) begin
+            dctrlp_reg[i] = 0;
+            dctrln_reg[i] = 0;
+        end
+    end
+
+    // Sampling phase: latch previous completed DOUT into RAW_CODE, reset state machine
+    @(cross(V(CLKS) - vdd/2, +1)) begin
+        raw_int = 0;
+        for (i = 10; i >= 0; i = i - 1) begin
+            raw_int = raw_int * 2 + dout_reg[i];
+        end
+        raw_code_val = raw_int;
+
+        step         = 10;
+        active       = 0;
+        cmpck_st     = 0;
+        eoc_st       = 0;
+        decided      = 0;
+        armed_cmp_hi = 0;
+        armed_cmp_lo = 0;
+        for (i = 0; i <= 10; i = i + 1) begin
+            bit_reg[i] = 0;
+        end
+        for (i = 1; i <= 10; i = i + 1) begin
+            dctrlp_reg[i] = 0;
+            dctrln_reg[i] = 0;
+        end
+    end
+
+    // End of sampling: launch MSB (step = 10) comparison
+    @(cross(V(CLKS) - vdd/2, -1)) begin
+        active       = 1;
+        step         = 10;
+        decided      = 0;
+        eoc_st       = 0;
+        armed_cmp_lo = 0;
+        if (t_start_delay > 0.0) begin
+            armed_cmp_hi = 1;
+            t_cmp_hi     = $abstime + t_start_delay;
+        end else begin
+            cmpck_st     = 1;
+            armed_cmp_hi = 0;
+        end
+    end
+
+    // Comparator decision detected
+    @(cross(V(DCMPP) - vdd/2, +1) or cross(V(DCMPN) - vdd/2, +1)) begin
+        if (active && !decided && step >= 0 && step <= 10) begin
+            decided = 1;
+            bit_reg[step] = (V(DCMPP) >= V(DCMPN)) ? 1 : 0;
+
+            if (step >= 1) begin
+                if (bit_reg[step] == 1) begin
+                    dctrln_reg[step] = 1;
+                end else begin
+                    dctrlp_reg[step] = 1;
+                end
+            end
+
+            if (t_valid_to_rst > 0.0) begin
+                armed_cmp_lo = 1;
+                t_cmp_lo     = $abstime + t_valid_to_rst;
+            end else begin
+                cmpck_st     = 0;
+                armed_cmp_lo = 0;
+            end
+        end
+    end
+
+    // Comparator reset finished: advance to next trial or assert EOC
+    @(cross(V(DCMPP) - vdd/2, -1) or cross(V(DCMPN) - vdd/2, -1)) begin
+        if (active && decided && V(DCMPP) <= vdd/2 && V(DCMPN) <= vdd/2) begin
+            decided = 0;
+            if (step > 0) begin
+                step = step - 1;
+                if (t_rst_to_cmp > 0.0) begin
+                    armed_cmp_hi = 1;
+                    t_cmp_hi     = $abstime + t_rst_to_cmp;
+                end else begin
+                    cmpck_st     = 1;
+                    armed_cmp_hi = 0;
+                end
+            end else begin
+                for (i = 0; i <= 10; i = i + 1) begin
+                    dout_reg[i] = bit_reg[i];
+                end
+                active       = 0;
+                cmpck_st     = 0;
+                eoc_st       = 1;
+                armed_cmp_hi = 0;
+                armed_cmp_lo = 0;
+            end
+        end
+    end
+
+    @(timer(t_cmp_hi)) begin
+        if (armed_cmp_hi && active && !eoc_st && V(CLKS) <= vdd/2) begin
+            cmpck_st     = 1;
+            armed_cmp_hi = 0;
+        end
+    end
+
+    @(timer(t_cmp_lo)) begin
+        if (armed_cmp_lo) begin
+            cmpck_st     = 0;
+            armed_cmp_lo = 0;
+        end
+    end
+
+    V(CMPCK)    <+ transition(cmpck_st * vdd, 0, tr, tr);
+    V(EOC)      <+ transition(eoc_st   * vdd, 0, tr, tr);
+    V(RAW_CODE) <+ transition(raw_code_val,   0, tr, tr);
+
+    for (i = 1; i <= 10; i = i + 1) begin
+        V(DCTRLP[i]) <+ transition(dctrlp_reg[i] * vdd, 0, tr, tr);
+        V(DCTRLN[i]) <+ transition(dctrln_reg[i] * vdd, 0, tr, tr);
+    end
+    for (i = 0; i <= 10; i = i + 1) begin
+        V(DOUT[i]) <+ transition(dout_reg[i] * vdd, 0, tr, tr);
+    end
+end
+
+endmodule

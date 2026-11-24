@@ -1,0 +1,81 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — Coherent Two-Tone IMD2 / IMD3
+// =============================================================================
+// Drives two equal-amplitude coherent near-Nyquist sine tones (each at
+// -6.5 dBFS, so peak sum stays safely below 0 dBFS without rail clipping) to
+// measure high-frequency intermodulation distortion (IMD2, IMD3, SFDR, SNDR).
+//
+// Coherent prime bins (N = 256):
+//   - m_bin1 = 97  (0.3789 * fs),  m_bin2 = 107 (0.4180 * fs)
+//   - IM3 products: 2*f1 - f2 -> bin 87,  2*f2 - f1 -> bin 117
+//   - IM2 products: f2 - f1   -> bin 10,  f1 + f2   -> bin 52 (aliased)
+//   All tones, IM2/IM3 products, and HD2/HD3 harmonics occupy distinct bins.
+//
+// Recommended Spectre X invocation:
+//   spectre +preset=cx -preset_override +mt=2 -format psfascii ...
+//
+// DUT interface contract (10-bit fully differential SAR ADC):
+//   subckt dut_sar_adc VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/behavioral_10b/va_dac_10b_diff.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    a_tone_ratio=0.473 \
+    fs=50M \
+    n_fft=256 \
+    m_bin1=97 \
+    m_bin2=107 \
+    n_settle=4 \
+    duty_track=0.20 \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+// Derived coherent frequencies and timing (each tone at ~ -6.5 dBFS)
+parameters \
+    ts=1/fs \
+    f1=fs*m_bin1/n_fft \
+    f2=fs*m_bin2/n_fft \
+    amp_se=0.5*a_tone_ratio*vref \
+    t_stop=(n_settle+n_fft+1)*ts
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+// Differential coherent two-tone stimulus:
+//   V(VIP) - V(VIN) = a_tone_ratio*vref*(sin(2*pi*f1*t) + sin(2*pi*f2*t))
+VVIP1 (VIP VIP_MID) vsource type=sine sinedc=0   ampl=amp_se  freq=f1
+VVIP2 (VIP_MID 0)   vsource type=sine sinedc=vcm ampl=amp_se  freq=f2
+VVIN1 (VIN VIN_MID) vsource type=sine sinedc=0   ampl=-amp_se freq=f1
+VVIN2 (VIN_MID 0)   vsource type=sine sinedc=vcm ampl=-amp_se freq=f2
+
+I0 (VIP VIN CLKS \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    VDD VSS) dut_sar_adc
+
+// Latch completed digital word on each CLKS rising edge for glitch-free strobe
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLKS AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+save CODE AOUT VIP VIN
+saveOptions options save=selected

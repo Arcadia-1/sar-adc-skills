@@ -1,0 +1,40 @@
+// Process-independent behavioral ADC input driver buffer
+//
+// Models a finite-bandwidth, finite-output-impedance, slew-limited analog input
+// driver for SAR ADC acquisition-settling & kickback co-simulation:
+//   - 1-pole small-signal bandwidth (f_bw)
+//   - Soft tanh output current limit (i_max) modeling slewing on CDAC charge kickback
+//   - Finite linear output impedance (r_out)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_input_driver(
+    input  electrical VIN,
+    output electrical VOUT,
+    input  electrical VSS
+);
+
+parameter real f_bw  = 500M from (0:inf);  // small-signal -3 dB bandwidth [Hz]
+parameter real r_out = 10.0 from (0:inf);  // output resistance [ohm]
+parameter real i_max = 10m  from (0:inf);  // maximum output drive current [A]
+
+electrical n_pole;
+
+real tau, g_out, v_err, i_drv;
+
+analog begin
+    tau   = 1.0 / (`M_TWO_PI * f_bw);
+    g_out = 1.0 / r_out;
+
+    // 1-pole low-pass internal stage (R = 1 ohm, C = tau)
+    I(VIN, n_pole)    <+ V(VIN, n_pole);
+    I(n_pole, VSS)    <+ tau * ddt(V(n_pole, VSS));
+
+    // Smooth slew-limited output stage: linear slope g_out for small error, saturates at +/- i_max
+    v_err = V(n_pole, VOUT);
+    i_drv = i_max * tanh((g_out * v_err) / i_max);
+    I(VOUT, VSS) <+ -i_drv;
+end
+
+endmodule

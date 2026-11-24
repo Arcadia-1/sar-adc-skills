@@ -1,0 +1,86 @@
+// =============================================================================
+// Process-Independent Dynamic Comparator Testbench — Input Kickback on High-Z CDAC
+// =============================================================================
+// Connects comparator inputs (VIP, VIN) to realistic sampled, floating high-Z
+// CDAC top-plate capacitances (`c_dac` with optional mismatch `dc_dac_pct` and
+// asymmetric routing resistances `r_src_p`, `r_src_n`) to measure:
+//   - Common-mode kickback peak (`vkb_cm_peak_mv`)
+//   - Differential kickback peak (`vkb_diff_peak_mv`)
+//   - Induced dynamic differential shift right at decision edge (`[mV]` & `[LSB]`)
+//   - Residual post-reset top-plate disturbance across consecutive clock cycles
+//
+// Zero Verilog-A required in the deck; works identically with transistor-level
+// comparators (e.g. StrongARM / Miyahara) and `va_cmp_dynamic.va` (`c_kb_p/n`).
+//
+// DUT interface contract (identical to all comparator TBs):
+//   subckt dut_cmp CMPCK DCMPN DCMPP VDD VIN VIP VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.8 \
+    vcm=0.4 \
+    vidin=1m \
+    c_dac=500f \
+    dc_dac_pct=2.0 \
+    r_src_p=50 \
+    r_src_n=100 \
+    t_samp=2n \
+    t_hold_pre=1n \
+    tclk=2n \
+    tr=15p \
+    tf=15p \
+    cload=2f \
+    n_cycles=3 \
+    temp_c=27
+
+parameters \
+    t_ck_start=t_samp+t_hold_pre \
+    t_stop=t_ck_start+n_cycles*tclk
+
+VSUP   (VDD 0)   vsource dc=vdd type=dc
+VGND   (VSS 0)   vsource dc=0   type=dc
+VSRC_P (SRC_P 0) vsource dc=vcm+0.5*vidin type=dc
+VSRC_N (SRC_N 0) vsource dc=vcm-0.5*vidin type=dc
+
+// Initial sampling pulse closes sampling switches for t=[0, t_samp], then floats CDAC
+VCLKS (CLKS 0) vsource type=pwl wave=[ \
+    0           vdd \
+    t_samp      vdd \
+    (t_samp+tf) 0   \
+    t_stop      0 ]
+
+// Comparator clock starts after CDAC top plates are cleanly held high-Z
+VCK (CMPCK 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=t_ck_start rise=tr fall=tf width=0.5*tclk
+
+// Ideal sampling switches + realistic mismatched CDAC top-plate & routing network
+model sw_samp relay rclosed=5 ropen=1e10 vt1=0.35*vdd vt2=0.65*vdd
+S_SP (SRC_P CDAC_P CLKS 0) sw_samp
+S_SN (SRC_N CDAC_N CLKS 0) sw_samp
+
+C_DP (CDAC_P 0) capacitor c=c_dac*(1+0.5*dc_dac_pct/100)
+C_DN (CDAC_N 0) capacitor c=c_dac*(1-0.5*dc_dac_pct/100)
+R_SP (CDAC_P VIP) resistor r=r_src_p
+R_SN (CDAC_N VIN) resistor r=r_src_n
+
+CLP (DCMPP 0) capacitor c=cload
+CLN (DCMPN 0) capacitor c=cload
+
+I0 (CMPCK DCMPN DCMPP VDD VIN VIP VSS) dut_cmp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 scalem=1.0 scale=1.0 \
+    gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5 digits=5 cols=80 \
+    pivrel=1e-3 checklimitdest=psf
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p annotate=status maxiters=5
+
+save CMPCK CLKS VIP VIN CDAC_P CDAC_N DCMPP DCMPN
+saveOptions options save=selected

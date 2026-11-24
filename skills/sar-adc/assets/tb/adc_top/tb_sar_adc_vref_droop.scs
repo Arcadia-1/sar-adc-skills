@@ -1,0 +1,110 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — Reference Buffer Droop & Recovery
+// =============================================================================
+// Drives the ADC VREF pin through `va_vref_buffer.va` (finite r_out, recovery
+// bandwidth f_bw, optional bondwire l_bond, and on-chip c_decap) and uses
+// Spectre `alter` to compare three reference regimes in a single run:
+//   1. `tran_ideal` : stiff ideal VREF baseline
+//   2. `tran_small` : undersized on-chip C_decap -> MSB VREF droop & HD3/ENOB collapse
+//   3. `tran_sized` : properly decoupled VREF -> full ENOB/SFDR recovery
+// Plus short 4-cycle continuous captures (`tran_wf_small`, `tran_wf_sized`) to
+// measure exact peak VREF droop [mV] and bit-end reference settling error [LSB].
+//
+// DUT interface contract (10-bit SAR ADC with explicit VREF pin):
+//   subckt dut_sar_adc_vref VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VREF VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/behavioral_10b/va_dac_10b_diff.va"
+ahdl_include "../../va/behavioral_10b/va_vref_buffer.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    a_in_ratio=0.90 \
+    fs=50M \
+    n_fft=128 \
+    m_bin=19 \
+    n_settle=4 \
+    duty_track=0.20 \
+    tr=15p \
+    tf=15p \
+    r_vref=1m \
+    r_vref_hf=1m \
+    f_vref_bw=10M \
+    l_bond=0 \
+    r_bond=0.05 \
+    c_decap=10n \
+    r_esr=0.02 \
+    r_vref_real=5.0 \
+    r_vref_hf_real=250.0 \
+    l_bond_real=0.5n \
+    c_decap_small=8p \
+    c_decap_sized=500p \
+    r_esr_real=0.05 \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    fin=fs*m_bin/n_fft \
+    amp_se=0.5*a_in_ratio*vref \
+    t_stop=(n_settle+n_fft+1)*ts \
+    t_wf=4*ts
+
+VSUP  (VDD 0)        vsource dc=vdd  type=dc
+VGND  (VSS 0)        vsource dc=0    type=dc
+VREF0 (VREF_IDEAL 0) vsource dc=vref type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+// Reference buffer + bondwire + on-chip decoupling network
+I_VBUF (VREF_IDEAL VREF VSS) va_vref_buffer \
+    r_out=r_vref r_hf=r_vref_hf f_bw=f_vref_bw \
+    l_bond=l_bond r_bond=r_bond c_decap=c_decap r_esr=r_esr
+
+// Coherent differential sine input
+VVIP (VIP 0) vsource type=sine sinedc=vcm ampl=amp_se  freq=fin
+VVIN (VIN 0) vsource type=sine sinedc=vcm ampl=-amp_se freq=fin
+
+I0 (VIP VIN CLKS \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    VREF VDD VSS) dut_sar_adc_vref
+
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLKS AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Stiff ideal VREF baseline
+tran_ideal tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+// 2) Undersized on-chip decap + realistic reference buffer & bondwire
+alt_s1 alter param=r_vref    value=r_vref_real
+alt_s2 alter param=r_vref_hf value=r_vref_hf_real
+alt_s3 alter param=l_bond    value=l_bond_real
+alt_s4 alter param=c_decap   value=c_decap_small
+alt_s5 alter param=r_esr     value=r_esr_real
+
+tran_small tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+tran_wf_small tran stop=t_wf errpreset=conservative maxstep=20p
+
+// 3) Properly decoupled on-chip VREF
+alt_ok alter param=c_decap value=c_decap_sized
+
+tran_sized tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+tran_wf_sized tran stop=t_wf errpreset=conservative maxstep=20p
+
+save CODE AOUT VREF CLKS VIP VIN
+saveOptions options save=selected

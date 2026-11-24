@@ -10,7 +10,8 @@ A clean, PDK-agnostic Spectre testbench set for characterizing clocked dynamic c
 | `tb_cmp_delay.scs` | Multi-`vidin` transient sweep (e.g. `100u`, `1m`, `10m`) → decision delay, `E_cmp`, `P_at_fclk` | ~1–2 s |
 | `tb_cmp_trannoise.scs` | Independent transient-noise cross-check (`N=300` cycles, probit fit of `DCMPN`/`DCMPP` counts) | ~15–40 s |
 | `tb_cmp_offset.scs` + `cmp_bisect.va` | Binary-search offset (`vpre=0`, e.g. for Monte Carlo mismatch) and memory/hysteresis effect (`vpre=±100m`) | ~2–5 s |
-| `run_cmp_tb.py` | Parallel runner & PSF ASCII analyzer matching Cadence ADE Maestro expressions | — |
+| `tb_cmp_kickback.scs` + `analyze_cmp_kickback.py` | High-Z sampled CDAC kickback (`c_dac=500f`, asymmetric `r_src_p/n`, `dc_dac_pct`) → CM/diff kickback peaks, induced decision-edge dynamic offset `[mV]`/`[LSB]`, residual drift | ~1–2 s |
+| `run_cmp_tb.py` | Parallel runner & PSF ASCII analyzer matching Cadence ADE Maestro expressions (`pss_pnoise`, `delay`, `trannoise`, `offset`, `kickback`) | — |
 
 ## DUT Interface Contract
 
