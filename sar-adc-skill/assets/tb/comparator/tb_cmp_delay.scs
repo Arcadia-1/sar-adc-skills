@@ -1,0 +1,52 @@
+// =============================================================================
+// Process-Independent Dynamic Comparator Testbench — Transient Delay & Energy
+// =============================================================================
+// Sweep `vidin` (e.g. 100u, 1m, 10m) and corners to measure:
+//   - Decision delay (both DCMPP*DCMPN falling and DCMPP-DCMPN rising)
+//   - Reset delay
+//   - Energy per comparison E_cmp (averaged over cycles 1..5)
+//   - Dynamic power P_at_fclk = E_cmp / tclk
+//
+// DUT interface contract:
+//   subckt dut_cmp CMPCK DCMPN DCMPP VDD VIN VIP VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.8 \
+    vcm=0.4 \
+    vidin=1m \
+    tclk=1n \
+    tr=10p \
+    tf=10p \
+    cload=2f \
+    n_cycles=6 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0 type=dc
+VVIP (VIP 0) vsource dc=vcm+0.5*vidin type=dc
+VVIN (VIN 0) vsource dc=vcm-0.5*vidin type=dc
+VCK  (CMPCK 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=tclk/2 rise=tr fall=tf width=tclk/2
+
+CLP (DCMPP 0) capacitor c=cload
+CLN (DCMPN 0) capacitor c=cload
+
+I0 (CMPCK DCMPN DCMPP VDD VIN VIP VSS) dut_cmp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-3 vabstol=1e-6 iabstol=1e-12 \
+    temp=temp_c tnom=27 scalem=1.0 scale=1.0 \
+    gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5 digits=5 cols=80 \
+    pivrel=1e-3 checklimitdest=psf
+
+tran tran stop=n_cycles*tclk errpreset=conservative annotate=status maxiters=5
+
+save CMPCK DCMPP DCMPN VIP VIN VSUP:p
+saveOptions options save=selected

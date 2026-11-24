@@ -1,211 +1,151 @@
-# SAR ADC Simulation & Verification
+# SAR ADC Simulation & Verification Reference
 
-How to set up a Spectre transient simulation for a SAR ADC and extract dynamic/static performance metrics.
+Practical guide for setting up accurate, fast Cadence Spectre / ADE Maestro simulations for SAR ADCs and extracting dynamic, static, and per-block metrics.
+
+---
 
 ## 1. Coherent Sampling Setup
 
-FFT-based metric extraction requires **coherent sampling** — the input frequency must be an exact integer number of cycles within the record:
+FFT-based ENOB/SNDR/SFDR extraction requires **coherent sampling** so the fundamental tone and all harmonics fall cleanly on FFT bins with zero spectral leakage:
 
-```
-fin = M / N * Fs
-```
+$$f_{\text{in}} = \frac{M}{N} f_s$$
 
-where `M` (number of input cycles) and `N` (number of samples) are coprime. Common choices:
+where $N$ is a power of 2 and $M$ is an odd prime coprime to $N$.
 
-| N | Good M values (prime) | Notes |
-|---|----------------------|-------|
-| 64 | 7, 11, 13 | Quick smoke test |
-| 128 | 11, 13, 53 | Minimum for ~10-bit resolution |
-| 256 | 31, 67, 127 | Good for 10-12 bit |
-| 1024 | 127, 251, 509 | Publication quality |
+| $N$ | Typical prime $M$ (low-freq / near-Nyquist) | Use case |
+|---|---|---|
+| 64 | 7, 11, 13 / 29, 31 | Fast sanity check & corner screening |
+| 128 | 11, 13 / 61 | Minimum for ~10-bit iteration |
+| 256 | 13, 31 / 127 | Solid 8–12 bit characterization |
+| 1024+ | 127, 251 / 509 | High-resolution / noisy signoff & INL/DNL |
 
-Use `adctoolbox.find_coherent_frequency(Fs, fin_target, N)` to select the nearest coherent frequency.
+Use `adctoolbox.find_coherent_frequency(fs, fin_target, N)` to pick $M$ cleanly. Always test **both** a low-frequency tone (checks static linearity, noise, CDAC weights) and a **near-Nyquist** tone ($M \approx N/2 - 1$, stresses sampling linearity, bootstrap switch $R_{\text{on}}$ flatness, feedthrough, and jitter).
 
-**Non-coherent sampling** causes spectral leakage that artificially degrades ENOB by 10-20 dB. Windowing (Hann, etc.) can mitigate but is inferior to coherent sampling for ADC testing.
+---
 
-## 2. Input Signal
+## 2. Input Signal & Clocking
 
-### Amplitude
+### Differential Sine Input
 
-- Single-ended: `ampl = A`, `sinedc = VDD/2` (centered at mid-supply)
-- Differential: VIP gets `ampl = +A/2`, VIN gets `ampl = -A/2`, both with `sinedc = VDD/2`
-- Typical A = 80-95% of full scale. Too close to rail causes clipping distortion; too small underutilizes the ADC range.
+- Center both sides at $V_{\text{cm}}$ (typically $V_{\text{DD}}/2$):
+  - `VIP`: `sinedc=vcm`, `ampl=+A/2`
+  - `VIN`: `sinedc=vcm`, `ampl=-A/2`
+- Drive at ~85–95% of differential full scale (`−1.4` to `−0.4 dBFS`) to avoid early rail clipping from top-plate parasitics or offset.
+- **Spectre `vsource` gotcha:** Use **`ampl`** for transient sine amplitude; **`mag`** is AC small-signal magnitude only. Leaving `ampl` unset silently falls back to a default 1 V amplitude.
 
-### Spectre vsource Gotcha
+### Sampling Clock (`CLKS`)
 
-In Spectre `vsource type=sine`:
-- **`ampl`** sets transient sine amplitude (this is what you want)
-- **`mag`** sets AC small-signal magnitude (for `.ac` analysis only, NOT transient)
+- **Synchronous SAR:** External `CLKS` at $f_s$ plus `CLKC`/`BITCLK` at $\ge (N_{\text{bits}} + 2) f_s$.
+- **Asynchronous SAR:** Only `CLKS` at $f_s$ (typically 20–25% high duty cycle for sampling, leaving 75–80% of $1/f_s$ for the self-timed conversion window).
 
-Using `mag` instead of `ampl` gives a default 1V swing in transient — a common mistake.
+---
 
-## 3. Sampling Clock
+## 3. Spectre Performance, Accuracy, and Output Size Control
 
-### Sync SAR (external bit clock)
+### Solver Modes
 
-Two clocks needed:
-- **CLKS** at Fs — controls sample/convert phases
-- **BITCLK** at (N_bits + 2) × Fs — one tick per SAR bit decision
+| Mode | Flag | Accuracy vs. APS (typical 11-bit SAR) | Use case |
+|---|---|---|---|
+| Classic Spectre / APS | `(none)` / `+aps` | Reference | Final signoff, comparator noise/metastability |
+| Spectre X `cx` / `ax` | `+preset=cx` / `+preset=ax +mt` | `ax` within ~0.03 bit ENOB of APS | Fast accurate iteration when Spectre X is licensed |
+| Spectre X `mx` | `+preset=mx +mt` | ~0.3 bit ENOB loss possible | Fast coarse functional sweeps only — **validate against `aps`/`ax` before signoff** |
+| Spectre X `lx` / `vx` | `+preset=lx` / `+preset=vx +mt` | Multi-bit ENOB degradation | Do **not** use for SAR ADC ENOB or comparator accuracy |
 
-CLKS duty cycle: ~1-2 BITCLK cycles high (sample), remainder low (convert).
+*(Always verify solver tolerances on your own circuit; regenerative comparators are especially sensitive to loose presets.)*
 
-### Async SAR (self-timed)
+### Controlling PSF Size & Speed (Critical Gotchas)
 
-Only CLKS needed. The SAR logic internally generates CMPCK pulses. CLKS duty cycle typically 20-25% high.
+1. **Always use `save=selected` with a curated signal list** (`saveOptions options save=selected`). Default `save=allpub` on a clocked SAR transient produces hundreds of MB of PSF ASCII per run.
+2. **Use `strobeoutput=strobeonly`, NOT `strobeoutput=all`:**
+   - `strobeoutput=all` saves **every solver timestep plus strobed points** (largest file; and in `psfascii`, Spectre emits only the huge continuous waveform).
+   - `strobeoutput=strobeonly` with `strobeperiod=1/Fs` and `strobedelay` aligned to the settled end-of-conversion phase saves **exactly 1 sample per conversion** and shrinks PSF files by ~500–1500×!
+3. **Transient noise (`tranNoise=yes`) — ALWAYS set `noiseruns=1`:**
+   - ADE Maestro frequently defaults `noiseruns=100` (100× compute cost for ensemble Monte Carlo!). For ADC ENOB or a single $N$-cycle comparator noise count, set `noiseruns=1` explicitly, with `noisefmax` $\ge 5 f_{\text{clk}}$ (e.g., `50G`–`100G` for GHz comparators).
+4. **Never pass `-param X=Y` on the Spectre CLI:** Spectre parses it as a second netlist file (`SPECTRE-132`). Bake swept parameters directly into the `parameters` line of a staged copy of the netlist, and do not re-declare upstream parameters after an `include` if dependent expressions were already bound.
+5. **Avoid over-subscribing CPU threads:** When running $P$ Spectre jobs in parallel on an $M$-core machine, set `+mt=floor(M/P)` (e.g. `+mt=2` for 8–12 jobs on 24 cores); letting every job auto-spawn max threads causes severe contention and 5–10× slowdown.
 
-## 4. Simulation Settings
+---
 
-| Parameter | Conservative | Fast Iteration |
-|-----------|-------------|----------------|
-| `maxstep` | 5-10 ps | 50-200 ps |
-| Spectre mode | `spectre` / `aps` | `mx` (3-5x faster) |
-| N (FFT length) | 128-1024 | 16-64 |
-| Extra settle cycles | 5-20 | 2-5 |
+## 4. Output Extraction & ADCToolbox
 
-**`mx` mode** is strongly recommended for iterative design — gives nearly identical accuracy at 3-5x less wall time.
+### Reconstructing Output Codes
 
-### Strobe Output
+- **Behavioral DAC / `CODE` pin (cleanest):** Include a Verilog-A reconstructor (like `assets/va/_va_dac_4b.va` or an ideal CDAC with a latched `CODE` pin) and sample at a fixed settled instant each period:
+  ```python
+  t_strobe = t_skip + np.arange(N) / Fs
+  samples = np.interp(t_strobe, t_sim, aout_sim)
+  ```
+- **From digital bus `DOUT<N-1:0>`:** Sample at `CLKS` rising edge (or end-of-conversion strobe) and threshold at `VDD/2`.
+- **Spectre bus port ordering gotcha:** Spectre expands bus ports `[N-1:0]` **MSB first**. Mismatched bit order produces bit-reversed codes that look like a completely broken ADC.
+- **PSF ASCII escaped bus names:** Signals like `DOUT<0>` parse as `r"DOUT\<0\>"` in PSF ASCII.
 
-Add `strobeperiod=1/Fs` and `strobeoutput=all` to capture exactly one data point per conversion. This avoids the need to manually identify sample boundaries in post-processing.
+### Dynamic & Static Metrics
 
-## 5. Output Extraction
-
-### Analog Reconstruction (preferred)
-
-If the testbench includes a behavioral DAC that converts DOUT back to analog (common practice), use its output (e.g., `AOUT`) for FFT analysis. This is cleaner than reconstructing from digital bits.
-
-**Resample at strobe times:**
-
-```python
-t_strobe = t_skip + np.arange(N) * (1.0 / Fs)
-samples = np.interp(t_strobe, t_sim, aout_sim)
-```
-
-Misaligned resampling is the #1 cause of artificially low SFDR. Sample at a consistent phase within each clock period, after the DAC output has settled.
-
-### From Digital Bits
-
-Reconstruct codes from DOUT bus signals:
+Use [`ADCToolbox`](https://github.com/Arcadia-1/ADCToolbox) rather than hand-written FFT/ENOB scripts:
 
 ```python
-code = sum((V(DOUT[bit]) > VDD/2) << bit for bit in range(n_bits))
-```
+from adctoolbox import analyze_spectrum, analyze_inl_from_sine
 
-Read codes at a consistent time relative to the end-of-conversion marker (EOC signal, or CLKS rising edge).
-
-### Spectre Bus Port Ordering
-
-**Spectre expands bus ports `[N:0]` as MSB first.** A subcircuit port `DOUT[9:0]` maps to pin order `DOUT9, DOUT8, ..., DOUT0` in the instance connection. Getting this wrong produces bit-reversed codes — easily mistaken for a broken ADC.
-
-## 6. Performance Metrics (ADCToolbox)
-
-### Dynamic Metrics
-
-```python
-from adctoolbox import analyze_spectrum
 spec = analyze_spectrum(samples, fs=Fs, max_harmonic=7, create_plot=False)
-# Returns: enob, sndr_dbc, sfdr_dbc, snr_dbc, thd_dbc, harmonics_dbc
+# -> enob, sndr_dbc, sfdr_dbc, snr_dbc, thd_dbc
+
+stat = analyze_inl_from_sine(codes, num_bits=N_bits)  # needs >= 1024 samples
+# -> inl, dnl (in LSB)
 ```
 
-### Static Metrics
+**Watch for 1-sample latency masking a failed corner:** On an asynchronous SAR whose conversion slightly exceeds the conversion window, the code can latch cleanly one cycle late — a coherent sine FFT still shows high ENOB because a pure delay leaves the spectrum unchanged! Always check **undecided bit counts** and **$T_{\text{conv}}$ vs. window** alongside ENOB.
 
-```python
-from adctoolbox import analyze_inl_from_sine
-result = analyze_inl_from_sine(codes, num_bits=N_bits)
-# Returns: inl, dnl (in LSB)
-```
+---
 
-Needs >1024 samples spanning full input range.
+## 5. Phased Verification Flow
 
-**Do not hand-write FFT or ENOB formulas.** Use `adctoolbox` — it handles windowing, bin detection, harmonic exclusion, and noise floor estimation correctly.
+### Phase 1 — All-Behavioral Verilog-A Baseline
+- Build the complete loop using behavioral CDAC, comparator, and sync/async logic (starting from [`../assets/va/`](../assets/va/)).
+- Confirm architecture, polarities, bus ordering, coherent FFT setup, and near-ideal ENOB baseline ($6.02N + 1.76\text{ dB}$).
 
-## 7. Debugging Checklist
+### Phase 2 — Standalone Per-Block Characterization
+
+Run each block independently with quantitative pass/fail gates:
+
+1. **Comparator** — use the ready-to-run, process-independent testbenches in [`../assets/tb/comparator/`](../assets/tb/comparator/README.md):
+   - **`tb_cmp_pss_pnoise.scs`** (~3 s/corner): Shooting `pss` (`fund=1/tclk`, `harms=100`, `errpreset=conservative`, `autotstab=yes`) + sampled full-spectrum `pnoise` (`start=0`, `stop=0.5/tclk`, `measurement=[pm0]`, `pm0 jitterevent` on internal latch nodes `[LP LM]` crossing `v_observe`). Extract:
+     - $\sigma_n = \frac{1}{V_{\text{observe}}/V_{\text{id,in}}} \sqrt{\int_0^{f_{\text{clk}}/2} S_{v,\text{out}}(f)\, df}$
+     - `t_cmp`, `t_rst`, regeneration $\tau$, `power`, `energy = power * tclk`
+     - $\text{FoM}_1 = \sigma_n^2 \cdot E_{\text{cmp}} \cdot 10^{21}\;[\text{mV}^2\cdot\text{fJ}]$, $\text{FoM}_2 = \sigma_n^2 \cdot E_{\text{cmp}} \cdot t_{\text{cmp}} \cdot 10^{30}\;[\text{mV}^2\cdot\text{fJ}\cdot\text{ns}]$.
+   - **`tb_cmp_delay.scs`**: Sweep `vidin = 100u, 1m, 10m` across PVT corners.
+   - **`tb_cmp_trannoise.scs`**: 300-cycle transient noise cross-check confirming PSS+PNOISE accuracy.
+   - **`tb_cmp_offset.scs` + `cmp_bisect.va`**: Binary-search offset (Monte Carlo mismatch) and memory/hysteresis (`vpre = ±100m`).
+2. **Bootstrap switch** — differential sine sampling into a CDAC-sized cap (`analyze_spectrum()` THD target below noise floor, typically $< -70\text{ dB}$ for 10+ bits), $R_{\text{on}}$ vs. $V_{\text{in}}$ flatness ($< 10\%$), and `VGATE` droop/oxide-stress check.
+3. **CDAC** — static code sweep (DNL $< 0.5\text{ LSB}$, INL $< 1\text{ LSB}$), MSB settling time in both directions, hold-mode feedthrough, and AC total/per-bit capacitance extraction.
+4. **SAR logic** — DC + sine closed-loop test with real comparator + ideal CDAC: verify zero missing codes, exact $N$ `CMPCK` pulses, $T_{\text{conv}} < (1 - D_{\text{samp}})/f_s$ across PVT, and positive `VALID_L`-vs-`EN` race margin.
+5. **LDO (if used)** — DC line/load regulation, `stb` phase margin ($\ge 45\text{–}60^\circ$), AC PSRR at $f_s/2$, transient CDAC burst droop ($< 0.5\text{ LSB}$), and integrated output noise.
+
+### Phase 3 — Incremental Transistor Replacement
+Replace behavioral blocks one at a time in order: **Comparator → Bootstrap → CDAC → SAR Logic**, verifying ENOB and timing at each step to isolate interface, polarity, kickback, or parasitic issues immediately.
+
+### Phase 4 — Full Transistor-Level & Post-Layout PVT Closure
+Run full coherent FFT (low-freq + near-Nyquist), transient noise (`noiseruns=1`), Monte Carlo mismatch, and PVT corners (`ss`/`tt`/`ff`, temperature & supply bounds) pre- and post-layout (extracted R+C).
+
+---
+
+## 6. ADE Maestro Pitfalls (When Driving Virtuoso/Maestro)
+
+When running these testbenches through Cadence ADE Maestro instead of standalone Spectre:
+- **Verify generated `input.scs` for GUI-only fields:** `tranNoise` (`noisefmax`), `pss autotstab=yes`, and `pnoise pm0 jitterevent` are frequently dropped from `input.scs` if configured only via SKILL API without opening the GUI form. Inspect the generated netlist before trusting results (or use standalone `.scs` decks).
+- **Corner `modelFiles` override test-level includes:** Put shared standard-cell SPICE/CDL includes in **Definition Files** (`definitionFiles`), not `modelFiles`, so corners do not silently drop them.
+- **Use `VAR("param")` inside Maestro analysis forms** (e.g., `6*VAR("tclk")`, `1/VAR("tclk")`), whereas standalone Spectre decks use bare parameter names (`6*tclk`, `1/tclk`).
+- **Always check per-point `spectre.out` logs:** Maestro can report a history "done" even when individual corners crashed or failed to converge.
+
+---
+
+## 7. Quick Debugging Checklist
 
 | Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| Only 2 unique codes (0 and full-scale) | Comparator polarity wrong or not reading valid output | Check StrongArm output polarity; add SR latch if comparator resets before SAR reads |
-| Bit-reversed code mapping | Bus `[N:0]` port ordering (MSB first) | Reverse pin order in subcircuit instantiation |
-| ENOB near ideal but bad SFDR | Resampling time misaligned | Use strobe output or sample at consistent clock phase |
-| Code range < full scale | Input exceeds reference, or sampling switch has Vth drop | Reduce amplitude or use bootstrap switch |
-| Large offset in code mean | CDAC initial state mismatch (single-ended) or charge injection | Use differential CDAC; match initial bottom-plate states |
-| ENOB degrades with transistor-level blocks | Parasitic capacitance changes bit weights | Increase CDAC unit cap to reduce parasitic ratio; verify settling |
-| Alternating valid/zero codes | SAR state machine missing cycles | Check CLKS duty cycle vs required number of bit-clock cycles |
-
-## 8. StrongArm Comparator Interface
-
-The StrongArm dynamic comparator has specific behavior that affects how SAR logic reads its output:
-
-- During **CLK=high** (evaluation): one output falls to 0, the other stays at VDD. The falling output indicates which input is larger.
-- During **CLK=low** (reset): both outputs return to VDD.
-
-**Problem:** If SAR logic reads at CLK falling edge, both outputs are transitioning to VDD (reset). The valid decision is lost.
-
-**Solution:** Insert an **SR latch** between comparator and SAR logic. The latch captures which output fell first and holds the decision through the reset phase. SAR logic reads the latched output safely at any time.
-
-## 9. Differential vs Single-Ended CDAC
-
-Single-ended CDAC suffers from **signal-dependent charge injection** from the sampling switch — this fundamentally limits ENOB to ~4-6 bits regardless of resolution.
-
-Differential CDAC (two matched CDACs, cross-connected inputs) cancels common-mode charge injection. The comparator sees the differential VTOP_P - VTOP_N, rejecting matched injection on both sides.
-
-**CDAC switch polarity convention (complementary pass gate):**
-- CTRL=LOW → PMOS on → bottom plate = VREFP
-- CTRL=HIGH → NMOS on → bottom plate = VREFN
-- Setting a bit = CTRL goes HIGH = bottom plate moves from VREFP to VREFN = VTOP drops
-
-In differential operation, CDACP and CDACN use complementary CTRL signals (from SAR logic DP/DN outputs). Setting a bit drops VTOPP and raises VTOPN simultaneously.
-
-## 10. Phased Verification Flow
-
-```
-Phase 1: All-behavioral Verilog-A
-  Goal: Verify architecture, establish ENOB baseline (expect near-ideal)
-  Effort: 1 day, single worker
-
-Phase 2: Per-block functional test
-  Goal: Each sub-block simulates independently with quantitative pass/fail
-  Effort: Parallelize across multiple workers
-
-  Comparator — PSS + Pnoise noise characterization:
-    Run PSS (fund=CLK_FREQ, harms=10, errpreset=conservative) then
-    Pnoise (pnoisemethod=fullspectrum, noisetype=sampled) with jitter
-    event on latch nodes (LP/LM). Extract input-referred noise (sigma),
-    comparison delay Tcmp, and power from supply current integral.
-    Compute FOM = sigma^2 x power. Pass: FOM meets noise budget for
-    target ENOB (sigma < 0.5 LSB of the full ADC).
-
-  Bootstrap — sampling linearity via THD:
-    Drive sine input through bootstrap switch into a capacitor load
-    sized to match the CDAC. Resample output at Fs, extract THD with
-    analyze_spectrum. Sweep input amplitude 10-95% FS.
-    Pass: THD < -70 dB. Also verify Ron flatness (< 10% variation
-    across VIN range) with a slow ramp + DC operating point.
-
-  CDAC — code sweep for static linearity:
-    Drive all 2^N codes sequentially with a behavioral SAR controller.
-    Measure VTOP at each code after full settling. Compute DNL and INL.
-    Pass: |DNL| < 0.5 LSB, |INL| < 1 LSB. Also measure MSB settling
-    time — must be < one bit-clock period with margin.
-
-  SAR logic — ramp test with behavioral analog blocks:
-    Connect behavioral comparator + CDAC to the transistor-level logic.
-    Apply a slow ramp covering full scale. Verify output codes are
-    monotonic and all 2^N codes appear (no missing codes). Measure
-    total conversion time — must complete within 1/Fs.
-    Pass: zero missing codes, monotonic transfer curve.
-
-Phase 3: Incremental transistor replacement
-  Goal: Replace one block at a time, verify ENOB degradation < 0.3 bits
-  Order: Comparator → Bootstrap → CDAC → SAR logic
-  Criterion: If ENOB drops significantly, debug that block before proceeding
-
-Phase 4: Full transistor-level / Maestro netlist
-  Goal: Final performance characterization
-  Metrics: ENOB, SNDR, SFDR, THD, DNL, INL across corners
-```
-
-Each phase catches different classes of bugs:
-- Phase 1 catches architecture errors (wrong polarity, missing connections)
-- Phase 2 catches per-block performance issues (noise, settling, linearity)
-- Phase 3 catches interface issues (timing, charge sharing, parasitics)
-- Phase 4 catches system-level issues (PVT sensitivity, supply noise, reference droop)
+|---|---|---|
+| Only 2 codes (`0` and full-scale) | Comparator polarity inverted, or logic sampling during reset | Check reset-high vs. reset-low polarity; verify latch captures before `CMPCK` falls |
+| Bit-reversed transfer curve | Spectre bus `[N-1:0]` MSB-first port ordering mismatch | Match MSB-first ordering in subcircuit instantiation |
+| High ENOB on failed slow corner | Conversion spilled past window; code latched 1 sample late | Check `T_conv`, undecided bit count, and `VALID_LSB` vs. `CLKS` edge |
+| Good ENOB, poor SFDR | Misaligned resampling instant, or sampling switch hold feedthrough | Use `strobeoutput=strobeonly` aligned after settling; add cross-connected dummy switch |
+| Double comparator firing on one bit | `VALID_L` vs. `EN` race margin negative | Buffer `DOP`/`DON` before CDAC switches; add delay on `VALID_G → EN` path |
+| Extra $(N+1)$-th `CMPCK` pulse | Slow `VALID_LSB → STOP` path through SR latch | Feed `VALID_LSB` directly into `NOR3(CLKS, QN, VALID_LSB)` |
+| Silent zero noise in Maestro `NOISE` | `tranNoise` toggle not written to `input.scs` | Check `input.scs` for `noisefmax`; enable via GUI form or run standalone Spectre |

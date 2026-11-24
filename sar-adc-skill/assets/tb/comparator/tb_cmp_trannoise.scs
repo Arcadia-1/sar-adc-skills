@@ -1,0 +1,61 @@
+// =============================================================================
+// Process-Independent Dynamic Comparator Testbench — Transient Noise Cross-Check
+// =============================================================================
+// Runs `n_cycles` comparisons (after `n_warmup` cycles) with thermal/flicker
+// transient noise enabled. Count DCMPN vs DCMPP decisions at 2-3 small `vidin`
+// values (e.g. 0.5*sigma .. 2*sigma) and fit P(decision=1) = Phi(vidin / sigma)
+// to cross-check the PSS + PNOISE result independently.
+//
+// Important:
+//   - Keep `noiseruns=1` (default when omitted); Maestro often injects 100.
+//   - Keep `save=selected` with only DCMPP/DCMPN so PSF stays small.
+//
+// DUT interface contract:
+//   subckt dut_cmp CMPCK DCMPN DCMPP VDD VIN VIP VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.8 \
+    vcm=0.4 \
+    vidin=500u \
+    tclk=1n \
+    tr=10p \
+    tf=10p \
+    cload=2f \
+    n_warmup=2 \
+    n_cycles=300 \
+    fmax_noise=100G \
+    fmin_noise=10M \
+    noise_seed=7 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0 type=dc
+VVIP (VIP 0) vsource dc=vcm+0.5*vidin type=dc
+VVIN (VIN 0) vsource dc=vcm-0.5*vidin type=dc
+VCK  (CMPCK 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=tclk/2 rise=tr fall=tf width=tclk/2
+
+CLP (DCMPP 0) capacitor c=cload
+CLN (DCMPN 0) capacitor c=cload
+
+I0 (CMPCK DCMPN DCMPP VDD VIN VIP VSS) dut_cmp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-3 vabstol=1e-6 iabstol=1e-12 \
+    temp=temp_c tnom=27 scalem=1.0 scale=1.0 \
+    gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5 digits=5 cols=80 \
+    pivrel=1e-3 checklimitdest=psf
+
+tran tran stop=(n_warmup+n_cycles)*tclk errpreset=moderate \
+    noisefmax=fmax_noise noisefmin=fmin_noise noiseseed=noise_seed \
+    noisescale=1 annotate=status maxiters=5
+
+save DCMPP DCMPN
+saveOptions options save=selected

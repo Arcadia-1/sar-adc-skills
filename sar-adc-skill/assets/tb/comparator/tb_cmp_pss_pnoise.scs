@@ -1,0 +1,80 @@
+// =============================================================================
+// Process-Independent Dynamic Comparator Testbench — PSS + Sampled PNOISE
+// =============================================================================
+// Measures in a single fast Spectre run (~2-4 s per corner):
+//   - Input-referred RMS noise  (sampled full-spectrum PNOISE at latch crossing)
+//   - Decision delay t_cmp      (CMPCK rising VDD/2 -> (DCMPP - DCMPN) rising VDD/2)
+//   - Reset delay t_rst         (CMPCK falling VDD/2 -> (DCMPP - DCMPN) falling VDD/2)
+//   - Regeneration time tau     (latch diff crossing 0.1 V -> 0.2718 V, i.e. 1 e-fold)
+//   - Average power & energy/cmp (integrated supply current over one PSS period)
+//   - FoM1 = noise^2 * energy * 1e21          [mV^2 * fJ]
+//   - FoM2 = noise^2 * energy * t_cmp * 1e30  [mV^2 * fJ * ns]
+//
+// DUT interface contract (7-pin comparator subcircuit):
+//   subckt dut_cmp CMPCK DCMPN DCMPP VDD VIN VIP VSS
+//   Polarity convention (VIP > VIN, vidin > 0):
+//     - Buffered outputs: DCMPP - DCMPN rises from 0 to +VDD on CMPCK rising.
+//     - Latch nodes (LP, LM): V(LP) - V(LM) rises past +v_observe on CMPCK rising.
+//
+// External process/DUT files supplied alongside this testbench:
+//   - models_corner.scs : foundry/generic device model include for the target corner
+//   - dut_subckt.scs    : DUT definition wrapping your comparator as `dut_cmp`
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+// ── External process & DUT hooks (keep this file process-independent) ────────
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+// ── Testbench parameters ─────────────────────────────────────────────────────
+// Choose v_observe well below VDD (typ. 50m..200m) and vidin small enough that
+// V(LP)-V(LM) is still in the linear/early-regeneration regime at v_observe,
+// so effective_gain = v_observe / vidin holds accurately.
+parameters \
+    vdd=0.8 \
+    vcm=0.4 \
+    vidin=1m \
+    tclk=1n \
+    tr=10p \
+    tf=10p \
+    cload=2f \
+    v_observe=200m \
+    temp_c=27
+
+// ── Supplies, differential DC input, clock, and capacitive load ──────────────
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0 type=dc
+VVIP (VIP 0) vsource dc=vcm+0.5*vidin type=dc
+VVIN (VIN 0) vsource dc=vcm-0.5*vidin type=dc
+VCK  (CMPCK 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=tclk/2 rise=tr fall=tf width=tclk/2
+
+CLP (DCMPP 0) capacitor c=cload
+CLN (DCMPN 0) capacitor c=cload
+
+// ── Device under test ────────────────────────────────────────────────────────
+I0 (CMPCK DCMPN DCMPP VDD VIN VIP VSS) dut_cmp
+
+// ── Simulator options ────────────────────────────────────────────────────────
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-3 vabstol=1e-6 iabstol=1e-12 \
+    temp=temp_c tnom=27 scalem=1.0 scale=1.0 \
+    gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5 digits=5 cols=80 \
+    pivrel=1e-3 checklimitdest=psf
+
+// ── Analyses: Shooting PSS + Sampled Full-Spectrum PNOISE ────────────────────
+pss pss fund=1/tclk harms=100 errpreset=conservative \
+    autotstab=yes annotate=status
+
+// Replace I0.LP / I0.LM with your DUT's internal differential latch nodes
+// (e.g. I0.OP / I0.ON for StrongARM, I0.OA / I0.OB for Miyahara).
+pnoise pnoise start=0 stop=0.5/tclk pnoisemethod=fullspectrum \
+    noisetype=sampled measurement=[pm0] annotate=status
+pm0 jitterevent trigger=[I0.LP I0.LM] triggerthresh=v_observe \
+    triggernum=1 triggerdir=rise target=[I0.LP I0.LM]
+
+// ── Save minimal signal set ──────────────────────────────────────────────────
+save CMPCK DCMPP DCMPN I0.LP I0.LM VSUP:p
+saveOptions options save=selected

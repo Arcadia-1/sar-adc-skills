@@ -1,0 +1,68 @@
+// Process-independent differential stimulus & bisection offset searcher
+//
+// mode = 0 : fixed differential input, VIP/VIN = vcm +/- vid/2
+// mode = 1 : binary search (bisection) for comparator input-referred offset.
+//            On every falling CMPCK edge the decision (DCMPP vs DCMPN) is read:
+//              DCMPP > DCMPN -> trip point is below vid -> vid -= step
+//              otherwise     -> trip point is above vid -> vid += step
+//            Then step halves. Starting from vid=0, step=vrange/2, N cycles
+//            resolve the offset within +/- vrange / 2^N.
+// VMON carries the current vid (in volts) for waveform inspection.
+// vpre != 0 (mode=1) measures hysteresis / memory effect by inserting a
+// preceding cycle at vid = vpre before each test cycle.
+// ignore_hidden_state allows PSS in mode=0 where state does not change.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+(* ignore_hidden_state *)
+module cmp_bisect(VIP, VIN, CMPCK, DCMPP, DCMPN, VMON);
+    output VIP, VIN, VMON;
+    input  CMPCK, DCMPP, DCMPN;
+    electrical VIP, VIN, CMPCK, DCMPP, DCMPN, VMON;
+
+    parameter integer mode   = 0 from [0:1];
+    parameter real    vcm    = 0.4;                 // input common mode [V]
+    parameter real    vid    = 0.0;                 // fixed differential input (mode 0) [V]
+    parameter real    vrange = 50m  from (0:inf);   // bisection search range +/- [V] (mode 1)
+    parameter real    vth    = 0.4;                 // CMPCK edge threshold [V]
+    parameter real    tr     = 20p  from (0:inf);   // input step transition time [s]
+    parameter real    vpre   = 0.0;                 // preceding-cycle input for memory test (mode 1) [V]
+    parameter real    nref   = 0.0  from [0:inf);   // optional ref noise below 100 Hz [V^2/Hz]
+
+    real    v, step, vout;
+    integer n, pre;
+
+    analog begin
+        @(initial_step) begin
+            v    = (mode == 1) ? 0.0 : vid;
+            step = vrange / 2.0;
+            n    = 0;
+            pre  = (mode == 1 && vpre != 0.0) ? 1 : 0;
+            vout = pre ? vpre : v;
+        end
+
+        if (mode == 1) begin
+            @(cross(V(CMPCK) - vth, -1)) begin
+                if (vpre != 0.0 && pre == 1) begin
+                    pre = 0;
+                end else begin
+                    n = n + 1;
+                    if (V(DCMPP) > V(DCMPN))
+                        v = v - step;
+                    else
+                        v = v + step;
+                    $strobe("cmp_bisect: iter %0d  t=%g  vid=%g  step=%g", n, $abstime, v, step);
+                    step = step / 2.0;
+                    if (vpre != 0.0) pre = 1;
+                end
+                vout = pre ? vpre : v;
+            end
+        end
+
+        V(VIP)  <+ vcm + 0.5 * transition(vout, 0, tr)
+                 + noise_table({1.0, nref, 100.0, nref, 110.0, 0.0}, "nref");
+        V(VIN)  <+ vcm - 0.5 * transition(vout, 0, tr);
+        V(VMON) <+ transition(vout, 0, tr);
+    end
+endmodule
