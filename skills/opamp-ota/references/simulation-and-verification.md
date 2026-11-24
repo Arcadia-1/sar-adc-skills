@@ -1,24 +1,37 @@
-# OpAmp & OTA Spectre Verification Guide
+# OpAmp & OTA Spectre X Verification Guide
 
-## 1. Ready-to-Run Process-Independent Testbench Suites
+See [`signoff-testbench-methodology.md`](signoff-testbench-methodology.md) for the complete 29-item / 36-metric industrial signoff taxonomy, multi-definition ICMR reconciliation, 4-resistor CMRR bridge pitfalls, FD symmetry traps, and PVT/MC scoping.
 
-- **Single-ended OpAmp / OTA** ([`../assets/tb/single_ended/`](../assets/tb/single_ended/README.md)):
-  - `tb_ota_stb_ac.scs` — Closed-loop `stb` (`iprobe`) + DC operating point & power $\to$ $A_0$, $\text{UGF}$, $\text{PM}$, $\text{GM}$, $P_{\text{DC}}$, $\text{FoM}_S$.
-  - `tb_ota_cmrr_psrr_noise.scs` — Three matched open-loop/closed-loop replicas in one AC + `noise` run $\to$ exact $\text{CMRR}(f)$, $\text{PSRR}^+(f)$, $\text{PSRR}^-(f)$, spot input-referred noise ($1\text{ kHz}$/$100\text{ kHz}$/$1\text{ MHz}$), and integrated RMS input-referred noise.
-  - `tb_ota_slew_settle.scs` — Unity-gain large-signal rising/falling step transient $\to$ $\text{SR}^+$, $\text{SR}^-$, overshoot %, $0.1\%$ and $0.01\%$ settling time, $\text{FoM}_L$.
-  - `analyze_ota.py` — Zero-dependency PSF ASCII analyzer (`stb`, `cmrr_psrr_noise`, `slew_settle`).
-- **Fully Differential OTA + CMFB** ([`../assets/tb/fully_diff/`](../assets/tb/fully_diff/README.md)):
-  - `tb_fd_ota_dm_cm_stb.scs` — Simultaneous DM + CM `stb` using a standalone reciprocal Tian balun (`diff_stb_probe` with native `iprobe`s `IPRB_DM` and `IPRB_CM` — zero `analogLib` dependency!).
-  - `tb_fd_ota_slew_settle.scs` — Differential closed-loop step $\to$ $\text{SR}_{\text{diff}}$, $0.1\%$ / $0.01\%$ settling time, and `VOCM` disturbance.
-  - `analyze_fd_ota.py` — Zero-dependency PSF ASCII analyzer (`dm_cm_stb`, `slew_settle`).
+## 1. Ready-to-Run Process-Independent Spectre X Testbench Suites
 
-## 2. Common OpAmp/OTA Simulation Pitfalls
+Run all decks with **Spectre X** (`spectre +preset=cx +mt=2 -format psfascii`; add `-preset_override` for `<-90 dB` coherent THD runs).
 
-1. **Never break the DC feedback loop with a 1 H inductor / 1 F capacitor for AC open-loop tests when `stb` is available!** Large $L$/$C$ breaks distort loading impedance and miss bilateral feedback paths (like Miller $C_c$). Always use Spectre `stb` with `iprobe` (single-ended) or `diff_stb_probe` (fully differential).
-2. **CMRR and PSRR must be measured with the exact same closed-loop DC operating point** (either in closed-loop unity gain where $V_{\text{out}}/V_{\text{cm}} \approx 1/\text{CMRR}$ and $V_{\text{out}}/V_{\text{dd}} \approx 1/\text{PSRR}$ for $f \ll \text{UGF}$, OR dividing exact open-loop $A_{\text{DM}}(f)$ by $A_{\text{CM}}(f)$ / $A_{\text{VDD}}(f)$ at identical DC bias!). Using closed-loop unity gain for `CMRR` and `PSRR` automatically locks the DC bias of high-gain ($> 80\text{ dB}$) opamps without railing!
-   - Exact closed-loop unity-gain relationships (for $A_{\text{DM}}(s) \gg 1$):
-     - Apply AC `1 V` in series with `VIP` (leaving `VIN = VOUT`): $V_{\text{out}}/V_{\text{in}} = \frac{A_{\text{DM}}}{1 + A_{\text{DM}}}$.
-     - Apply AC `1 V` common-mode on **both** `VIP` and the `VOUT -> VIN` return (or open-loop bias-stabilized via a `1 GΩ` DC feedback + `1 F` AC shunt): exact $\text{CMRR}(f) = 20\log_{10}|A_{\text{DM}}(f) / A_{\text{CM}}(f)|$ and $\text{PSRR}(f) = 20\log_{10}|A_{\text{DM}}(f) / A_{\text{VDD}}(f)|$ valid across **ALL frequencies** (both below AND above UGF!).
-   - `tb_ota_cmrr_psrr_noise.scs` uses **identical DC bias** (via `1 GΩ` DC servo + `1 F` AC ground on the feedback divider, i.e., `f_servo = 0.16 nHz`) across three matched DUT instances (`I_DM`, `I_CM`, `I_PS`) so `CMRR(f)` and `PSRR(f)` are exact from `1 Hz` to `10 GHz`!
-3. **Check `region` / saturation margin across PVT:** In Spectre DC operating point (`dcOp`), verify every transistor stays in saturation (`region == 2` for BSIM4) with $V_{\text{ds}} - V_{\text{dsat}} \ge 50\text{ mV}$ across `ss`/`tt`/`ff`, temperature, and input/output swing corners.
-4. **Input-referred noise:** In Spectre `noise (VOUT 0) noise iprobe=V_IN`, Spectre outputs BOTH `out` (output noise $[\text{V}/\sqrt{\text{Hz}}]$) and `in` (exact input-referred noise $[\text{V}/\sqrt{\text{Hz}}]$ = `out / |A_DM(f)|`!) automatically!
+### Single-Ended Suite ([`../assets/tb/single_ended/`](../assets/tb/single_ended/README.md))
+- `tb_ota_stb_ac.scs` — Closed-loop `stb` (`iprobe`) + DC operating point & power $\to$ $A_0$, $\text{UGF}$, $\text{PM}$, $\text{GM}$, $I_{\text{DD}}$, $P_{\text{DC}}$, $\text{FoM}_S$.
+- `tb_ota_cmrr_psrr_noise.scs` — 5-replica AC + `noise` (`1 Hz..1 GHz`): 4 DC-servo replicas (`I_DM`, `I_CM`, `I_PP`, `I_PN`) + classic 4-resistor CMRR bridge (`I_CM4R`) $\to$ exact $\text{CMRR}(f)$, bridge $\text{CMRR}_{\text{4R}}$, $\text{PSRR}^+(f)$, $\text{PSRR}^-(f)$, spot & white noise floor, $1/f$ corner, integrated RMS output/input noise, and average noise density.
+- `tb_ota_dc_signoff.scs` — Multi-analysis DC signoff: systematic $V_{\text{OS}}$, $\alpha_{V_{\text{OS}}}$ (`-55..150 °C`), follower/4R-bridge/AC-$-6\text{ dB}$ ICMR, inverting ($-2$) output swing across $R_L = 1\text{ M}/100\text{ k}/10\text{ k}/1\text{ k}\Omega$, rail-overdrive phase-reversal check (`VIDR`), and operating $V_{\text{DD}}$ range.
+- `tb_ota_cl_zout_gm.scs` — Closed-loop AC ($f_{-3\text{dB}}$, $f_{0.1\text{dB}}$, peaking, group delay), closed-loop $Z_{\text{out}}(f)$, open-loop $R_O$, $R_{\text{ID}}$/$C_{\text{ID}}$, and OTA $g_m$, 10%-linear $V_{\text{ID}}$, $g_m/I_{\text{DD}}$, $I_{\text{OPP}}$, and $g_m(f)$ (short-circuit & real-load).
+- `tb_ota_slew_settle.scs` — Unity-gain step transient (configurable `r_src` for source-impedance overshoot testing) $\to$ $\text{SR}^+$, $\text{SR}^-$, overshoot %, $0.1\%$ / $0.01\%$ settling time, $\text{FoM}_L$.
+- `tb_ota_thd_fpbw.scs` — Coherently strobed sine wave (follower + inverting $-1$) $\to$ THD, HD2, HD3, SFDR, SNDR, transient dynamic swing & $\text{BW}_{\text{full}}$.
+- `tb_ota_power_ramp.scs` — `5 ms` / `10 ms` linear power-up and power-down ramp stability with proportional `VCM = 0.5*VDD`.
+- `tb_ota_supply_surge_cmstep.scs` — `±50 mV` (`10 ns` edge, `100k/300k/1M Hz`) supply-surge ringing and `0.2 V` input CM-step transient.
+- `analyze_ota.py` — Zero-dependency PSF ASCII analyzer (`stb`, `cmrr_psrr_noise`, `slew_settle`, `dc_signoff`, `cl_zout_gm`, `thd_fpbw`, `power_ramp`, `supply_surge_cmstep`).
+
+### Fully Differential Suite ([`../assets/tb/fully_diff/`](../assets/tb/fully_diff/README.md))
+- `tb_fd_ota_dm_cm_stb.scs` — Simultaneous DM + CM `stb` using an inline lossless reciprocal Tian balun (`diff_stb_probe` with native `iprobe`s `IPRB_DM` and `IPRB_CM` — zero `analogLib` dependency).
+- `tb_fd_ota_cmrr_psrr_noise.scs` — 4-replica FD AC + `noise`: open-loop DM reference & exact single-source differential input-referred noise, closed-loop CM→CM & CM→DM rejection, and VDD/VSS→CM & DM PSRR.
+- `tb_fd_ota_dc_signoff.scs` — FD systematic $V_{\text{OS}}$ & $V_{\text{OCM}}$ error, temperature drift, closed-loop CM hold & AC $-6\text{ dB}$ ICMR, inverting ($-4$) differential & single-ended swing across $R_L = 1\text{ M}/100\text{ k}/10\text{ k}/1\text{ k}\Omega$, `VIDR` phase-reversal check, and operating $V_{\text{DD}}$ sweep.
+- `tb_fd_ota_cl_zout_gm.scs` — Closed-loop ($-1$) AC & group delay, differential $Z_{\text{out,DM}}(f)$ & CMFB common-mode $Z_{\text{out,CM}}(f)$, open-loop $R_O$, $R_{\text{ID}}$/$C_{\text{ID}}$, and FD OTA $g_m$/$V_{\text{ID}}$/$I_{\text{OPP}}$/$g_m(f)$.
+- `tb_fd_ota_slew_settle.scs` — Differential closed-loop step $\to$ $\text{SR}_{\text{diff}}$, $0.1\%$ / $0.01\%$ settling time, and `VOCM` disturbance.
+- `tb_fd_ota_thd_fpbw.scs` — Coherently strobed differential sine wave $\to$ THD, HD2 (even-harmonic suppression), HD3, SFDR, SNDR, and $\text{BW}_{\text{full}}$.
+- `tb_fd_ota_power_ramp.scs` — `5 ms` / `10 ms` FD power-up/down ramp stability checking both $V_{\text{OD}}$ and $V_{\text{OCM}}$.
+- `tb_fd_ota_supply_surge_cmstep.scs` — `±50 mV` supply surge and `0.2 V` input CM step measuring both CMFB kick and differential glitch.
+- `analyze_fd_ota.py` — Zero-dependency PSF ASCII analyzer (`dm_cm_stb`, `slew_settle`, `cmrr_psrr_noise`, `dc_signoff`, `cl_zout_gm`, `thd_fpbw`, `power_ramp`, `supply_surge_cmstep`).
+
+## 2. Quick Pitfall Checklist
+
+1. **Use `stb` (`iprobe` / `diff_stb_probe`) for stability, DC servo (`1 GΩ + 1 F`) for open-loop rejection & noise.** Never break a feedback loop with $1\text{ H} / 1\text{ F}$ when measuring PM/GM.
+2. **Decouple ICMR from output swing** via a level-shifted DC servo (in `tb_*_dc_signoff.scs`) and check `region == 2` with $V_{ds} - V_{dsat} \ge 50\text{ mV}$ across PVT corners.
+3. **Never trust a 4-resistor CMRR bridge blindly on high-$R_{\text{out}}$ OTAs** — compare `cmrr_dc_db` against `cmrr_4r_dc_db`.
+4. **Input-referred noise in FD setups:** Drive a single AC source `VSRC_DM` through `±0.5` `vcvs` splitters and set `iprobe=VSRC_DM` so Spectre's `in` trace equals exact differential input-referred noise without a $2\times$ factor error.
+5. **Statistical mismatch offset:** Pair these deterministic signoff decks with [`../../../common/tb/tb_mc_offset_template.scs`](../../../common/tb/tb_mc_offset_template.scs) for 100-run Monte Carlo $\sigma_{V_{\text{OS}}}$.

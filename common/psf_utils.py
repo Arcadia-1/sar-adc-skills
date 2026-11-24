@@ -20,11 +20,12 @@ import numpy as np
 _TRAPZ = getattr(np, "trapezoid", None) or getattr(np, "trapz", None)
 
 # Matches a quoted signal name, optional quoted type tag (non-swept dcOp PSF),
-# and either a complex pair `(re im)` or a real float.
+# either a complex pair `(re im)` or a real float, and optional trailing `PROP(`
+# (emitted by Spectre for branch currents in non-swept dcOp PSF ASCII files).
 _VALUE_LINE_RE = re.compile(
     r'^\s*"([^"]+)"\s+(?:"[^"]+"\s+)?(?:\(\s*([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\s+'
     r'([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\s*\)|'
-    r'([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?))\s*$'
+    r'([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?))(?:\s+PROP\()?\s*$'
 )
 
 

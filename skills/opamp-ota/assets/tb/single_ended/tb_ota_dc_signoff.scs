@@ -1,0 +1,141 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Full DC & Range Signoff
+// =============================================================================
+// Cohesive multi-analysis DC characterization deck covering:
+//   1. `dc_op`         : Systematic V_OS, I_DD, P_DC at mid-rail VCM
+//   2. `dc_temp`       : Offset temperature drift alpha_VOS [uV/C] (-40..125 C)
+//                        and DC operating temperature range (-55..150 C)
+//   3. `dc_sweep`      : Normalized sweep u_sw = 0..1 across 4 parallel checks:
+//                        - I_FOL   : Unity-gain follower tracking range
+//                        - I_BRG   : 4-resistor unity-gain bridge closed-loop ICMR
+//                        - I_SWG_* : Inverting (-2) DC output swing across
+//                                    RL = 1 M / 100 k / 10 k / 1 k ohm
+//                        - I_VIDR  : Rail-to-rail differential overdrive
+//                                    phase-reversal check
+//   4. `sweep_icmr_ac` : Level-shifted DC-servo AC sweep over VCM = 0.05..0.95*VDD
+//                        extracting true open-loop A_DM(Vcm) and CMRR(Vcm)
+//                        (-6 dB definition ICMR decoupled from output swing!)
+//   5. `dc_vdd`        : Operating supply voltage range (VDD swept 0.1..1.1*VDD
+//                        with 50 mV off-mid-rail probe so dead amps fail)
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    r_net=100k \
+    cload=2p \
+    u_sw=0.5 \
+    vcm_ac=0.45 \
+    vdd_sw=0.9 \
+    v_probe=0.05 \
+    f_icmr=100 \
+    temp_c=27
+
+VSUP    (VDD 0)     vsource dc=vdd type=dc
+VGND    (VSS 0)     vsource dc=0   type=dc
+VVCM    (VCM_REF 0) vsource dc=vcm type=dc
+
+// ── 1 & 2. Unity-gain follower at VCM (for dc_op and dc_temp) ────────────────
+VSUP_OP (VDD_OP 0) vsource dc=vdd type=dc
+I_OP    (VCM_REF VOUT_OP VOUT_OP VDD_OP VSS) dut_ota
+RL_OP   (VOUT_OP VCM_REF) resistor r=1M
+
+// ── 3a. Follower tracking sweep (0 .. VDD) ───────────────────────────────────
+VSW_FOL (VIN_FOL 0) vsource dc=u_sw*vdd type=dc
+I_FOL   (VIN_FOL VOUT_FOL VOUT_FOL VDD VSS) dut_ota
+RL_FOL  (VOUT_FOL VCM_REF) resistor r=1M
+
+// ── 3b. 4-resistor unity-gain closed-loop CM bridge (0 .. VDD) ───────────────
+VSW_BRG (VIN_BRG 0) vsource dc=u_sw*vdd type=dc
+R1_BRG  (VIN_BRG  BRG_VN)  resistor r=r_net
+R2_BRG  (VOUT_BRG BRG_VN)  resistor r=r_net
+R3_BRG  (VIN_BRG  BRG_VP)  resistor r=r_net
+R4_BRG  (BRG_VP   VCM_REF) resistor r=r_net
+I_BRG   (BRG_VP BRG_VN VOUT_BRG VDD VSS) dut_ota
+RL_BRG  (VOUT_BRG VCM_REF) resistor r=1M
+
+// ── 3c. Inverting gain (-2) output swing sweep across RL = 1M/100k/10k/1k ────
+VSW_INV  (VIN_SWG 0) vsource dc=vcm+(u_sw-0.5)*vdd type=dc
+
+R1_S1M   (VIN_SWG   S1M_VN)   resistor r=0.5*r_net
+R2_S1M   (VOUT_S1M  S1M_VN)   resistor r=r_net
+I_SWG_1M (VCM_REF S1M_VN VOUT_S1M VDD VSS) dut_ota
+RL_S1M   (VOUT_S1M VCM_REF)   resistor r=1M
+
+R1_S100K   (VIN_SWG    S100K_VN) resistor r=0.5*r_net
+R2_S100K   (VOUT_S100K S100K_VN) resistor r=r_net
+I_SWG_100K (VCM_REF S100K_VN VOUT_S100K VDD VSS) dut_ota
+RL_S100K   (VOUT_S100K VCM_REF)  resistor r=100k
+
+R1_S10K   (VIN_SWG   S10K_VN)  resistor r=0.5*r_net
+R2_S10K   (VOUT_S10K S10K_VN)  resistor r=r_net
+I_SWG_10K (VCM_REF S10K_VN VOUT_S10K VDD VSS) dut_ota
+RL_S10K   (VOUT_S10K VCM_REF)  resistor r=10k
+
+R1_S1K   (VIN_SWG  S1K_VN)   resistor r=0.5*r_net
+R2_S1K   (VOUT_S1K S1K_VN)   resistor r=r_net
+I_SWG_1K (VCM_REF S1K_VN VOUT_S1K VDD VSS) dut_ota
+RL_S1K   (VOUT_S1K VCM_REF)  resistor r=1k
+
+// ── 3d. Rail-to-rail differential overdrive phase-reversal check (VIDR) ──────
+VSW_VIDR (VIP_VIDR 0) vsource dc=u_sw*vdd type=dc
+I_VIDR   (VIP_VIDR VCM_REF VOUT_VIDR VDD VSS) dut_ota
+RL_VIDR  (VOUT_VIDR VCM_REF) resistor r=1M
+
+// ── 4. Level-shifted DC-servo open-loop replicas for AC-definition ICMR ──────
+// Keeps VOUT strictly at mid-rail VCM while VIP=VIN=vcm_ac sweeps 0.05..0.95*VDD
+VCM_AC_DM  (VIP_ACM_DM 0) vsource dc=vcm_ac mag=1 type=dc
+VCM_REF_DM (N_REF_DM 0)   vsource dc=vcm_ac type=dc
+ESRV_DM    (N_SRV_DM N_REF_DM VOUT_ACM_DM VCM_REF) vcvs gain=1.0
+RSRV_DM    (N_SRV_DM VIN_ACM_DM) resistor  r=1G
+CSRV_DM    (VIN_ACM_DM 0)        capacitor c=1.0
+I_ACM_DM   (VIP_ACM_DM VIN_ACM_DM VOUT_ACM_DM VDD VSS) dut_ota
+CL_ACM_DM  (VOUT_ACM_DM VSS)     capacitor c=cload
+RL_ACM_DM  (VOUT_ACM_DM VCM_REF) resistor  r=1M
+
+VAC_CM_SW  (N_AC_CM 0)          vsource dc=0 mag=1 type=dc
+VCM_AC_CM  (VIP_ACM_CM N_AC_CM) vsource dc=vcm_ac type=dc
+VCM_REF_CM (N_REF_CM 0)         vsource dc=vcm_ac type=dc
+ESRV_CM    (N_SRV_CM N_REF_CM VOUT_ACM_CM VCM_REF) vcvs gain=1.0
+RSRV_CM    (N_SRV_CM VIN_ACM_CM) resistor  r=1G
+CSRV_CM    (VIN_ACM_CM N_AC_CM)  capacitor c=1.0
+I_ACM_CM   (VIP_ACM_CM VIN_ACM_CM VOUT_ACM_CM VDD VSS) dut_ota
+CL_ACM_CM  (VOUT_ACM_CM VSS)     capacitor c=cload
+RL_ACM_CM  (VOUT_ACM_CM VCM_REF) resistor  r=1M
+
+// ── 5. Operating supply voltage sweep (dc_vdd) ───────────────────────────────
+VSUP_SW  (VDD_SW 0)  vsource dc=vdd_sw type=dc
+VVCM_SW  (VCM_SW 0)  vsource dc=0.5*vdd_sw type=dc
+VIP_SW_V (VIP_SW 0)  vsource dc=0.5*vdd_sw+v_probe type=dc
+I_VDD    (VIP_SW VOUT_VDD VOUT_VDD VDD_SW VSS) dut_ota
+RL_VDD   (VOUT_VDD VCM_SW) resistor r=1M
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_op    dc
+dc_temp  dc param=temp   start=-55        stop=150        step=1
+dc_sweep dc param=u_sw   start=0          stop=1          step=0.005
+dc_vdd   dc param=vdd_sw start=0.1        stop=1.1*vdd    step=0.01
+
+sweep_icmr_ac sweep param=vcm_ac start=0.05*vdd stop=0.95*vdd step=0.05*vdd {
+    ac_icmr ac freq=f_icmr
+}
+
+save VOUT_OP VSUP_OP:p VCM_REF \
+     VIN_FOL VOUT_FOL VIN_BRG VOUT_BRG \
+     VIN_SWG VOUT_S1M VOUT_S100K VOUT_S10K VOUT_S1K \
+     VIP_VIDR VOUT_VIDR \
+     VOUT_ACM_DM VOUT_ACM_CM \
+     VDD_SW VIP_SW VOUT_VDD
+saveOptions options save=selected

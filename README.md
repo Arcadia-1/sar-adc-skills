@@ -14,7 +14,7 @@ See [`skills/README.md`](skills/README.md) for the full domain taxonomy and cano
 | **Data Converters** | [**`skills/dac/`**](skills/dac/SKILL.md) | Current-Steering (segmented thermometer+binary, Pelgrom INL yield, $Z_{\text{out}}(f)$ vs. HD2/HD3/IMD3, switch crossing-point, glitch impulse, RZ/DEM) & R-2R Ladder DACs | 3 | 4 models | 2 suites (`current_steering`, `r2r` — 5 `.scs` decks) | 12 |
 | **Clocking & RF** | [**`skills/pll/`**](skills/pll/SKILL.md) | Integer-N CP-PLL, Fractional-N $\Delta\Sigma$ (MASH 1-1-1) PLL, All-Digital PLL (TDC-ADPLL & Bang-Bang ADPLL), LC/Ring VCO & DCO, PFD/CP, MMD, PSS+PNOISE & RMS jitter | 7 | 10 models | 7 suites (`vco`, `pfd_cp`, `divider`, `tdc_dco`, `int_n_pll`, `frac_n_pll`, `adpll`) | 16 |
 | **Wireline / SerDes** | [**`skills/serdes/`**](skills/serdes/SKILL.md) | Causal lossy channels (`SDD21`/`SDD11`/TDR/SBR/eye), CML/VML TX & 4-tap FFE, `R_term(V)`, CTLE/VGA peaking/channel-AC/noise/offset cal, slicers (`trannoise`/VTF) & 3-tap DFE, DFE & CTLE-boost SS-LMS, bridged T-coil ($2.83\times$ BW), full link top | 5 | 8 models | 7 suites (`channel`, `tx_ffe`, `ctle_vga`, `slicer_dfe`, `sslms`, `tcoil`, `link_top` — 15 `.scs` decks) | 20 |
-| **Analog Core** | [**`skills/opamp-ota/`**](skills/opamp-ota/SKILL.md) | Single-ended & fully differential OpAmps/OTAs (5T, telescopic, folded cascode, 2-stage Miller + `R_z`, CMFB), `iprobe` & lossless Tian balun DM+CM `stb`, DC-servo CMRR/PSRR±/noise | 3 | 2 models | 2 suites (`single_ended`, `fully_diff` — 5 `.scs` decks) | 12 |
+| **Analog Core** | [**`skills/opamp-ota/`**](skills/opamp-ota/SKILL.md) | Single-ended & fully differential OpAmps/OTAs (5T, telescopic, folded cascode, 2-stage Miller + `R_z`, CMFB), 29-item industrial signoff suite (`iprobe`/Tian DM+CM `stb`, CMRR/4R-bridge/PSRR±/noise, multi-method ICMR/swing-vs-$R_L$/VIDR, $Z_{\text{out,DM}}$/$Z_{\text{out,CM}}$/OTA $g_m$, slew, coherent THD/$\text{BW}_{\text{full}}$, power-ramp & supply-surge) | 4 | 2 models | 2 suites (`single_ended`, `fully_diff` — 16 `.scs` decks) | 20 |
 | **Power & Reference** | [**`skills/ldo/`**](skills/ldo/SKILL.md) | External-cap PMOS-pass, capless (OCL), and NMOS-pass LDOs: dropout, line/load reg, light-load `stb`, PSRR(f), $|Z_{\text{out}}(f)|$, noise, load & line step transients | 3 | 2 models | 1 suite (4 `.scs` decks) | 10 |
 | **Power & Reference** | [**`skills/bandgap/`**](skills/bandgap/SKILL.md) | Classic Kuijk/Brokaw (~1.22 V) & Banba sub-1 V bandgap references: PTAT+CTAT cancellation, 2nd-order curvature TC (`ppm/C`), trimming, PTAT/ZTC bias, startup dead-state, dual-feedback core `stb`, PSRR/noise | 2 | 2 models | 1 suite (4 `.scs` decks) | 10 |
 
@@ -69,8 +69,8 @@ python3 -B scripts/validate_repo.py
 - **Verilog-A**: `va_prbs_gen`, `va_tx_ffe_4tap`, `va_ctle_vga`, `va_slicer_cml`, `va_dfe_3tap`, `va_sslms_adapt`, `va_offset_cal_fsm`, `va_channel_isi`.
 
 ### 5. OpAmp & OTA Skill (`skills/opamp-ota/`)
-- **References**: [ota-topologies-and-sizing.md](skills/opamp-ota/references/ota-topologies-and-sizing.md), [fully-diff-and-cmfb.md](skills/opamp-ota/references/fully-diff-and-cmfb.md), [simulation-and-verification.md](skills/opamp-ota/references/simulation-and-verification.md).
-- **Spectre TBs** ([index](skills/opamp-ota/assets/tb/README.md)): [single_ended/](skills/opamp-ota/assets/tb/single_ended/README.md) & [fully_diff/](skills/opamp-ota/assets/tb/fully_diff/README.md).
+- **References**: [ota-topologies-and-sizing.md](skills/opamp-ota/references/ota-topologies-and-sizing.md), [fully-diff-and-cmfb.md](skills/opamp-ota/references/fully-diff-and-cmfb.md), [signoff-testbench-methodology.md](skills/opamp-ota/references/signoff-testbench-methodology.md), [simulation-and-verification.md](skills/opamp-ota/references/simulation-and-verification.md).
+- **Spectre X Signoff TBs** ([index](skills/opamp-ota/assets/tb/README.md)): [single_ended/](skills/opamp-ota/assets/tb/single_ended/README.md) (8 `.scs` decks) & [fully_diff/](skills/opamp-ota/assets/tb/fully_diff/README.md) (8 `.scs` decks).
 - **Verilog-A**: `va_ota_2stage`, `va_ota_fd_cmfb`.
 
 ### 6. LDO Regulator Skill (`skills/ldo/`)
@@ -97,7 +97,7 @@ ams-skills/
 │   ├── dac/                      # [Data Converters] Current-Steering & R-2R DAC (2 TB suites, 4 VA)
 │   ├── pll/                      # [Clocking & RF]   Int-N, Frac-N, ADPLL (7 TB suites, 10 VA)
 │   ├── serdes/                   # [Wireline/SerDes] Channel, TX FFE, CTLE, DFE, SS-LMS, T-coil, Link Top (7 TB suites, 8 VA)
-│   ├── opamp-ota/                # [Analog Core]     OpAmp/OTA & CMFB (2 TB suites, 2 VA)
+│   ├── opamp-ota/                # [Analog Core]     OpAmp/OTA & CMFB (2 TB suites, 16 decks, 2 VA)
 │   ├── ldo/                      # [Power & Ref]     LDO Regulators (4 TBs, 2 VA)
 │   └── bandgap/                  # [Power & Ref]     Bandgap References (4 TBs, 2 VA)
 └── .github/workflows/

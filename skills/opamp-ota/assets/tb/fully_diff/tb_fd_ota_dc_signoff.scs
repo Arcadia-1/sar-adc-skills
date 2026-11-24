@@ -1,0 +1,174 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Full DC & Range Signoff
+// =============================================================================
+// Cohesive multi-analysis DC characterization deck covering:
+//   1. `dc_op`         : Systematic DM offset V_OS, VOCM static error, I_DD, P_DC
+//   2. `dc_temp`       : DM offset & VOCM temperature drift (-55..150 C)
+//   3. `dc_sweep`      : Normalized sweep u_sw = 0..1 across parallel checks:
+//                        - I_CM_CL : Closed-loop (-1) CM hold range
+//                        - I_SWG_* : Inverting (-4) differential & SE output
+//                                    swing across RL = 1 M / 100 k / 10 k / 1 k
+//                                    (gain -4 keeps inputs inside ICMR while
+//                                    driving VOP/VON full rail-to-rail!)
+//                        - I_VIDR  : Rail-to-rail differential overdrive
+//                                    phase-reversal check (-VDD .. +VDD)
+//   4. `sweep_icmr_ac` : Level-shifted DC-servo open-loop AC sweep over
+//                        VCM = 0.05..0.95*VDD -> true -6 dB Ad(Vcm) ICMR
+//   5. `dc_vdd`        : Operating supply voltage sweep (0.1..1.1*VDD) with
+//                        proportional VOCM=0.5*VDD and differential probe
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    rf=100k \
+    rcm=500k \
+    cload=2p \
+    u_sw=0.5 \
+    vcm_ac=0.45 \
+    vdd_sw=0.9 \
+    v_probe=0.05 \
+    f_icmr=100 \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+// ── 1 & 2. Inverting (-1) network at VOCM (for dc_op & dc_temp) ──────────────
+VSUP_OP (VDD_OP 0) vsource dc=vdd type=dc
+RGP_OP  (VOCM   VIN_OP) resistor r=rf
+RGN_OP  (VOCM   VIP_OP) resistor r=rf
+RFP_OP  (VOP_OP VIN_OP) resistor r=rf
+RFN_OP  (VON_OP VIP_OP) resistor r=rf
+I_OP    (VIP_OP VIN_OP VOCM VCMFB_OP VOP_OP VON_OP VDD_OP VSS) dut_fd_ota
+RCMP_OP (VOP_OP VCMFB_OP) resistor r=rcm
+RCMN_OP (VON_OP VCMFB_OP) resistor r=rcm
+RLP_OP  (VOP_OP VOCM)     resistor r=1M
+RLN_OP  (VON_OP VOCM)     resistor r=1M
+
+// ── 3a. Closed-loop (-1) CM hold sweep (0 .. VDD) ────────────────────────────
+VSW_CM  (VIN_CM_SW 0) vsource dc=u_sw*vdd type=dc
+RGP_CM  (VIN_CM_SW VIN_CM) resistor r=rf
+RGN_CM  (VIN_CM_SW VIP_CM) resistor r=rf
+RFP_CM  (VOP_CM    VIN_CM) resistor r=rf
+RFN_CM  (VON_CM    VIP_CM) resistor r=rf
+I_CM_CL (VIP_CM VIN_CM VOCM VCMFB_CM VOP_CM VON_CM VDD VSS) dut_fd_ota
+RCMP_CM (VOP_CM VCMFB_CM) resistor r=rcm
+RCMN_CM (VON_CM VCMFB_CM) resistor r=rcm
+RLP_CM  (VOP_CM VOCM)     resistor r=1M
+RLN_CM  (VON_CM VOCM)     resistor r=1M
+
+// ── 3b. Inverting (-4) differential output swing across RL = 1M/100k/10k/1k ──
+// Input diff sweeps +/-0.3*vdd -> ideal diff output sweeps +/-1.2*vdd
+VSW_DP  (IN_SW_P 0) vsource dc=vocm+0.3*(u_sw-0.5)*vdd type=dc
+VSW_DN  (IN_SW_N 0) vsource dc=vocm-0.3*(u_sw-0.5)*vdd type=dc
+
+RGP_1M  (IN_SW_P  S1M_VN)  resistor r=0.25*rf
+RGN_1M  (IN_SW_N  S1M_VP)  resistor r=0.25*rf
+RFP_1M  (VOP_S1M  S1M_VN)  resistor r=rf
+RFN_1M  (VON_S1M  S1M_VP)  resistor r=rf
+I_S1M   (S1M_VP S1M_VN VOCM VCMFB_S1M VOP_S1M VON_S1M VDD VSS) dut_fd_ota
+RCMP_1M (VOP_S1M VCMFB_S1M) resistor r=rcm
+RCMN_1M (VON_S1M VCMFB_S1M) resistor r=rcm
+RLP_1M  (VOP_S1M VOCM)      resistor r=1M
+RLN_1M  (VON_S1M VOCM)      resistor r=1M
+
+RGP_100K  (IN_SW_P   S100K_VN) resistor r=0.25*rf
+RGN_100K  (IN_SW_N   S100K_VP) resistor r=0.25*rf
+RFP_100K  (VOP_S100K S100K_VN) resistor r=rf
+RFN_100K  (VON_S100K S100K_VP) resistor r=rf
+I_S100K   (S100K_VP S100K_VN VOCM VCMFB_S100K VOP_S100K VON_S100K VDD VSS) dut_fd_ota
+RCMP_100K (VOP_S100K VCMFB_S100K) resistor r=rcm
+RCMN_100K (VON_S100K VCMFB_S100K) resistor r=rcm
+RLP_100K  (VOP_S100K VOCM)        resistor r=100k
+RLN_100K  (VON_S100K VOCM)        resistor r=100k
+
+RGP_10K  (IN_SW_P  S10K_VN)  resistor r=0.25*rf
+RGN_10K  (IN_SW_N  S10K_VP)  resistor r=0.25*rf
+RFP_10K  (VOP_S10K S10K_VN)  resistor r=rf
+RFN_10K  (VON_S10K S10K_VP)  resistor r=rf
+I_S10K   (S10K_VP S10K_VN VOCM VCMFB_S10K VOP_S10K VON_S10K VDD VSS) dut_fd_ota
+RCMP_10K (VOP_S10K VCMFB_S10K) resistor r=rcm
+RCMN_10K (VON_S10K VCMFB_S10K) resistor r=rcm
+RLP_10K  (VOP_S10K VOCM)       resistor r=10k
+RLN_10K  (VON_S10K VOCM)       resistor r=10k
+
+RGP_1K  (IN_SW_P S1K_VN)   resistor r=0.25*rf
+RGN_1K  (IN_SW_N S1K_VP)   resistor r=0.25*rf
+RFP_1K  (VOP_S1K S1K_VN)   resistor r=rf
+RFN_1K  (VON_S1K S1K_VP)   resistor r=rf
+I_S1K   (S1K_VP S1K_VN VOCM VCMFB_S1K VOP_S1K VON_S1K VDD VSS) dut_fd_ota
+RCMP_1K (VOP_S1K VCMFB_S1K) resistor r=rcm
+RCMN_1K (VON_S1K VCMFB_S1K) resistor r=rcm
+RLP_1K  (VOP_S1K VOCM)      resistor r=1k
+RLN_1K  (VON_S1K VOCM)      resistor r=1k
+
+// ── 3c. Rail-to-rail differential overdrive phase-reversal check (VIDR) ──────
+VVIDR_P (VIP_VIDR 0) vsource dc=u_sw*vdd       type=dc
+VVIDR_N (VIN_VIDR 0) vsource dc=(1-u_sw)*vdd   type=dc
+I_VIDR  (VIP_VIDR VIN_VIDR VOCM VCMFB_VIDR VOP_VIDR VON_VIDR VDD VSS) dut_fd_ota
+RCMP_VR (VOP_VIDR VCMFB_VIDR) resistor r=rcm
+RCMN_VR (VON_VIDR VCMFB_VIDR) resistor r=rcm
+RLP_VR  (VOP_VIDR VOCM)       resistor r=1M
+RLN_VR  (VON_VIDR VOCM)       resistor r=1M
+
+// ── 4. Open-loop AC-definition ICMR sweep (vcm_ac = 0.05..0.95*VDD) ──────────
+VCM_AC_P (VIP_ACM   0) vsource dc=vcm_ac mag=0.5 type=dc
+VCM_AC_N (N_AC_N    0) vsource dc=0      mag=0.5 phase=180 type=dc
+VCM_AC_R (N_REF_ACM 0) vsource dc=vcm_ac type=dc
+ESRV_ACM (N_SRV_ACM N_REF_ACM VOP_ACM VON_ACM) vcvs gain=0.5
+RSRV_ACM (N_SRV_ACM VIN_ACM) resistor  r=1G
+CSRV_ACM (VIN_ACM   N_AC_N)  capacitor c=1.0
+I_ACM    (VIP_ACM VIN_ACM VOCM VCMFB_ACM VOP_ACM VON_ACM VDD VSS) dut_fd_ota
+RCMP_ACM (VOP_ACM VCMFB_ACM) resistor  r=rcm
+RCMN_ACM (VON_ACM VCMFB_ACM) resistor  r=rcm
+CLP_ACM  (VOP_ACM VSS)       capacitor c=cload
+CLN_ACM  (VON_ACM VSS)       capacitor c=cload
+RLP_ACM  (VOP_ACM VOCM)      resistor  r=1M
+RLN_ACM  (VON_ACM VOCM)      resistor  r=1M
+
+// ── 5. Operating supply voltage sweep (dc_vdd) ───────────────────────────────
+VSUP_SW  (VDD_SW  0) vsource dc=vdd_sw type=dc
+VVOCM_SW (VOCM_SW 0) vsource dc=0.5*vdd_sw type=dc
+VINP_SW  (INP_SW  0) vsource dc=0.5*vdd_sw+0.5*v_probe type=dc
+VINN_SW  (INN_SW  0) vsource dc=0.5*vdd_sw-0.5*v_probe type=dc
+RGP_SW   (INP_SW  VIN_SW) resistor r=rf
+RGN_SW   (INN_SW  VIP_SW) resistor r=rf
+RFP_SW   (VOP_VDD VIN_SW) resistor r=rf
+RFN_SW   (VON_VDD VIP_SW) resistor r=rf
+I_VDD    (VIP_SW VIN_SW VOCM_SW VCMFB_VDD VOP_VDD VON_VDD VDD_SW VSS) dut_fd_ota
+RCMP_SW  (VOP_VDD VCMFB_VDD) resistor r=rcm
+RCMN_SW  (VON_VDD VCMFB_VDD) resistor r=rcm
+RLP_SW   (VOP_VDD VOCM_SW)   resistor r=1M
+RLN_SW   (VON_VDD VOCM_SW)   resistor r=1M
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_op    dc
+dc_temp  dc param=temp   start=-55        stop=150        step=1
+dc_sweep dc param=u_sw   start=0          stop=1          step=0.005
+dc_vdd   dc param=vdd_sw start=0.1        stop=1.1*vdd    step=0.01
+
+sweep_icmr_ac sweep param=vcm_ac start=0.05*vdd stop=0.95*vdd step=0.05*vdd {
+    ac_icmr ac freq=f_icmr
+}
+
+save VOP_OP VON_OP VSUP_OP:p VOCM \
+     VIN_CM_SW VOP_CM VON_CM \
+     IN_SW_P IN_SW_N VOP_S1M VON_S1M VOP_S100K VON_S100K VOP_S10K VON_S10K VOP_S1K VON_S1K \
+     VIP_VIDR VIN_VIDR VOP_VIDR VON_VIDR \
+     VOP_ACM VON_ACM \
+     VDD_SW VOCM_SW INP_SW INN_SW VOP_VDD VON_VDD
+saveOptions options save=selected

@@ -4,8 +4,11 @@
 //   - DC open-loop gain a0 = (gm1*ro1)*(gm2*ro2), dominant pole, non-dominant pole,
 //     and Miller compensation (c_c) + nulling resistor (r_z)
 //   - Large-signal slew-rate current limit (i_tail via smooth tanh differential pair)
-//   - Soft rail-to-rail output swing clamping (v_headroom from VDD/VSS)
-//   - Finite CMRR (cmrr_db) and PSRR (psrr_db)
+//   - Smooth rail-to-rail output swing clamping (v_headroom from VDD/VSS)
+//   - Finite ICMR rolloff (v_icmr_lo, v_icmr_hi) and smooth VDD turn-on (vdd_on_min)
+//   - Systematic input offset (v_os) and offset temperature coefficient (tc_vos)
+//   - Independent finite CMRR (cmrr_db), PSRR+ (psrr_db), and PSRR- (psrr_n_db)
+//   - Finite input capacitance (c_in) for input impedance and source-R tests
 //   - Input-referred thermal white noise (vn_th) + 1/f flicker noise (vn_1f_1khz)
 //     for Spectre `noise` analysis
 
@@ -31,34 +34,63 @@ parameter real c_c        = 1p     from (0:inf);   // Miller compensation cap [F
 parameter real r_z        = 500.0  from [0:inf);   // Nulling resistor [ohm] (1/gm2 = 500 cancels RHP zero)
 parameter real cmrr_db    = 80.0   from (0:200);   // DC CMRR [dB]
 parameter real psrr_db    = 75.0   from (0:200);   // DC PSRR+ [dB]
-parameter real v_headroom = 0.10   from (0:0.4);   // output swing headroom from rails [V]
-parameter real vn_th      = 15e-9  from [0:inf);   // input-referred white noise [V/sqrt(Hz)]
-parameter real vn_1f_1khz = 50e-9  from [0:inf);   // input-referred 1/f noise at 1 kHz [V/sqrt(Hz)]
-parameter real i_q        = 100e-6 from [0:inf);   // quiescent supply current [A]
+parameter real psrr_n_db  = 70.0   from (0:200);   // DC PSRR- [dB]
+parameter real v_os       = 0.1e-3;                // Systematic input offset at 27 C [V]
+parameter real tc_vos     = 1.0e-6;                // Offset temperature coefficient [V/C]
+parameter real vdd_nom    = 0.9    from (0.2:10);  // Nominal supply voltage [V]
+parameter real vdd_on_min = 0.55   from (0.1:5);   // Supply brownout / turn-on midpoint [V]
+parameter real v_icmr_lo  = 0.22   from [0:2);     // Input CM headroom above VSS [V]
+parameter real v_icmr_hi  = 0.15   from [0:2);     // Input CM headroom below VDD [V]
+parameter real v_headroom = 0.10   from (0:0.4);   // Output swing headroom from rails [V]
+parameter real c_in       = 80f    from [0:inf);   // Input gate capacitance per terminal [F]
+parameter real vn_th      = 15e-9  from [0:inf);   // Input-referred white noise [V/sqrt(Hz)]
+parameter real vn_1f_1khz = 50e-9  from [0:inf);   // Input-referred 1/f noise at 1 kHz [V/sqrt(Hz)]
+parameter real i_q        = 100e-6 from [0:inf);   // Quiescent supply current [A]
 
 electrical n1, nm_mid;
-real vmid_rail, vid, vcm_err, vdd_err, v_eff;
+real vdd_val, vmid_rail, vid, vcm_in, vcm_err, vdd_err, vss_err, vos_t, v_eff;
+real s_vdd, s_lo, s_hi, s_icmr, i_tail_eff, gm1_eff, gm2_eff, i_out_eff;
 real i_stg1, i_stg2, v_lin1, v_lin2;
-real inv_cmrr, inv_psrr, v_hi_lim, v_lo_lim;
+real inv_cmrr, inv_psrr_p, inv_psrr_n;
+real v_hi_lim, v_lo_lim, d_hi, d_lo, c_hi, c_lo;
 
 analog begin
+    vdd_val   = V(VDD, VSS);
     vmid_rail = 0.5 * (V(VDD) + V(VSS));
-    inv_cmrr  = pow(10.0, -cmrr_db / 20.0);
-    inv_psrr  = pow(10.0, -psrr_db / 20.0);
+    inv_cmrr   = pow(10.0, -cmrr_db / 20.0);
+    inv_psrr_p = pow(10.0, -psrr_db / 20.0);
+    inv_psrr_n = pow(10.0, -psrr_n_db / 20.0);
+
+    // Smooth supply turn-on and ICMR transconductance envelope
+    s_vdd  = 0.5 * (1.0 + tanh((vdd_val - vdd_on_min) / 0.04));
+    vcm_in = 0.5 * (V(VIP) + V(VIN)) - V(VSS);
+    s_lo   = 0.5 * (1.0 + tanh((vcm_in - v_icmr_lo) / 0.025));
+    s_hi   = 0.5 * (1.0 + tanh((vdd_val - v_icmr_hi - vcm_in) / 0.025));
+    s_icmr = 1e-3 + 0.999 * s_vdd * s_lo * s_hi;
+
+    // Input gate capacitance (models finite C_id and source-resistance interaction)
+    if (c_in > 0.0) begin
+        I(VIP, VSS) <+ c_in * ddt(V(VIP, VSS));
+        I(VIN, VSS) <+ c_in * ddt(V(VIN, VSS));
+    end
 
     vid     = V(VIP, VIN);
     vcm_err = 0.5 * (V(VIP) + V(VIN)) - vmid_rail;
-    vdd_err = V(VDD, VSS) - 0.9;
-    v_eff   = vid + inv_cmrr * vcm_err + inv_psrr * vdd_err;
+    vdd_err = V(VDD) - vdd_nom;
+    vss_err = V(VSS);
+    vos_t   = (v_os + tc_vos * ($temperature - 300.15)) * s_vdd;
+    v_eff   = vid + vos_t + inv_cmrr * vcm_err + inv_psrr_p * vdd_err + inv_psrr_n * vss_err;
 
     // 1st stage: tanh slew-limited differential transconductor (inverting onto n1)
-    v_lin1 = i_tail / gm1;
-    i_stg1 = i_tail * tanh(v_eff / v_lin1);
+    i_tail_eff = i_tail * s_icmr;
+    gm1_eff    = gm1 * s_icmr;
+    v_lin1     = i_tail_eff / gm1_eff;
+    i_stg1     = i_tail_eff * tanh(v_eff / v_lin1);
     I(n1, VSS) <+ i_stg1
                   + (V(n1) - vmid_rail) / ro1
                   + cp1 * ddt(V(n1, VSS))
-                  + white_noise((gm1 * vn_th) * (gm1 * vn_th), "ota_thermal")
-                  + flicker_noise((gm1 * vn_1f_1khz) * (gm1 * vn_1f_1khz) * 1e3, 1.0, "ota_flicker");
+                  + white_noise((gm1_eff * vn_th) * (gm1_eff * vn_th), "ota_thermal")
+                  + flicker_noise((gm1_eff * vn_1f_1khz) * (gm1_eff * vn_1f_1khz) * 1e3, 1.0, "ota_flicker");
 
     // Miller compensation branch between n1 and VOUT through nulling resistor r_z
     if (r_z > 0.0) begin
@@ -71,19 +103,26 @@ analog begin
 
     // 2nd stage: inverting common-source gain stage (so total VIP -> VOUT is non-inverting!)
     // n1 falls when VIP > VIN -> (V(n1) - vmid_rail) < 0 -> i_stg2 < 0 -> sources current into VOUT!
-    v_lin2 = i_out_max / gm2;
-    i_stg2 = i_out_max * tanh((V(n1) - vmid_rail) / v_lin2);
+    gm2_eff   = gm2 * (1e-3 + 0.999 * s_vdd);
+    i_out_eff = i_out_max * (1e-3 + 0.999 * s_vdd);
+    v_lin2    = i_out_eff / gm2_eff;
+    i_stg2    = i_out_eff * tanh((V(n1) - vmid_rail) / v_lin2);
 
-    // Soft output rail clamp
-    v_hi_lim = V(VDD) - v_headroom;
-    v_lo_lim = V(VSS) + v_headroom;
+    // Smooth C-infinity output rail clamp (prevents clipping discontinuities)
+    v_hi_lim = V(VDD) - v_headroom * s_vdd;
+    v_lo_lim = V(VSS) + v_headroom * s_vdd;
+    d_hi = V(VOUT) - v_hi_lim;
+    d_lo = v_lo_lim - V(VOUT);
+    c_hi = (d_hi > 0.2) ? d_hi : 0.008 * ln(1.0 + exp(d_hi / 0.008));
+    c_lo = (d_lo > 0.2) ? d_lo : 0.008 * ln(1.0 + exp(d_lo / 0.008));
+
     I(VOUT, VSS) <+ i_stg2
                     + (V(VOUT) - vmid_rail) / ro2
-                    + 1e-2 * max(V(VOUT) - v_hi_lim, 0.0)
-                    - 1e-2 * max(v_lo_lim - V(VOUT), 0.0);
+                    + 2e-2 * c_hi
+                    - 2e-2 * c_lo;
 
-    // Quiescent supply current draw
-    I(VDD, VSS) <+ i_q;
+    // Quiescent supply current draw (smoothly turns off when VDD -> 0)
+    I(VDD, VSS) <+ i_q * s_vdd * tanh(vdd_val / 0.1);
 end
 
 endmodule

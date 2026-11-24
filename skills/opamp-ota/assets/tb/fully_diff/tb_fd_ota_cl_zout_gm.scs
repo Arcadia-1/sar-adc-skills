@@ -1,0 +1,158 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — CL AC, Zout(DM/CM), Zin & gm
+// =============================================================================
+// Cohesive small-signal + FD OTA transconductance signoff deck covering:
+//   1. Closed-loop inverting (-1) AC (`VOP_CL`, `VON_CL`):
+//      f_-3dB, 0.1 dB flatness BW, peaking [dB], low-frequency group delay [ns]
+//   2. Closed-loop output impedance:
+//      - `I_ZD` : Differential Z_out,dm(f) (per-output impedance = |VOP - VON|/1A
+//                 with +0.5 A into VOP and -0.5 A into VON)
+//      - `I_ZC` : Common-mode CMFB Z_out,cm(f) = |0.5*(VOP + VON)|/1A
+//                 with +1 A into both VOP and VON
+//   3. Open-loop output resistance `R_O` (`I_RO`) and differential input
+//      impedance `R_ID`, `C_ID` (`I_ZIN`)
+//   4. FD OTA forward transconductance (`dc_gm` + `ac`):
+//      - `I_GM_DC`    : DC gm [uS], 10%-linear V_ID [mV], gm/I_DD, I_OPP [uA]
+//      - `I_GM_SHORT` : True short-circuit AC gm(f) & f_gm,-3dB (r_gm = 10 ohm)
+//      - `I_GM_LOAD`  : Real RL||CL loaded transconductance comparison
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    cload=2p \
+    rload=1M \
+    rf=100k \
+    rcm=500k \
+    r_gm=10 \
+    vid_sw=0 \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+// ── 1. Closed-loop inverting (-1) AC & group delay ───────────────────────────
+VIN_CLP (IN_CLP 0) vsource dc=vocm mag=0.5 type=dc
+VIN_CLN (IN_CLN 0) vsource dc=vocm mag=0.5 phase=180 type=dc
+RGP_CL  (IN_CLP VIN_CL) resistor r=rf
+RGN_CL  (IN_CLN VIP_CL) resistor r=rf
+RFP_CL  (VOP_CL VIN_CL) resistor r=rf
+RFN_CL  (VON_CL VIP_CL) resistor r=rf
+I_CL    (VIP_CL VIN_CL VOCM VCMFB_CL VOP_CL VON_CL VDD VSS) dut_fd_ota
+RCMP_CL (VOP_CL VCMFB_CL) resistor  r=rcm
+RCMN_CL (VON_CL VCMFB_CL) resistor  r=rcm
+CLP_CL  (VOP_CL VSS)      capacitor c=cload
+CLN_CL  (VON_CL VSS)      capacitor c=cload
+RLP_CL  (VOP_CL VOCM)     resistor  r=rload
+RLN_CL  (VON_CL VOCM)     resistor  r=rload
+
+// ── 2a. Closed-loop differential output impedance Z_out,dm(f) ────────────────
+RGP_ZD  (VOCM   VIN_ZD) resistor r=rf
+RGN_ZD  (VOCM   VIP_ZD) resistor r=rf
+RFP_ZD  (VOP_ZD VIN_ZD) resistor r=rf
+RFN_ZD  (VON_ZD VIP_ZD) resistor r=rf
+I_ZD    (VIP_ZD VIN_ZD VOCM VCMFB_ZD VOP_ZD VON_ZD VDD VSS) dut_fd_ota
+RCMP_ZD (VOP_ZD VCMFB_ZD) resistor  r=rcm
+RCMN_ZD (VON_ZD VCMFB_ZD) resistor  r=rcm
+IZD_P   (0 VOP_ZD)        isource   dc=0 mag=0.5
+IZD_N   (VON_ZD 0)        isource   dc=0 mag=0.5
+CLP_ZD  (VOP_ZD VSS)      capacitor c=cload
+CLN_ZD  (VON_ZD VSS)      capacitor c=cload
+RLP_ZD  (VOP_ZD VOCM)     resistor  r=rload
+RLN_ZD  (VON_ZD VOCM)     resistor  r=rload
+
+// ── 2b. Closed-loop common-mode output impedance Z_out,cm(f) (CMFB) ──────────
+RGP_ZC  (VOCM   VIN_ZC) resistor r=rf
+RGN_ZC  (VOCM   VIP_ZC) resistor r=rf
+RFP_ZC  (VOP_ZC VIN_ZC) resistor r=rf
+RFN_ZC  (VON_ZC VIP_ZC) resistor r=rf
+I_ZC    (VIP_ZC VIN_ZC VOCM VCMFB_ZC VOP_ZC VON_ZC VDD VSS) dut_fd_ota
+RCMP_ZC (VOP_ZC VCMFB_ZC) resistor  r=rcm
+RCMN_ZC (VON_ZC VCMFB_ZC) resistor  r=rcm
+IZC_P   (0 VOP_ZC)        isource   dc=0 mag=1.0
+IZC_N   (0 VON_ZC)        isource   dc=0 mag=1.0
+CLP_ZC  (VOP_ZC VSS)      capacitor c=cload
+CLN_ZC  (VON_ZC VSS)      capacitor c=cload
+RLP_ZC  (VOP_ZC VOCM)     resistor  r=rload
+RLN_ZC  (VON_ZC VOCM)     resistor  r=rload
+
+// ── 3a. Open-loop output resistance R_O (per output, no external RL/CL) ──────
+ESRV_RO (N_SRV_RO VOCM VOP_RO VON_RO) vcvs gain=0.5
+RSRV_RO (N_SRV_RO VIN_RO) resistor  r=1G
+CSRV_RO (VIN_RO   0)      capacitor c=1.0
+I_RO    (VOCM VIN_RO VOCM VCMFB_RO VOP_RO VON_RO VDD VSS) dut_fd_ota
+RCMP_RO (VOP_RO VCMFB_RO) resistor  r=rcm
+RCMN_RO (VON_RO VCMFB_RO) resistor  r=rcm
+IRO_P   (0 VOP_RO)        isource   dc=0 mag=0.5
+IRO_N   (VON_RO 0)        isource   dc=0 mag=0.5
+
+// ── 3b. Open-loop differential input impedance R_ID / C_ID ───────────────────
+VZIN_P  (VIP_ZI  0) vsource dc=vocm mag=0.5 type=dc
+VZIN_N  (N_ZI_AC 0) vsource dc=0    mag=0.5 phase=180 type=dc
+ESRV_ZI (N_SRV_ZI VOCM VOP_ZI VON_ZI) vcvs gain=0.5
+RSRV_ZI (N_SRV_ZI VIN_ZI)  resistor  r=1G
+CSRV_ZI (VIN_ZI   N_ZI_AC) capacitor c=1.0
+I_ZIN   (VIP_ZI VIN_ZI VOCM VCMFB_ZI VOP_ZI VON_ZI VDD VSS) dut_fd_ota
+RCMP_ZI (VOP_ZI VCMFB_ZI) resistor  r=rcm
+RCMN_ZI (VON_ZI VCMFB_ZI) resistor  r=rcm
+CLP_ZI  (VOP_ZI VSS)      capacitor c=cload
+CLN_ZI  (VON_ZI VSS)      capacitor c=cload
+RLP_ZI  (VOP_ZI VOCM)     resistor  r=rload
+RLN_ZI  (VON_ZI VOCM)     resistor  r=rload
+
+// ── 4. FD OTA DC transconductance sweep (VOP/VON to VOCM through r_gm) ───────
+VSUP_GM  (VDD_GM 0) vsource dc=vdd type=dc
+VGM_SW_P (VIP_GM_DC 0) vsource dc=vocm+0.5*vid_sw type=dc
+VGM_SW_N (VIN_GM_DC 0) vsource dc=vocm-0.5*vid_sw type=dc
+I_GM_DC  (VIP_GM_DC VIN_GM_DC VOCM VCMFB_GMD VOP_GM_DC VON_GM_DC VDD_GM VSS) dut_fd_ota
+RCMP_GMD (VOP_GM_DC VCMFB_GMD) resistor r=rcm
+RCMN_GMD (VON_GM_DC VCMFB_GMD) resistor r=rcm
+RGMP_DC  (VOP_GM_DC VOCM)      resistor r=r_gm
+RGMN_DC  (VON_GM_DC VOCM)      resistor r=r_gm
+
+// ── 5a. FD OTA AC transconductance — short-circuit sense (DC-servo nulled) ───
+VGM_AC_P  (VIP_GMS  0) vsource dc=vocm mag=0.5 type=dc
+VGM_AC_N  (N_GMS_AC 0) vsource dc=0    mag=0.5 phase=180 type=dc
+EGMS_SRV  (N_GMS_S VOCM VOP_GM_SHORT VON_GM_SHORT) vcvs gain=5e3
+RS_GMS    (N_GMS_S VIN_GMS)  resistor  r=1G
+CS_GMS    (VIN_GMS N_GMS_AC) capacitor c=1.0
+I_GM_AC   (VIP_GMS VIN_GMS VOCM VCMFB_GMS VOP_GM_SHORT VON_GM_SHORT VDD VSS) dut_fd_ota
+RCMP_GMS  (VOP_GM_SHORT VCMFB_GMS) resistor r=rcm
+RCMN_GMS  (VON_GM_SHORT VCMFB_GMS) resistor r=rcm
+RGMP_SC   (VOP_GM_SHORT VOCM)      resistor r=r_gm
+RGMN_SC   (VON_GM_SHORT VOCM)      resistor r=r_gm
+
+// ── 5b. FD OTA AC transconductance — real RL||CL loaded sense ────────────────
+EGML_SRV  (N_GML_S VOCM VOP_GM_LOAD VON_GM_LOAD) vcvs gain=0.5
+RS_GML    (N_GML_S VIN_GML)  resistor  r=1G
+CS_GML    (VIN_GML N_GMS_AC) capacitor c=1.0
+I_GM_LD   (VIP_GMS VIN_GML VOCM VCMFB_GML VOP_GM_LOAD VON_GM_LOAD VDD VSS) dut_fd_ota
+RCMP_GML  (VOP_GM_LOAD VCMFB_GML) resistor  r=rcm
+RCMN_GML  (VON_GM_LOAD VCMFB_GML) resistor  r=rcm
+CLP_GML   (VOP_GM_LOAD VSS)       capacitor c=cload
+CLN_GML   (VON_GM_LOAD VSS)       capacitor c=cload
+RLP_GML   (VOP_GM_LOAD VOCM)      resistor  r=rload
+RLN_GML   (VON_GM_LOAD VOCM)      resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_gm dc param=vid_sw start=-0.2 stop=0.2 step=0.0002
+ac    ac start=1 stop=10G dec=50 annotate=status
+
+save VOP_CL VON_CL VOP_ZD VON_ZD VOP_ZC VON_ZC \
+     VOP_RO VON_RO VZIN_P:p \
+     VOP_GM_DC VON_GM_DC VSUP_GM:p \
+     VOP_GM_SHORT VON_GM_SHORT VOP_GM_LOAD VON_GM_LOAD
+saveOptions options save=selected

@@ -1,0 +1,51 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Power-Up / Power-Down Ramp
+// =============================================================================
+// Ramps VDD linearly 0 -> vdd over t_ramp (default 5 ms; also test 10 ms),
+// holds for t_hold, then ramps vdd -> 0 over t_ramp while VIP tracks 0.5*VDD.
+// Verifies startup/brownout stability (zero sustained oscillation) and clean
+// settling once VDD reaches nominal operating voltage.
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    t_ramp=5m \
+    t_hold=2m \
+    cload=2p \
+    rload=1M \
+    temp_c=27 \
+    t_stop=2*t_ramp+t_hold+1m
+
+VGND (VSS 0) vsource dc=0 type=dc
+VSUP (VDD 0) vsource type=pwl wave=[ \
+    0                  0 \
+    0.5m               0 \
+    (0.5m+t_ramp)      vdd \
+    (0.5m+t_ramp+t_hold) vdd \
+    (0.5m+2*t_ramp+t_hold) 0 \
+    t_stop             0 ]
+
+// Input & load mid-rail reference track 0.5 * VDD proportionally during ramp
+EVCM (VIP 0 VDD VSS) vcvs gain=0.5
+
+I0 (VIP VOUT VOUT VDD VSS) dut_ota
+CL (VOUT VSS) capacitor c=cload
+RL (VOUT VIP) resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate maxstep=t_ramp/200
+
+save VDD VIP VOUT VSUP:p
+saveOptions options save=selected

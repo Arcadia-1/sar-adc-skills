@@ -1,0 +1,73 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Supply Surge & CM Step Tran
+// =============================================================================
+// Two fast microsecond robustness checks at nominal operating bias:
+//   1. Supply Surge (`VOUT_SURGE`): +/-v_surge (50 mV), t_edge (10 ns) square
+//      wave on VDD at f_surge (default 300 kHz; also sweep 100 kHz & 1 MHz).
+//      Measures peak disturbance [mV] and checks oscillation-free recovery.
+//   2. Input CM-Step Transient (`VOUT_CMSTEP`): v_cm_step (0.2 V) pulse on a
+//      4-resistor unity-gain CM bridge. Measures output CM kick [mV] and
+//      settling back to VCM.
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    v_surge=0.05 \
+    f_surge=300k \
+    t_edge=10n \
+    v_cm_step=0.20 \
+    t_cm_rise=2u \
+    t_cm_fall=10u \
+    r_net=100k \
+    cload=2p \
+    rload=1M \
+    t_stop=20u \
+    temp_c=27
+
+VGND (VSS 0)     vsource dc=0   type=dc
+VVCM (VCM_REF 0) vsource dc=vcm type=dc
+
+// ── 1. Supply surge test (square wave on VDD) ────────────────────────────────
+VSUP_SG (VDD_SG 0) vsource type=pulse \
+    val0=vdd-v_surge val1=vdd+v_surge \
+    delay=1u rise=t_edge fall=t_edge \
+    width=0.5/f_surge-t_edge period=1/f_surge
+I_SURGE (VCM_REF VOUT_SURGE VOUT_SURGE VDD_SG VSS) dut_ota
+CL_SG   (VOUT_SURGE VSS)     capacitor c=cload
+RL_SG   (VOUT_SURGE VCM_REF) resistor  r=rload
+
+// ── 2. Input common-mode step through 4-resistor unity-gain bridge ───────────
+VSUP_CM (VDD_CM 0) vsource dc=vdd type=dc
+VCM_PLS (VIN_CM_PLS 0) vsource type=pwl wave=[ \
+    0                  vcm \
+    t_cm_rise          vcm \
+    (t_cm_rise+t_edge) (vcm+v_cm_step) \
+    t_cm_fall          (vcm+v_cm_step) \
+    (t_cm_fall+t_edge) vcm \
+    t_stop             vcm ]
+R1_CM   (VIN_CM_PLS  CM_VN)   resistor r=r_net
+R2_CM   (VOUT_CMSTEP CM_VN)   resistor r=r_net
+R3_CM   (VIN_CM_PLS  CM_VP)   resistor r=r_net
+R4_CM   (CM_VP       VCM_REF) resistor r=r_net
+I_CMST  (CM_VP CM_VN VOUT_CMSTEP VDD_CM VSS) dut_ota
+CL_CM   (VOUT_CMSTEP VSS)     capacitor c=cload
+RL_CM   (VOUT_CMSTEP VCM_REF) resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=20n
+
+save VDD_SG VOUT_SURGE VIN_CM_PLS VOUT_CMSTEP VCM_REF
+saveOptions options save=selected

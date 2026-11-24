@@ -1,0 +1,97 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Closed-Loop AC, Zout, Zin & gm
+// =============================================================================
+// Cohesive small-signal + OTA transconductance signoff deck covering:
+//   1. Closed-loop AC (`VOUT_CL`): f_-3dB, 0.1 dB flatness BW, peaking [dB],
+//      and low-frequency group delay tau_g = -(1/2pi)*d(phase)/df [ns]
+//   2. Closed-loop output impedance (`VOUT_ZOUT`): Z_out @ 1 kHz & inductive peak
+//   3. Open-loop output resistance (`VOUT_RO`) and differential input impedance
+//      (`VZIN:p` -> R_ID [Gohm], C_ID [fF] at 1 kHz)
+//   4. OTA DC forward transconductance (`dc_gm` on `VOUT_GM_DC`):
+//      gm [uS], 10%-compression linear input range V_ID [mV], gm/I_DD [1/V],
+//      and peak-to-peak output current capability I_OPP [uA]
+//   5. OTA AC transconductance bandwidth (`ac`):
+//      - `VOUT_GM_SHORT` : true short-circuit sense (r_gm = 10 ohm) -> gm(f), f_gm,-3dB
+//      - `VOUT_GM_LOAD`  : real RL||CL loaded sense -> shows load-divider / pole shift
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    cload=2p \
+    rload=1M \
+    r_gm=10 \
+    vid_sw=0 \
+    temp_c=27
+
+VSUP (VDD 0)     vsource dc=vdd type=dc
+VGND (VSS 0)     vsource dc=0   type=dc
+VVCM (VCM_REF 0) vsource dc=vcm type=dc
+
+// ── 1. Closed-loop unity-gain AC & group delay ───────────────────────────────
+VIN_CL (VIP_CL 0) vsource dc=vcm mag=1 type=dc
+I_CL   (VIP_CL VOUT_CL VOUT_CL VDD VSS) dut_ota
+CL_CL  (VOUT_CL VSS)     capacitor c=cload
+RL_CL  (VOUT_CL VCM_REF) resistor  r=rload
+
+// ── 2. Closed-loop output impedance Z_out(f) (AC 1 A injected into output) ───
+I_ZOUT   (VCM_REF VOUT_ZOUT VOUT_ZOUT VDD VSS) dut_ota
+IZ_INJ   (0 VOUT_ZOUT)       isource   dc=0 mag=1
+CL_ZOUT  (VOUT_ZOUT VSS)     capacitor c=cload
+RL_ZOUT  (VOUT_ZOUT VCM_REF) resistor  r=rload
+
+// ── 3a. Open-loop output resistance R_O (no external RL/CL) ──────────────────
+RS_RO (VOUT_RO VIN_RO) resistor  r=1G
+CS_RO (VIN_RO  0)      capacitor c=1.0
+I_RO  (VCM_REF VIN_RO VOUT_RO VDD VSS) dut_ota
+IRO_I (0 VOUT_RO)      isource   dc=0 mag=1
+
+// ── 3b. Open-loop differential input impedance R_ID / C_ID ───────────────────
+VZIN  (VIP_ZIN 0)         vsource   dc=vcm mag=1 type=dc
+RS_ZI (VOUT_ZI VIN_ZI)    resistor  r=1G
+CS_ZI (VIN_ZI  0)         capacitor c=1.0
+I_ZIN (VIP_ZIN VIN_ZI VOUT_ZI VDD VSS) dut_ota
+CL_ZI (VOUT_ZI VSS)       capacitor c=cload
+RL_ZI (VOUT_ZI VCM_REF)   resistor  r=rload
+
+// ── 4. OTA DC transconductance sweep (VOUT held to VCM through r_gm) ─────────
+VSUP_GM  (VDD_GM 0)      vsource  dc=vdd type=dc
+VGM_SW   (VIP_GM_DC 0)   vsource  dc=vcm+vid_sw type=dc
+I_GM_DC  (VIP_GM_DC VCM_REF VOUT_GM_DC VDD_GM VSS) dut_ota
+RGM_DC   (VOUT_GM_DC VCM_REF) resistor r=r_gm
+
+// ── 5a. OTA AC transconductance — short-circuit sense (DC-servo nulled) ──────
+VGM_AC    (VIP_GM_AC 0) vsource dc=vcm mag=1 type=dc
+EGM_SRV   (N_GMS VCM_REF VOUT_GM_SHORT VCM_REF) vcvs gain=1e4
+RS_GMS    (N_GMS VIN_GM_SHORT) resistor  r=1G
+CS_GMS    (VIN_GM_SHORT 0)     capacitor c=1.0
+I_GM_AC   (VIP_GM_AC VIN_GM_SHORT VOUT_GM_SHORT VDD VSS) dut_ota
+RGM_SHORT (VOUT_GM_SHORT VCM_REF) resistor r=r_gm
+
+// ── 5b. OTA AC transconductance — real RL||CL loaded sense ───────────────────
+RS_GML   (VOUT_GM_LOAD VIN_GM_LOAD) resistor  r=1G
+CS_GML   (VIN_GM_LOAD  0)           capacitor c=1.0
+I_GM_LD  (VIP_GM_AC VIN_GM_LOAD VOUT_GM_LOAD VDD VSS) dut_ota
+CL_GML   (VOUT_GM_LOAD VSS)     capacitor c=cload
+RL_GML   (VOUT_GM_LOAD VCM_REF) resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_gm dc param=vid_sw start=-0.2 stop=0.2 step=0.0002
+ac    ac start=1 stop=10G dec=50 annotate=status
+
+save VOUT_CL VOUT_ZOUT VOUT_RO VZIN:p \
+     VOUT_GM_DC VSUP_GM:p VCM_REF \
+     VOUT_GM_SHORT VOUT_GM_LOAD
+saveOptions options save=selected
