@@ -1,0 +1,68 @@
+// =============================================================================
+// Process-Independent SerDes RX Front-End TB — 4-Port SDD11 / SCD11 / SCD21 / SDC21
+// =============================================================================
+// Characterizes a differential RX front-end network (ESD/pad cap + bridged
+// T-coil + termination with configurable P/N mismatch) via 4-port S-parameters:
+//   - Port 1 / Port 2 : Differential RX pad input (`INP` / `INN`)
+//   - Port 3 / Port 4 : Differential RX termination ports (`OUTP` / `OUTN`)
+//
+// Extracts mixed-mode metrics from 10 MHz to 25 GHz:
+//   - SDD11 : Differential input return loss (IEEE 802.3 / OIF-CEI compliance)
+//   - SCD11 : Differential-to-common input reflection (pad/ESD asymmetry)
+//   - SDD21 : Differential through transfer
+//   - SCD21 & SDC21 : Differential<->Common mode conversion (CM noise susceptibility)
+//   - Also evaluates bare ESD (no T-coil) reference in parallel via AC!
+//
+// DUT interface contract (optional custom RX front-end or built-in default):
+//   subckt dut_rx_frontend INP INN OUTP OUTN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+parameters \
+    r_load=50 \
+    c_esd=500f \
+    l_tc=468.75p \
+    k_tc=0.333333 \
+    cb_tc=62.5f \
+    r_coil=1.0 \
+    dc_esd_pct=5.0 \
+    dr_ser_pct=2.0 \
+    temp_c=27
+
+// Built-in parameterized differential RX front-end (Butterworth T-coil + ESD + mismatch)
+// To test a custom extracted layout/schematic network, replace this subckt body.
+subckt dut_rx_frontend (INP INN OUTP OUTN VSS)
+    // P-side bridged T-coil + slightly mismatched ESD capacitance & coil ESR
+    RP_ESR (INP  INP_I) resistor r=(r_coil*(1 + 0.01*dr_ser_pct))
+    L1P    (INP_I MIDP) inductor l=l_tc
+    L2P    (MIDP  OUTP) inductor l=l_tc
+    KP     mutual_inductor ind1=L1P ind2=L2P coupling=k_tc
+    CBP    (INP_I OUTP) capacitor c=cb_tc
+    CESDP  (MIDP  VSS)  capacitor c=(c_esd*(1 + 0.01*dc_esd_pct))
+
+    // N-side nominal bridged T-coil + ESD capacitance
+    RN_ESR (INN  INN_I) resistor r=(r_coil*(1 - 0.01*dr_ser_pct))
+    L1N    (INN_I MIDN) inductor l=l_tc
+    L2N    (MIDN  OUTN) inductor l=l_tc
+    KN     mutual_inductor ind1=L1N ind2=L2N coupling=k_tc
+    CBN    (INN_I OUTN) capacitor c=cb_tc
+    CESDN  (MIDN  VSS)  capacitor c=(c_esd*(1 - 0.01*dc_esd_pct))
+ends dut_rx_frontend
+
+VGND (VSS 0) vsource dc=0 type=dc
+
+// 4-port mixed-mode S-parameter fixture (50-ohm single-ended = 100-ohm diff)
+P1 (INP  VSS) port r=r_load num=1 type=sine
+P2 (INN  VSS) port r=r_load num=2 type=sine
+P3 (OUTP VSS) port r=r_load num=3 type=sine
+P4 (OUTN VSS) port r=r_load num=4 type=sine
+
+I_RXFE (INP INN OUTP OUTN VSS) dut_rx_frontend
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+sp sp ports=[P1 P2 P3 P4] start=10M stop=25G dec=40 annotate=status

@@ -1,0 +1,82 @@
+// =============================================================================
+// Process-Independent SerDes Jitter TB — TX DDJ/DCD/SJ/RJ Decomposition & Bathtub
+// =============================================================================
+// Drives two parallel 10 Gb/s PRBS-7 TX paths across a moderate causal lossy
+// channel (`channel_diff_lossy.scs`, `ch_len = 0.25 m`) for 560 UI (>= 4 full
+// PRBS-7 periods of 127 UI after settling):
+//   1. Clean path (`CLEAN_P / CLEAN_N`): pure channel-induced DDJ + static DCD
+//   2. Jittered path (`JIT_P / JIT_N`): channel DDJ + TX DCD + injected
+//      sinusoidal jitter (`SJ` @ `f_sj = 50 MHz`, `a_sj_uipp = 0.08 UIpp`) +
+//      per-cycle Gaussian random jitter (`RJ = 0.015 UI_rms = 1.5 ps_rms`)
+//
+// `analyze_clocking_jitter.py bathtub` extracts TIE, separates DCD, pattern-
+// locked DDJ, coherent SJ, and unbiased ANOVA RJ_rms, and extrapolates the
+// Dual-Dirac bathtub eye width down to `BER = 1e-12` (`TJ = DJ + 14.07*RJ`).
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "../channel/channel_diff_lossy.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_phase_interp.va"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    bit_rate=10G \
+    ch_len=0.25 \
+    z0=50 \
+    n_codes=64 \
+    f_sj=50M \
+    a_sj_uipp=0.08 \
+    rj_rms_ui=0.015 \
+    v_dcd_off=35m \
+    n_ui=560 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Ideal 10 GHz quadrature reference clocks
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=-90
+
+// --- Path 1: Clean TX Clock (pure channel DDJ + zero SJ/RJ reference) ---
+VCODE_Z (VCODE_ZERO VSS) vsource dc=0 type=dc
+I_PI_CLN (CKI_P CKI_N CKQ_P CKQ_N VCODE_ZERO VDD VSS CLK_CLNP CLK_CLNN) va_phase_interp \
+    vdd=vdd n_codes=n_codes inl_amp=0.0 dnl_amp=0.0 rj_rms_ui=0.0 tau_out=3p
+I_PRBS_C (CLK_CLNP VSS C_TXP C_TXN C_BIT) va_prbs_gen \
+    mode=0 v_swing=1.6 v_cm=0.5 t_rf=15p r_src=z0
+I_CH_CLN (C_TXP C_TXN CLEAN_P CLEAN_N VSS) channel_diff_lossy ch_len=ch_len
+R_CLNP   (CLEAN_P VSS) resistor r=z0
+R_CLNN   (CLEAN_N VSS) resistor r=z0
+
+// --- Path 2: Jittered TX Clock (DDJ + DCD + SJ + RJ) ---
+VSJ      (SJ_CODE VSS) vsource dc=0 type=sine freq=f_sj ampl=(0.5*a_sj_uipp*n_codes)
+I_PI_JIT (CKI_P CKI_N CKQ_P CKQ_N SJ_CODE VDD VSS CLK_JITP CLK_JITN) va_phase_interp \
+    vdd=vdd n_codes=n_codes inl_amp=0.0 dnl_amp=0.0 rj_rms_ui=rj_rms_ui noise_seed=101 tau_out=3p
+I_PRBS_J (CLK_JITP VSS J_TXP J_TXN J_BIT) va_prbs_gen \
+    mode=0 v_swing=1.6 v_cm=0.5 t_rf=15p r_src=z0
+I_CH_JIT (J_TXP J_TXN J_RXP J_RXN VSS) channel_diff_lossy ch_len=ch_len
+R_JITP   (J_RXP VSS) resistor r=z0
+R_JITN   (J_RXN VSS) resistor r=z0
+
+// Small differential offset at RX slicer input injects realistic TX/RX DCD
+VDCD_P   (JIT_P J_RXP) vsource dc=( 0.5*v_dcd_off) type=dc
+VDCD_N   (JIT_N J_RXN) vsource dc=(-0.5*v_dcd_off) type=dc
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=4p
+
+save CLEAN_P CLEAN_N JIT_P JIT_N
+saveOptions options save=selected

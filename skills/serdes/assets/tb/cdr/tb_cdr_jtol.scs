@@ -1,0 +1,74 @@
+// =============================================================================
+// Process-Independent SerDes CDR TB — Closed-Loop JTF & Sinusoidal JTOL
+// =============================================================================
+// Runs a closed-loop 10 Gb/s 2nd-order Bang-Bang PI CDR tracking a PRBS-7
+// NRZ stream modulated with calibrated Sinusoidal Jitter (`SJ` at frequency
+// `f_sj`, amplitude `a_sj_uipp` UIpp):
+//
+//   Ideal TX PI (SJ phase mod) -> PRBS-7 -> [dut_bbpd -> dut_cdr_loop -> dut_pi]
+//
+// Extracts:
+//   - Steady-state RMS & peak phase tracking error [mUI] after initial lock
+//   - Jitter Transfer Function magnitude `|JTF(f_sj)|` [linear / dB] & phase lag
+//   - Latency-aligned bit error count (`bit_errors == 0` -> JTOL pass!)
+//
+// Increase `a_sj_uipp` (e.g. from 0.60 to 2.00 UIpp) to verify Bang-Bang
+// slew-rate limit breakdown and JTOL failure detection.
+//
+// DUT interface contracts:
+//   subckt dut_bbpd     INP INN CLKP CLKN VDD VSS UP DN DOUT
+//   subckt dut_cdr_loop UP DN CLK VDD VSS VCODE FREQ_MON
+//   subckt dut_pi       CKI_P CKI_N CKQ_P CKQ_N VCODE VDD VSS CLKP CLKN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_phase_interp.va"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    bit_rate=10G \
+    n_codes=64 \
+    f_sj=20M \
+    a_sj_uipp=0.60 \
+    t_stop=200n \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Shared ideal 10 GHz quadrature reference clocks
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=bit_rate ampl=-0.5 sinephase=-90
+
+// Calibrated TX sinusoidal jitter modulator (0.5*a_sj_uipp * n_codes peak PI codes)
+VSJ (SJ_CODE VSS) vsource dc=0 type=sine freq=f_sj ampl=(0.5*a_sj_uipp*n_codes)
+I_TX_PI (CKI_P CKI_N CKQ_P CKQ_N SJ_CODE VDD VSS TX_CLKP TX_CLKN) va_phase_interp \
+    vdd=vdd n_codes=n_codes inl_amp=0.0 dnl_amp=0.0 tau_out=3p
+
+// SJ-modulated 10 Gb/s PRBS-7 data stream
+I_PRBS (TX_CLKP VSS DATA_P DATA_N TX_BIT) va_prbs_gen \
+    mode=0 v_swing=0.8 v_cm=0.5 t_rf=15p r_src=50
+RL_P   (DATA_P VSS) resistor r=50
+RL_N   (DATA_N VSS) resistor r=50
+
+// Closed-loop 2nd-order Bang-Bang PI CDR
+I_BBPD (DATA_P DATA_N RX_CLKP RX_CLKN VDD VSS UP DN RX_DOUT) dut_bbpd
+I_LF   (UP DN RX_CLKP VDD VSS RX_VCODE FREQ_MON) dut_cdr_loop
+I_PI   (CKI_P CKI_N CKQ_P CKQ_N RX_VCODE VDD VSS RX_CLKP RX_CLKN) dut_pi
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate maxstep=5p
+
+save TX_BIT RX_DOUT TX_CLKP RX_CLKP SJ_CODE RX_VCODE FREQ_MON
+saveOptions options save=selected

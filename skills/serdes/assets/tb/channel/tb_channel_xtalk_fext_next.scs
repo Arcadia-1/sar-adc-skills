@@ -1,0 +1,158 @@
+// =============================================================================
+// Process-Independent SerDes Channel TB — FEXT & NEXT Crosstalk Eye Degradation
+// =============================================================================
+// Quantifies differential Far-End Crosstalk (FEXT) and Near-End Crosstalk (NEXT)
+// induced by asynchronous/uncorrelated PRBS-9 aggressors onto a 10 Gb/s PRBS-7
+// victim channel, comparing:
+//   1. Isolated victim eye (`ISO_OUTP - ISO_OUTN`)
+//   2. Coupled victim eye with FEXT + NEXT (`XTK_OUTP - XTK_OUTN`)
+//   3. Quiet-victim FEXT-only noise (`FEXT_P - FEXT_N`) & NEXT-only noise (`NEXT_P - NEXT_N`)
+//   4. AC coupling transfer magnitudes `|H_FEXT(f)|` and `|H_NEXT(f)|` up to 15 GHz
+//
+// Uses realistic asymmetric adjacent-pair connector/via mutual capacitance and
+// mutual inductance coupling (adjacent inner traces `VN <-> AP` couple more
+// strongly than outer traces, producing physical differential crosstalk!).
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "channel_diff_lossy.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    bit_rate=10G \
+    ch_len=0.45 \
+    v_swing=1.6 \
+    v_cm=0.5 \
+    z0=50 \
+    t_rf=15p \
+    c_fext=140f \
+    c_next=90f \
+    l_via=180p \
+    k_fext=0.18 \
+    k_next=0.14 \
+    n_ui_eye=200 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    ui_agg=ui*0.97 \
+    t_stop=n_ui_eye*ui
+
+// Asymmetric adjacent-pair coupling block (models connector / via / breakout crosstalk):
+// Inner adjacent conductors (VN <-> AP) couple strongly; outer pair couples weakly.
+subckt diff_xtalk_coupler (VP_IN VN_IN VP_OUT VN_OUT AP_IN AN_IN AP_OUT AN_OUT)
+    parameters cm=100f lv=180p km=0.15
+    LVP (VP_IN VP_OUT) inductor l=lv
+    LVN (VN_IN VN_OUT) inductor l=lv
+    LAP (AP_IN AP_OUT) inductor l=lv
+    LAN (AN_IN AN_OUT) inductor l=lv
+    K_INNER mutual_inductor ind1=LVN ind2=LAP coupling=km
+    K_OUTER mutual_inductor ind1=LVP ind2=LAP coupling=(0.25*km)
+    C_INNER (VN_OUT AP_OUT) capacitor c=cm
+    C_CROSS (VP_OUT AP_OUT) capacitor c=(0.25*cm)
+ends diff_xtalk_coupler
+
+VGND     (VSS 0)      vsource dc=0 type=dc
+VCLK_V   (CLK_V VSS)  vsource type=pulse val0=0 val1=1.0 period=ui delay=0 rise=5p fall=5p width=0.5*ui
+VCLK_F   (CLK_F VSS)  vsource type=pulse val0=0 val1=1.0 period=ui_agg delay=17p rise=5p fall=5p width=0.5*ui_agg
+VCLK_N   (CLK_N VSS)  vsource type=pulse val0=0 val1=1.0 period=(ui*1.03) delay=33p rise=5p fall=5p width=0.5*ui*1.03
+
+// --- 1. Isolated Victim Channel (No Crosstalk Baseline) ---
+I_TX_ISO (CLK_V VSS ISO_TXP ISO_TXN ISO_BIT) va_prbs_gen \
+    mode=0 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CH_ISO (ISO_TXP ISO_TXN ISO_OUTP ISO_OUTN VSS) channel_diff_lossy ch_len=ch_len
+R_ISO_P  (ISO_OUTP VSS) resistor r=z0
+R_ISO_N  (ISO_OUTN VSS) resistor r=z0
+
+// --- 2. Coupled Victim Channel (Victim + FEXT Aggressor + NEXT Aggressor) ---
+I_TX_VIC  (CLK_V VSS VIC_TXP VIC_TXN VIC_BIT) va_prbs_gen \
+    mode=0 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_TX_FAGG (CLK_F VSS FAGG_TXP FAGG_TXN FAGG_BIT) va_prbs_gen \
+    mode=1 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_TX_NAGG (CLK_N VSS NAGG_TXP NAGG_TXN NAGG_BIT) va_prbs_gen \
+    mode=1 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+
+// Far-end co-propagating coupling at TX breakout -> channels -> near-end RX coupling
+I_CPL_F  (VIC_TXP VIC_TXN VIC_C1P VIC_C1N FAGG_TXP FAGG_TXN FAGG_C1P FAGG_C1N) \
+    diff_xtalk_coupler cm=c_fext lv=l_via km=k_fext
+I_CH_V   (VIC_C1P VIC_C1N VIC_RX1P VIC_RX1N VSS) channel_diff_lossy ch_len=ch_len
+I_CH_FA  (FAGG_C1P FAGG_C1N FAGG_RXP FAGG_RXN VSS) channel_diff_lossy ch_len=ch_len
+R_FA_P   (FAGG_RXP VSS) resistor r=z0
+R_FA_N   (FAGG_RXN VSS) resistor r=z0
+
+// Local NEXT aggressor coupling into victim RX connector
+I_CPL_N  (VIC_RX1P VIC_RX1N XTK_OUTP XTK_OUTN NAGG_TXP NAGG_TXN NAGG_OUTP NAGG_OUTN) \
+    diff_xtalk_coupler cm=c_next lv=l_via km=k_next
+R_XTK_P  (XTK_OUTP  VSS) resistor r=z0
+R_XTK_N  (XTK_OUTN  VSS) resistor r=z0
+R_NA_P   (NAGG_OUTP VSS) resistor r=z0
+R_NA_N   (NAGG_OUTN VSS) resistor r=z0
+
+// --- 3. Quiet-Victim FEXT-Only & NEXT-Only Measurement Replicas ---
+// Quiet victim for FEXT
+R_QF_TP  (QF_TXP VSS) resistor r=z0
+R_QF_TN  (QF_TXN VSS) resistor r=z0
+I_QF_AGG (CLK_F VSS QFA_TXP QFA_TXN QFA_BIT) va_prbs_gen \
+    mode=1 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CPL_QF (QF_TXP QF_TXN QF_C1P QF_C1N QFA_TXP QFA_TXN QFA_C1P QFA_C1N) \
+    diff_xtalk_coupler cm=c_fext lv=l_via km=k_fext
+I_CH_QF  (QF_C1P QF_C1N FEXT_P FEXT_N VSS) channel_diff_lossy ch_len=ch_len
+I_CH_QFA (QFA_C1P QFA_C1N QFA_RXP QFA_RXN VSS) channel_diff_lossy ch_len=ch_len
+R_QFP    (FEXT_P  VSS) resistor r=z0
+R_QFN    (FEXT_N  VSS) resistor r=z0
+R_QFAP   (QFA_RXP VSS) resistor r=z0
+R_QFAN   (QFA_RXN VSS) resistor r=z0
+
+// Quiet victim for NEXT
+R_QN_TP  (QN_RX1P VSS) resistor r=z0
+R_QN_TN  (QN_RX1N VSS) resistor r=z0
+I_QN_AGG (CLK_N VSS QNA_TXP QNA_TXN QNA_BIT) va_prbs_gen \
+    mode=1 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CPL_QN (QN_RX1P QN_RX1N NEXT_P NEXT_N QNA_TXP QNA_TXN QNA_OUTP QNA_OUTN) \
+    diff_xtalk_coupler cm=c_next lv=l_via km=k_next
+R_QNP    (NEXT_P   VSS) resistor r=z0
+R_QNN    (NEXT_N   VSS) resistor r=z0
+R_QNAP   (QNA_OUTP VSS) resistor r=z0
+R_QNAN   (QNA_OUTN VSS) resistor r=z0
+
+// --- 4. AC FEXT & NEXT Coupling Transfer (10 MHz..15 GHz) ---
+VAC_FP   (ACF_SRCP VSS) vsource dc=0 mag=1.0  type=dc
+VAC_FN   (ACF_SRCN VSS) vsource dc=0 mag=-1.0 type=dc
+R_ACF_SP (ACF_SRCP ACF_INP) resistor r=z0
+R_ACF_SN (ACF_SRCN ACF_INN) resistor r=z0
+R_ACV_TP (ACV_TXP  VSS)     resistor r=z0
+R_ACV_TN (ACV_TXN  VSS)     resistor r=z0
+I_AC_CF  (ACV_TXP ACV_TXN ACV_C1P ACV_C1N ACF_INP ACF_INN ACF_C1P ACF_C1N) \
+    diff_xtalk_coupler cm=c_fext lv=l_via km=k_fext
+I_AC_CHV (ACV_C1P ACV_C1N AC_FEXTP AC_FEXTN VSS) channel_diff_lossy ch_len=ch_len
+I_AC_CHA (ACF_C1P ACF_C1N ACF_RXP  ACF_RXN  VSS) channel_diff_lossy ch_len=ch_len
+R_AC_FP  (AC_FEXTP VSS) resistor r=z0
+R_AC_FN  (AC_FEXTN VSS) resistor r=z0
+R_AC_FAP (ACF_RXP  VSS) resistor r=z0
+R_AC_FAN (ACF_RXN  VSS) resistor r=z0
+
+VAC_NP   (ACN_SRCP VSS) vsource dc=0 mag=1.0  type=dc
+VAC_NN   (ACN_SRCN VSS) vsource dc=0 mag=-1.0 type=dc
+R_ACN_SP (ACN_SRCP ACN_INP) resistor r=z0
+R_ACN_SN (ACN_SRCN ACN_INN) resistor r=z0
+R_ACN_VP (ACNV_INP VSS)     resistor r=z0
+R_ACN_VN (ACNV_INN VSS)     resistor r=z0
+I_AC_CN  (ACNV_INP ACNV_INN AC_NEXTP AC_NEXTN ACN_INP ACN_INN ACN_OUTP ACN_OUTN) \
+    diff_xtalk_coupler cm=c_next lv=l_via km=k_next
+R_AC_NP  (AC_NEXTP VSS) resistor r=z0
+R_AC_NN  (AC_NEXTN VSS) resistor r=z0
+R_AC_NAP (ACN_OUTP VSS) resistor r=z0
+R_AC_NAN (ACN_OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac   ac   start=10M stop=15G dec=30 annotate=status
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save ISO_OUTP ISO_OUTN XTK_OUTP XTK_OUTN FEXT_P FEXT_N NEXT_P NEXT_N \
+     AC_FEXTP AC_FEXTN AC_NEXTP AC_NEXTN
+saveOptions options save=selected

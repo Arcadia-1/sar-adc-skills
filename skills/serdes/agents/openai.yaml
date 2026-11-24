@@ -1,7 +1,7 @@
 interface:
   display_name: "SerDes / Wireline"
-  short_description: "Process-independent SerDes TX FFE, CTLE/VGA, DFE, SS-LMS, T-coil & Spectre X TBs"
-  default_prompt: "Use $serdes-skill to design or verify a high-speed SerDes block (channel SDD21/SBR/eye, TX FFE, CTLE/VGA, slicer/DFE, SS-LMS, T-coil, or Spectre X CX/AX setup)."
+  short_description: "Process-independent SerDes TX FFE, CTLE/VGA, DFE, SS-LMS, CDR, PAM4, T-coil & Spectre X TBs"
+  default_prompt: "Use $serdes-skill to design or verify a high-speed SerDes block (channel SDD21/nport/xtalk, TX FFE, CTLE P1dB/noise, slicer/DFE, SS-LMS, CDR/PI/JTOL, PAM4 RLM/DFE, DCD/IQ/bathtub, T-coil, or Spectre X CX/AX setup)."
 
 policy:
   allow_implicit_invocation: true

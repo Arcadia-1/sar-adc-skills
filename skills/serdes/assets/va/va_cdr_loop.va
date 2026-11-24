@@ -1,0 +1,73 @@
+// Process-independent Digital 2nd-Order SerDes CDR Loop Filter (PI-Based)
+//
+// Integrates Bang-Bang Phase Detector `UP` (clock late -> advance) and `DN`
+// (clock early -> delay) votes into an unwrapped Phase Interpolator control
+// voltage `VCODE` using a Type-II proportional + integral architecture:
+//
+//   err[n]       = sign_pol * (DN[n] - UP[n])   in {-1, 0, +1}
+//   freq_acc[n]  = clamp(freq_acc[n-1] + ki * err[n], -freq_max, +freq_max)
+//   phase_acc[n] = phase_acc[n-1] + kp * err[n] + freq_acc[n]
+//   VCODE[n]     = quantize_out ? floor(phase_acc[n] + 0.5) : phase_acc[n]
+//
+// Because a Phase Interpolator is a phase actuator (not a VCO frequency
+// integrator), `kp` drives a phase accumulator (1st integrator) and `ki`
+// drives a nested frequency accumulator (2nd integrator) so the closed-loop
+// CDR tracks both static phase offset, frequency offset (ppm), and low-
+// frequency sinusoidal jitter (SJ) with Type-II dynamics.
+//
+// Default `clk_edge = -1` (falling edge of CLK) samples `UP`/`DN` mid-UI
+// safely after `va_bbpd_serdes` rising-edge logic settles.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_cdr_loop(
+    input  electrical UP,
+    input  electrical DN,
+    input  electrical CLK,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical VCODE,
+    output electrical FREQ_MON
+);
+
+parameter real    vth          = 0.50   from (0:inf);     // logic threshold for UP, DN, CLK [V]
+parameter real    kp           = 0.80   from (0:100.0);   // proportional phase step [PI codes / vote]
+parameter real    ki           = 0.0025 from [0:10.0);    // integral frequency step [PI codes / UI / vote]
+parameter real    sign_pol     = 1.0;                     // +1: DN increases VCODE (more PI delay); -1: inverted
+parameter real    code_init    = 0.0;                     // initial PI code offset [codes]
+parameter real    freq_max     = 2.0    from (0:100.0);   // clamp on frequency accumulator [codes / UI]
+parameter integer clk_edge     = -1     from [-1:1];      // -1 = falling CLK (default), +1 = rising CLK
+parameter integer quantize_out = 1      from [0:1];       // 1 = integer PI code quantization, 0 = continuous
+parameter real    t_rf         = 12e-12 from (1e-12:inf); // smooth DAC/PI code transition time [s]
+
+integer up_b, dn_b, edge_dir;
+real err, freq_acc, phase_acc, vcode_out;
+
+analog begin
+    @(initial_step) begin
+        freq_acc  = 0.0;
+        phase_acc = code_init;
+        vcode_out = (quantize_out == 1) ? floor(phase_acc + 0.5) : phase_acc;
+        edge_dir  = (clk_edge >= 0) ? 1 : -1;
+    end
+
+    @(cross(V(CLK, VSS) - vth, edge_dir)) begin
+        up_b = (V(UP, VSS) >= vth) ? 1 : 0;
+        dn_b = (V(DN, VSS) >= vth) ? 1 : 0;
+        err  = sign_pol * (dn_b - up_b);
+
+        freq_acc = freq_acc + ki * err;
+        if (freq_acc >  freq_max) freq_acc =  freq_max;
+        if (freq_acc < -freq_max) freq_acc = -freq_max;
+
+        phase_acc = phase_acc + kp * err + freq_acc;
+        vcode_out = (quantize_out == 1) ? floor(phase_acc + 0.5) : phase_acc;
+    end
+
+    V(VCODE,    VSS) <+ transition(vcode_out, 0.0, t_rf, t_rf);
+    V(FREQ_MON, VSS) <+ transition(freq_acc,  0.0, t_rf, t_rf);
+    I(VDD,      VSS) <+ 1.0e-3;
+end
+
+endmodule

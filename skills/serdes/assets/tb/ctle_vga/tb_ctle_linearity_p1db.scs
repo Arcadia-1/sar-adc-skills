@@ -1,0 +1,93 @@
+// =============================================================================
+// Process-Independent SerDes CTLE / VGA TB — Large-Signal Linearity, P1dB & HD3
+// =============================================================================
+// Runs an 8-point coherent single-tone amplitude sweep (`v_in_pp = 0.04..1.60 Vpp`)
+// using Spectre `alter` + `strobeoutput=strobeonly` (`outputstart=t_settle`,
+// `strobedelay < strobeperiod`) to extract:
+//   - Small-signal reference gain & gain compression curve vs. differential input swing
+//   - Input & output 1-dB compression point (`in_p1db_vpp`, `out_p1db_vpp`, `dBm` @ 100 ohm)
+//   - Nominal-swing (`0.40 Vpp`) coherent `HD2`, `HD3`, `THD`, and `SFDR`
+//
+// Spectre X note: for ultra-clean coherent FFT floor (> 80 dB SFDR), run with
+//   `spectre +preset=cx -preset_override +mt=2 -format psfascii ...`
+//
+// DUT interface contract (8-pin CTLE / VGA):
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    vboost=0.0 \
+    cload=50f \
+    fs=16G \
+    n_fft=128 \
+    m_bin=19 \
+    n_settle=32 \
+    v_in_pp=0.04 \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    fin=fs*m_bin/n_fft \
+    t_settle=n_settle*ts \
+    t_stop=(n_settle+n_fft)*ts
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Coherent differential sine input (peak-to-peak diff = v_in_pp)
+VINP (INP VSS) vsource dc=vcm_in type=sine freq=fin ampl=( 0.25*v_in_pp)
+VINN (INN VSS) vsource dc=vcm_in type=sine freq=fin ampl=(-0.25*v_in_pp)
+VBST (VBOOST   VSS) vsource dc=vboost type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0      type=dc
+
+I0 (INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN) dut_ctle_vga
+
+CLP (OUTP VSS) capacitor c=cload
+CLN (OUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-6 vabstol=1e-9 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 8-point coherent amplitude sweep from small-signal linear into > 1 dB compression
+tran_a0 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a1 alter param=v_in_pp value=0.12
+tran_a1 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a2 alter param=v_in_pp value=0.25
+tran_a2 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a3 alter param=v_in_pp value=0.40
+tran_a3 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a4 alter param=v_in_pp value=0.60
+tran_a4 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a5 alter param=v_in_pp value=0.85
+tran_a5 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a6 alter param=v_in_pp value=1.15
+tran_a6 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+alt_a7 alter param=v_in_pp value=1.60
+tran_a7 tran stop=t_stop outputstart=t_settle errpreset=conservative \
+    maxstep=2p strobeperiod=ts strobedelay=0.5*ts strobeoutput=strobeonly
+
+save INP INN OUTP OUTN
+saveOptions options save=selected

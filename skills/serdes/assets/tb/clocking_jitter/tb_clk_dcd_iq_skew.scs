@@ -1,0 +1,61 @@
+// =============================================================================
+// Process-Independent SerDes Clocking TB — Half-Rate DCD & Quadrature I/Q Skew
+// =============================================================================
+// Characterizes a four-phase half-rate / quarter-rate clock distribution path
+// (`CK0, CK90, CK180, CK270` at `f_clk = 5 GHz` for `10 Gb/s` half-rate SerDes)
+// BEFORE (`tran_raw`: `VDCD_CAL = 0, VIQ_CAL = 0`) vs. AFTER calibration
+// (`tran_cal`: `VDCD_CAL = v_dcd_cal, VIQ_CAL = v_iq_cal`):
+//   - Duty-Cycle Distortion `DCD` [%] and [ps]
+//   - Quadrature I/Q phase skew `(t_90 - t_0) - T/4` [deg] and [ps]
+//   - All four quadrant spacings (`0->90`, `90->180`, `180->270`, `270->360`)
+//
+// DUT interface contract (12-pin quadrature clock distribution + cal pins):
+//   subckt dut_clk_dist CKI_P CKI_N CKQ_P CKQ_N VDCD_CAL VIQ_CAL VDD VSS \
+//       CK0 CK90 CK180 CK270
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_clk=0.5 \
+    f_clk=5G \
+    v_dcd_cal=0.0 \
+    v_iq_cal=0.0 \
+    v_dcd_cal_opt=0.50 \
+    v_iq_cal_opt=0.50 \
+    t_stop=4n \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Ideal 5 GHz half-rate quadrature differential input clocks (T_clk = 200 ps -> 90 deg = 50 ps)
+VCKIP (CKI_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=0
+VCKIN (CKI_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=0
+VCKQP (CKQ_P VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl= 0.5 sinephase=-90
+VCKQN (CKQ_N VSS) vsource dc=vcm_clk type=sine freq=f_clk ampl=-0.5 sinephase=-90
+
+VDCD (VDCD_CAL VSS) vsource dc=v_dcd_cal type=dc
+VIQ  (VIQ_CAL  VSS) vsource dc=v_iq_cal  type=dc
+
+I0 (CKI_P CKI_N CKQ_P CKQ_N VDCD_CAL VIQ_CAL VDD VSS CK0 CK90 CK180 CK270) dut_clk_dist
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Uncalibrated baseline (VDCD_CAL = 0, VIQ_CAL = 0)
+tran_raw tran stop=t_stop errpreset=conservative maxstep=1p
+
+// 2. Calibrated run (apply DCD & I/Q calibration voltages)
+alt_dcd alter param=v_dcd_cal value=v_dcd_cal_opt
+alt_iq  alter param=v_iq_cal  value=v_iq_cal_opt
+tran_cal tran stop=t_stop errpreset=conservative maxstep=1p
+
+save CK0 CK90 CK180 CK270
+saveOptions options save=selected

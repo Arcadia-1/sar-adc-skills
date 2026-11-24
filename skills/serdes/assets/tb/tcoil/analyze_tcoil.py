@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Analyze Spectre PSF ASCII outputs from SerDes Bridged T-Coil testbench.
+"""Analyze Spectre PSF ASCII outputs from SerDes Bridged T-Coil & RX Front-End testbenches.
 
 Usage:
   python analyze_tcoil.py <psf_dir>
+  python analyze_tcoil.py --mode rx_frontend <psf_dir>
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ COMMON_DIR = next(
 if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
 
-from psf_utils import find_single, parse_psf_ascii
+from psf_utils import find_single, mixed_mode_s_params, parse_psf_ascii
 
 
 def _f3db(freq: np.ndarray, mag_db: np.ndarray) -> float:
@@ -81,11 +82,53 @@ def analyze_tcoil(psf_dir: Path) -> dict[str, float]:
     }
 
 
+def analyze_rx_frontend(psf_dir: Path) -> dict[str, float]:
+    f_sp = find_single(psf_dir, ["sp.sp", "*.sp.sp", "*.sp"])
+    dsp = parse_psf_ascii(f_sp)
+    freq = np.real(dsp["freq"])
+    log_f = np.log10(freq)
+    mm = mixed_mode_s_params(dsp, in_p=1, in_n=2, out_p=3, out_n=4)
+
+    def db(arr: np.ndarray) -> np.ndarray:
+        return 20.0 * np.log10(np.maximum(np.abs(arr), 1e-30))
+
+    sdd11 = db(mm["sdd11"])
+    scd11 = db(mm["scd11"])
+    sdd21 = db(mm["sdd21"])
+    scd21 = db(mm["scd21"])
+    sdc21 = db(mm["sdc21"])
+
+    def at(arr: np.ndarray, f_hz: float) -> float:
+        return float(np.interp(math.log10(f_hz), log_f, arr))
+
+    m_10g = freq <= 10e9
+    m_20g = freq <= 20e9
+    return {
+        "sdd11_5ghz_db": at(sdd11, 5e9),
+        "sdd11_10ghz_db": at(sdd11, 10e9),
+        "sdd11_worst_to_10ghz_db": float(np.max(sdd11[m_10g])),
+        "sdd11_worst_to_20ghz_db": float(np.max(sdd11[m_20g])),
+        "scd11_10ghz_db": at(scd11, 10e9),
+        "scd11_worst_to_20ghz_db": float(np.max(scd11[m_20g])),
+        "sdd21_dc_db": float(sdd21[0]),
+        "sdd21_10ghz_db": at(sdd21, 10e9),
+        "scd21_10ghz_db": at(scd21, 10e9),
+        "scd21_worst_to_20ghz_db": float(np.max(scd21[m_20g])),
+        "sdc21_10ghz_db": at(sdc21, 10e9),
+        "sdc21_worst_to_20ghz_db": float(np.max(sdc21[m_20g])),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Analyze SerDes Bridged T-Coil Spectre outputs.")
+    ap = argparse.ArgumentParser(description="Analyze SerDes Bridged T-Coil & RX Front-End Spectre outputs.")
     ap.add_argument("psf_dir", type=Path)
+    ap.add_argument("--mode", choices=["bw", "rx_frontend"], default="bw")
     args = ap.parse_args(argv)
-    print(json.dumps(analyze_tcoil(args.psf_dir), indent=2))
+    if args.mode == "rx_frontend":
+        res = analyze_rx_frontend(args.psf_dir)
+    else:
+        res = analyze_tcoil(args.psf_dir)
+    print(json.dumps(res, indent=2))
     return 0
 
 
