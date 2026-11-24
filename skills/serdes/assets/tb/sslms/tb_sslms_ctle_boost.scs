@@ -1,0 +1,73 @@
+// =============================================================================
+// Process-Independent SerDes Adaptive CTLE TB — Transition-Filtered SS-LMS Boost
+// =============================================================================
+// Drives a 10 Gb/s PRBS-9 stream across the real passive lossy `mtline` channel
+// (`channel_diff_lossy.scs`, -14.1 dB @ 5 GHz) into an adaptive CTLE whose
+// peaking boost starts at 0 dB (`VBOOST = 0 V`, nearly closed eye!).
+//
+// A transition-filtered Sign-Sign LMS engine (`va_sslms_adapt edge_only=1`,
+// `sign_pol=-1.0`) correlates `sign(d[k]) * sign(e[k])` ONLY on bit transitions
+// (`d[k] != d[k-1]`), driving `VBOOST` upward until transition symbols reach
+// `vref_err`, asserting `DONE_BST` and opening the physical channel eye!
+//
+// DUT interface contract:
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+include "../channel/channel_diff_lossy.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_dfe_3tap.va"
+ahdl_include "../../va/va_sslms_adapt.va"
+
+parameters \
+    vdd=1.0 \
+    bit_rate=10G \
+    v_swing=1.6 \
+    v_cm=0.5 \
+    z0=50 \
+    ch_len=0.50 \
+    vref_err=0.32 \
+    t_clk_rx_off=73p \
+    n_ui=1200 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0        type=dc
+VH0  (ZERO_H   VSS) vsource dc=0        type=dc
+VREF (VREF_ERR VSS) vsource dc=vref_err type=dc
+
+VCLK_TX  (CLK_TX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0                 rise=5p fall=5p width=0.5*ui
+VCLK_RX  (CLK_RX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=t_clk_rx_off      rise=5p fall=5p width=0.5*ui
+VCLK_LMS (CLK_LMS 0) vsource type=pulse val0=0 val1=vdd period=ui delay=(t_clk_rx_off-50p) rise=5p fall=5p width=0.5*ui
+
+I_PRBS (CLK_TX VSS TXP TXN BIT_TX) va_prbs_gen mode=1 v_swing=v_swing v_cm=v_cm t_rf=15p r_src=z0
+I_CH   (TXP TXN RX_INP RX_INN VSS) channel_diff_lossy ch_len=ch_len
+I_CTLE (RX_INP RX_INN VBOOST VOFF_CAL VDD VSS EQP EQN) dut_ctle_vga
+
+// Data + Error slicer (H1=H2=H3=0 -> pure slicing for CTLE boost SS-LMS)
+I_SL (EQP EQN CLK_RX ZERO_H ZERO_H ZERO_H VREF_ERR VDD VSS \
+      SUMP SUMN DOUTP DOUTN ERRP ERRN) va_dfe_3tap vdd=vdd vth=0.5*vdd
+
+// Transition-filtered SS-LMS engine (`edge_only=1`) adapts CTLE VBOOST!
+I_LMS_BST (DOUTP ERRP CLK_LMS VSS VBOOST DONE_BST) va_sslms_adapt \
+    vdd=vdd vth=0.5*vdd lag_ui=0 edge_only=1 sign_pol=-1.0 \
+    w_init=0.0 w_min=0.0 w_max=6.0 mu=0.10 acc_th=4 win_len=128 conv_th=0.12 auto_stop=1
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate maxstep=8p
+
+save VBOOST DONE_BST RX_INP RX_INN EQP EQN
+saveOptions options save=selected

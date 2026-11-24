@@ -1,0 +1,53 @@
+// =============================================================================
+// Universal Process-Independent Device Characterization — NMOS & PMOS gm/Id Sweep
+// =============================================================================
+// Sweeps |Vgs| from vgs_min to vdd at fixed saturation |Vds| = vds_bias for
+// both an NMOS (`MN`) and PMOS (`MP`) transistor of width `w_dev` and length
+// `l_dev`, saving operating-point small-signal parameters (`id`, `gm`, `gds`,
+// `cgg`, `vth`, `vdsat`) to build gm/Id sizing lookup tables (`Id/W`, `gm*ro`,
+// `fT = gm/(2*pi*cgg)`).
+//
+// Plug in your PDK `models_corner.scs` + `dut_devices.scs` defining:
+//   subckt dut_nmos D G S B  (parameters w=2u l=100n)
+//   subckt dut_pmos D G S B  (parameters w=2u l=100n)
+// Or instantiate native `nch`/`pch` directly via `models_corner.scs`.
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+
+parameters \
+    vdd=1.0 \
+    vds_bias=0.5 \
+    vgs_sw=0.5 \
+    vgs_min=0.15 \
+    w_n=2u \
+    l_n=100n \
+    w_p=2u \
+    l_p=100n \
+    temp_c=27
+
+VGND (VSS 0) vsource dc=0   type=dc
+VSUP (VDD 0) vsource dc=vdd type=dc
+
+// NMOS biased at Vds = +vds_bias, Vgs = +vgs_sw
+VDSN (DN VSS) vsource dc=vds_bias type=dc
+VGSN (GN VSS) vsource dc=vgs_sw   type=dc
+MN   (DN GN VSS VSS) nch w=w_n l=l_n
+
+// PMOS biased at Vsd = +vds_bias (Vd = VDD - vds_bias), Vsg = +vgs_sw (Vg = VDD - vgs_sw)
+VDSP (VDD DP) vsource dc=vds_bias type=dc
+VGSP (VDD GP) vsource dc=vgs_sw   type=dc
+MP   (DP GP VDD VDD) pch w=w_p l=l_p
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_gmid dc param=vgs_sw start=vgs_min stop=vdd step=0.01
+
+save MN:id MN:gm MN:gds MN:cgg MN:vth MN:vdsat \
+     MP:id MP:gm MP:gds MP:cgg MP:vth MP:vdsat
+saveOptions options save=selected

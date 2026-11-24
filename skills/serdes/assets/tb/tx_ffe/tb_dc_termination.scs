@@ -1,0 +1,49 @@
+// =============================================================================
+// Process-Independent SerDes TX / RX TB — DC Termination Linearity Sweep
+// =============================================================================
+// Sweeps a DC test voltage `v_probe` across `[v_min, v_max]` on the output pin
+// `OUTP` (while holding `OUTN` at nominal DC bias) to extract incremental DC
+// termination resistance `R_term(V) = dV / dI`, nominal accuracy vs. 50 ohm,
+// and impedance flatness across the full TX/RX voltage swing (critical for
+// VML/SST output drivers and calibrated RX termination!).
+//
+// DUT interface contract:
+//   subckt dut_tx INP INN CLK VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    v_probe=0.5 \
+    v_min=0.2 \
+    v_max=0.9 \
+    r_target=50 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Hold TX inputs static (logical 1) so pull-up/pull-down slice resistance is static
+VINP (INP VSS) vsource dc=(vcm_in+0.2) type=dc
+VINN (INN VSS) vsource dc=(vcm_in-0.2) type=dc
+VCLK (CLK VSS) vsource dc=0            type=dc
+
+I0 (INP INN CLK VDD VSS OUTP OUTN) dut_tx
+
+VPRB_P (OUTP VSS) vsource dc=v_probe type=dc
+RREF_N (OUTN VSS) resistor r=r_target
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_term dc param=v_probe start=v_min stop=v_max step=0.01
+
+save OUTP VPRB_P:p
+saveOptions options save=selected

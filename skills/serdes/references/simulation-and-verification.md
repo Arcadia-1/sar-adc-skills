@@ -32,25 +32,33 @@ spectre +preset=ax +mt=4 -format psfascii -raw raw_ax +log sim.log tb_sslms_adap
 
 ## 2. Bundled Process-Independent Spectre Testbench Suites (`assets/tb/`)
 
-All 6 suites run cleanly under **Spectre X `+preset=cx`** and **`+preset=ax`** with zero PDK dependencies and zero-dependency Python analyzers backed by [`common/psf_utils.py`](../../../common/psf_utils.py):
+All 7 suites (15 `.scs` decks) run cleanly under **Spectre X `+preset=cx`** and **`+preset=ax`** with zero PDK dependencies and zero-dependency Python analyzers backed by [`common/psf_utils.py`](../../../common/psf_utils.py):
 
 1. **Channel (`assets/tb/channel/`):**
    - [`tb_channel_sp_tdr.scs`](../assets/tb/channel/tb_channel_sp_tdr.scs) + `analyze_channel.py sp` / `tdr`: 4-port differential `SDD21`, `SDD11`, and TDR `Z_TDR(t)` on causal passive [`channel_diff_lossy.scs`](../assets/tb/channel/channel_diff_lossy.scs) (or swap in your own `nport`).
    - [`tb_channel_sbr_eye.scs`](../assets/tb/channel/tb_channel_sbr_eye.scs) + `analyze_channel.py sbr_eye`: exact 1-UI SBR cursors (`h_-1, h0, h1..h5`, PDA eye) and PRBS-7 folded eye height & width.
 2. **TX & FFE (`assets/tb/tx_ffe/`):**
    - [`tb_tx_s11.scs`](../assets/tb/tx_ffe/tb_tx_s11.scs) + `analyze_tx_ffe.py s11`: 2-port AC-coupled differential TX output return loss `SDD11(f)`.
+   - [`tb_dc_termination.scs`](../assets/tb/tx_ffe/tb_dc_termination.scs) + `analyze_tx_ffe.py dc_term`: output swing sweep verifying `R_term(V) = dV/dI` accuracy vs. `50 ohm` and linearity across swing (critical for VML/SST drivers and RX termination!).
    - [`tb_tx_ffe_channel.scs`](../assets/tb/tx_ffe/tb_tx_ffe_channel.scs) + `analyze_tx_ffe.py eye`: 4-tap TX FFE driving `channel_diff_lossy.scs` (compare raw `w_main=1` vs. FFE-equalized SBR & eye).
 3. **CTLE, VGA & Offset Cal (`assets/tb/ctle_vga/`):**
    - [`tb_ctle_ac_noise.scs`](../assets/tb/ctle_vga/tb_ctle_ac_noise.scs) + `analyze_ctle_vga.py ac_noise`: differential AC DC/peak gain, peaking boost, `f_peak`, `-3 dB` BW, and shaped output RMS noise.
+   - [`tb_ctle_channel_ac.scs`](../assets/tb/ctle_vga/tb_ctle_channel_ac.scs) + `analyze_ctle_vga.py channel_ac`: combined `H_ch(f) * H_ctle(f)` DC-to-Nyquist flatness & over-peaking check.
    - [`tb_ctle_channel_eye.scs`](../assets/tb/ctle_vga/tb_ctle_channel_eye.scs) + `analyze_ctle_vga.py eye`: before-vs-after CTLE eye height, eye width, and SBR ISI cancellation.
    - [`tb_vga_offset_cal.scs`](../assets/tb/ctle_vga/tb_vga_offset_cal.scs) + `analyze_ctle_vga.py offset_cal`: closed-loop digital offset calibration canceling injected DC offset to `< 1 LSB`.
 4. **Slicer & 3-Tap DFE (`assets/tb/slicer_dfe/`):**
-   - [`tb_slicer_hys_vtf.scs`](../assets/tb/slicer_dfe/tb_slicer_hys_vtf.scs) + `analyze_slicer_dfe.py vtf`: bidirectional triangle sweep extracting `V_th,up`, `V_th,dn`, static offset, and hysteresis.
+   - [`tb_slicer_hys_vtf.scs`](../assets/tb/slicer_dfe/tb_slicer_hys_vtf.scs) + `analyze_slicer_dfe.py vtf`: bidirectional triangle sweep extracting `V_th,up`, `V_th,dn`, static offset, and dynamic hysteresis (with [`va_slicer_cml.va`](../assets/va/va_slicer_cml.va)).
+   - [`tb_slicer_noise_tran.scs`](../assets/tb/slicer_dfe/tb_slicer_noise_tran.scs) + `analyze_slicer_dfe.py noise_tran`: 300-cycle fixed-overdrive transient-noise sensitivity extracting probit `sigma_n_mvrms` and `BER = 1e-12` (`7.03 * sigma_n`) half-eye margin.
    - [`tb_dfe_3tap_eye.scs`](../assets/tb/slicer_dfe/tb_dfe_3tap_eye.scs) + `analyze_slicer_dfe.py dfe_eye`: closed-loop 3-tap DFE opening a severely closed post-cursor ISI eye with `0` bit errors.
 5. **Sign-Sign LMS Adaptation (`assets/tb/sslms/`):**
-   - [`tb_sslms_adapt.scs`](../assets/tb/sslms/tb_sslms_adapt.scs) + `analyze_sslms.py`: live concurrent PRBS-9 adaptation of VGA gain + 3-tap DFE coefficients (`h1, h2, h3`) with `DONE` freeze verification.
+   - [`tb_sslms_adapt.scs`](../assets/tb/sslms/tb_sslms_adapt.scs) + `analyze_sslms.py --mode dfe`: live concurrent PRBS-9 adaptation of VGA gain + 3-tap DFE coefficients (`h1, h2, h3`) with `DONE` freeze verification.
+   - [`tb_sslms_ctle_boost.scs`](../assets/tb/sslms/tb_sslms_ctle_boost.scs) + `analyze_sslms.py --mode ctle_boost`: transition-filtered (`edge_only=1`) CTLE `VBOOST` adaptation on the real lossy `mtline` channel.
 6. **Bridged T-Coil (`assets/tb/tcoil/`):**
-   - [`tb_tcoil_bw.scs`](../assets/tb/tcoil/tb_tcoil_bw.scs) + `analyze_tcoil.py`: bare `R_L || C_L` vs. bridged T-coil `ac` bandwidth ratio (`~2.72x`), `S11` return loss, and step overshoot.
+   - [`tb_tcoil_bw.scs`](../assets/tb/tcoil/tb_tcoil_bw.scs) + `analyze_tcoil.py`: bare `R_L || C_L` vs. bridged T-coil `ac` bandwidth ratio (`2.83x`), `S11` return loss, and step overshoot.
+7. **End-to-End Full Link (`assets/tb/link_top/`):**
+   - [`tb_serdes_link_top.scs`](../assets/tb/link_top/tb_serdes_link_top.scs) + `analyze_link_top.py`: full `TX FFE -> 0.85 m Long-Reach Channel (-24 dB @ 5 GHz) -> RX CTLE -> 3-Tap DFE -> Slicer` stage-by-stage eye progression and `0`-BER verification.
+
+> **Universal Device & Statistical Utilities (`common/tb/`):** For process-independent NMOS/PMOS $g_m/I_D$ lookup tables (`tb_gmid_nmos_pmos.scs`), Spectre `montecarlo` mismatch offset statistics (`tb_mc_offset_template.scs`), and 5-stage ring-oscillator PVT speed monitoring (`tb_ring_process_mon.scs`), see [`common/tb/README.md`](../../../common/tb/README.md).
 
 ---
 

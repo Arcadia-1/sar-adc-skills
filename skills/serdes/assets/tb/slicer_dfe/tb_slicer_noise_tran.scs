@@ -1,0 +1,52 @@
+// =============================================================================
+// Process-Independent SerDes Slicer TB — Transient Noise Sensitivity & BER
+// =============================================================================
+// Applies a fixed small differential overdrive `vid_in` (default +1.5 mV) across
+// `n_cycles` clock cycles (`strobeoutput=strobeonly`) and counts the empirical
+// P(decision = 1) to extract input-referred RMS noise `sigma_n` via probit CDF
+// inversion (`sigma_n = (vid_in - vos) / Phi^-1(P_1)`) and BER = 1e-12 sensitivity!
+//
+// For transistor-level slicers, append `noisefmax=50G noiseruns=1 noiseseed=1`
+// directly to the `tran` statement (ALWAYS use `noiseruns=1`!).
+//
+// DUT interface contract (7-pin clocked slicer):
+//   subckt dut_slicer INP INN CLK VDD VSS DOUTP DOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    vid_in=1.5m \
+    f_clk=5G \
+    n_cycles=300 \
+    temp_c=27
+
+parameters \
+    tclk=1/f_clk \
+    t_stop=(n_cycles+2)*tclk
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd period=tclk delay=0 rise=10p fall=10p width=0.5*tclk
+
+VINP (INP VSS) vsource dc=(vcm_in + 0.5*vid_in) type=dc
+VINN (INN VSS) vsource dc=(vcm_in - 0.5*vid_in) type=dc
+
+I0 (INP INN CLK VDD VSS DOUTP DOUTN) dut_slicer
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe settled decision on every cycle (strobedelay < strobeperiod!)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=tclk strobedelay=0.80*tclk strobeoutput=strobeonly
+
+save DOUTP DOUTN
+saveOptions options save=selected

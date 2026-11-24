@@ -1,0 +1,47 @@
+// =============================================================================
+// Universal Process-Independent Spectre X Monte Carlo Mismatch Offset Template
+// =============================================================================
+// Runs N-point mismatch Monte Carlo (`variations=mismatch`, `savefamilyplots=yes`)
+// on a shorted-input differential analog block (`dut_mc_offset`: VGA, OpAmp,
+// CTLE, preamp, or BGR) to extract mean, 1-sigma, 3-sigma, and parametric yield.
+//
+// For real PDK signoff:
+//   Include your PDK's Monte Carlo / mismatch model section in `models_corner.scs`
+//   and remove the synthetic `statistics` block below (your PDK defines mismatch
+//   statistics on transistor parameters automatically!).
+//
+// DUT interface contract (6-pin differential block under offset audit):
+//   subckt dut_mc_offset INP INN VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    n_runs=50 \
+    mc_seed=42 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd    type=dc
+VGND (VSS 0) vsource dc=0      type=dc
+VINP (INP VSS) vsource dc=vcm_in type=dc
+VINN (INN VSS) vsource dc=vcm_in type=dc
+
+I0 (INP INN VDD VSS OUTP OUTN) dut_mc_offset
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+mc1 montecarlo variations=mismatch numruns=n_runs seed=mc_seed \
+    savefamilyplots=yes {
+    dcOp dc
+}
+
+save OUTP OUTN
+saveOptions options save=selected

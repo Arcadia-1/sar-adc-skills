@@ -3,7 +3,8 @@
 
 Usage:
   python analyze_ctle_vga.py ac_noise <psf_dir>
-  python analyze_ctle_vga.py eye <psf_dir> [--ui 100e-12] [--t-skip 4e-9]
+  python analyze_ctle_vga.py channel_ac <psf_dir>
+  python analyze_ctle_vga.py eye <psf_dir> [--ui 100e-12] [--t-skip 5e-9]
   python analyze_ctle_vga.py offset_cal <psf_dir>
 """
 
@@ -74,6 +75,49 @@ def analyze_ac_noise(psf_dir: Path) -> dict[str, float]:
     }
 
 
+def analyze_channel_ac(psf_dir: Path) -> dict[str, float]:
+    f_ac = find_single(psf_dir, ["ac.ac", "*.ac.ac", "*.ac"])
+    dac = parse_psf_ascii(f_ac)
+    freq = np.real(dac["freq"])
+    log_f = np.log10(freq)
+
+    v_tx = dac["CH_INP"] - dac["CH_INN"]
+    v_rx = dac["RX_INP"] - dac["RX_INN"]
+    v_eq = dac["OUTP"] - dac["OUTN"]
+
+    h_ch_db = 20.0 * np.log10(np.maximum(np.abs(v_rx) / np.maximum(np.abs(v_tx), 1e-30), 1e-30))
+    h_eq_db = 20.0 * np.log10(np.maximum(np.abs(v_eq) / np.maximum(np.abs(v_tx), 1e-30), 1e-30))
+
+    def at(arr: np.ndarray, f_hz: float) -> float:
+        return float(np.interp(math.log10(f_hz), log_f, arr))
+
+    m_5g = (freq >= 10e6) & (freq <= 5e9)
+    eq_dc = float(h_eq_db[0])
+    eq_band = h_eq_db[m_5g]
+    flatness_5g = float(np.max(eq_band) - np.min(eq_band))
+    over_peak = float(np.max(h_eq_db) - eq_dc)
+
+    f3db = float("nan")
+    ref = eq_dc - 3.0
+    idx_pk = int(np.argmax(h_eq_db))
+    for i in range(idx_pk, len(h_eq_db) - 1):
+        if h_eq_db[i] >= ref > h_eq_db[i + 1]:
+            frac = (ref - h_eq_db[i]) / (h_eq_db[i + 1] - h_eq_db[i])
+            f3db = float(10.0 ** (log_f[i] + frac * (log_f[i + 1] - log_f[i])))
+            break
+
+    return {
+        "ch_loss_5ghz_db": at(h_ch_db, 5e9),
+        "ch_loss_10ghz_db": at(h_ch_db, 10e9),
+        "eq_dc_db": eq_dc,
+        "eq_5ghz_db": at(h_eq_db, 5e9),
+        "eq_10ghz_db": at(h_eq_db, 10e9),
+        "eq_flatness_to_5ghz_db": flatness_5g,
+        "eq_over_peaking_db": max(over_peak, 0.0),
+        "eq_f3db_ghz": f3db / 1e9,
+    }
+
+
 def analyze_eye(psf_dir: Path, *, ui: float, t_skip: float) -> dict[str, object]:
     f = find_single(psf_dir, ["*.tran", "tran.tran*"])
     d = parse_psf_ascii(f)
@@ -124,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     p_an = sub.add_parser("ac_noise")
     p_an.add_argument("psf_dir", type=Path)
 
+    p_ca = sub.add_parser("channel_ac")
+    p_ca.add_argument("psf_dir", type=Path)
+
     p_ey = sub.add_parser("eye")
     p_ey.add_argument("psf_dir", type=Path)
     p_ey.add_argument("--ui", type=float, default=100e-12)
@@ -135,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.mode == "ac_noise":
         res: object = analyze_ac_noise(args.psf_dir)
+    elif args.mode == "channel_ac":
+        res = analyze_channel_ac(args.psf_dir)
     elif args.mode == "eye":
         res = analyze_eye(args.psf_dir, ui=args.ui, t_skip=args.t_skip)
     else:

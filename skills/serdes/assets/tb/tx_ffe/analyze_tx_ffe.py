@@ -3,7 +3,8 @@
 
 Usage:
   python analyze_tx_ffe.py s11 <psf_dir>
-  python analyze_tx_ffe.py eye <psf_dir> [--ui 100e-12] [--t-skip 4e-9]
+  python analyze_tx_ffe.py dc_term <psf_dir> [--r-target 50.0]
+  python analyze_tx_ffe.py eye <psf_dir> [--ui 100e-12] [--t-skip 5e-9]
 """
 
 from __future__ import annotations
@@ -71,12 +72,39 @@ def analyze_eye(psf_dir: Path, *, ui: float, t_skip: float) -> dict[str, object]
     }
 
 
+def analyze_dc_term(psf_dir: Path, *, r_target: float) -> dict[str, float]:
+    f = find_single(psf_dir, ["dc_term.dc", "*term*.dc", "*.dc"])
+    d = parse_psf_ascii(f)
+    v = d["OUTP"]
+    # Current leaving VPRB_P into OUTP is -VPRB_P:p (Spectre passive sign convention)
+    i_in = -d["VPRB_P:p"]
+    dv = np.diff(v)
+    di = np.diff(i_in)
+    r_inc = np.abs(dv / np.where(np.abs(di) > 1e-15, di, np.nan))
+    r_inc = r_inc[np.isfinite(r_inc)]
+    r_med = float(np.median(r_inc))
+    r_min = float(np.min(r_inc))
+    r_max = float(np.max(r_inc))
+    return {
+        "r_target_ohm": r_target,
+        "r_median_ohm": r_med,
+        "r_min_ohm": r_min,
+        "r_max_ohm": r_max,
+        "r_err_max_pct": float(max(abs(r_min - r_target), abs(r_max - r_target)) / r_target * 100.0),
+        "r_flatness_pct": float((r_max - r_min) / max(r_med, 1e-9) * 100.0),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes TX & FFE Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
 
     p_s11 = sub.add_parser("s11")
     p_s11.add_argument("psf_dir", type=Path)
+
+    p_dt = sub.add_parser("dc_term")
+    p_dt.add_argument("psf_dir", type=Path)
+    p_dt.add_argument("--r-target", type=float, default=50.0)
 
     p_eye = sub.add_parser("eye")
     p_eye.add_argument("psf_dir", type=Path)
@@ -86,6 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.mode == "s11":
         res: object = analyze_s11(args.psf_dir)
+    elif args.mode == "dc_term":
+        res = analyze_dc_term(args.psf_dir, r_target=args.r_target)
     else:
         res = analyze_eye(args.psf_dir, ui=args.ui, t_skip=args.t_skip)
     print(json.dumps(res, indent=2))
