@@ -1,0 +1,61 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Power-Up / Power-Down Ramp
+// =============================================================================
+// Ramps VDD linearly 0 -> vdd over t_ramp (default 5 ms; also test 10 ms),
+// holds for t_hold, then ramps vdd -> 0 over t_ramp while VOCM tracks 0.5*VDD.
+// Verifies BOTH differential output (VOP - VON -> 0) AND output common mode
+// (0.5*(VOP + VON) -> VOCM) power up and down cleanly with zero oscillation.
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    t_ramp=5m \
+    t_hold=2m \
+    cload=2p \
+    rload=1M \
+    rf=100k \
+    rcm=500k \
+    temp_c=27 \
+    t_stop=2*t_ramp+t_hold+1m
+
+VGND (VSS 0) vsource dc=0 type=dc
+VSUP (VDD 0) vsource type=pwl wave=[ \
+    0                      0 \
+    0.5m                   0 \
+    (0.5m+t_ramp)          vdd \
+    (0.5m+t_ramp+t_hold)   vdd \
+    (0.5m+2*t_ramp+t_hold) 0 \
+    t_stop                 0 ]
+
+EVOCM (VOCM 0 VDD VSS) vcvs gain=0.5
+
+RGP   (VOCM VIN) resistor r=rf
+RGN   (VOCM VIP) resistor r=rf
+RFP   (VOP  VIN) resistor r=rf
+RFN   (VON  VIP) resistor r=rf
+
+I0    (VIP VIN VOCM VCM_FB VOP VON VDD VSS) dut_fd_ota
+RCMP  (VOP VCM_FB) resistor  r=rcm
+RCMN  (VON VCM_FB) resistor  r=rcm
+CLP   (VOP VSS)    capacitor c=cload
+CLN   (VON VSS)    capacitor c=cload
+RLP   (VOP VOCM)   resistor  r=rload
+RLN   (VON VOCM)   resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate maxstep=t_ramp/200
+
+save VDD VOCM VOP VON VSUP:p
+saveOptions options save=selected

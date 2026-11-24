@@ -1,12 +1,16 @@
 // Process-independent Fully Differential OTA + CMFB macro-model
 //
 // Models independent Differential-Mode (DM) and Common-Mode Feedback (CMFB)
-// dynamics, making it ideal for verifying simultaneous DM + CM `stb` and
-// large-signal differential settling:
-//   - DM path: 2-stage Miller-like response (gm_dm, ro_dm, fp2_dm, i_tail_dm slew limit)
-//   - CMFB path: compares 0.5*(VOP + VON) against VOCM with independent DC gain
-//     (a0_cm), bandwidth (gm_cm, ro_cm, c_cm), and secondary pole (fp2_cm)
-//   - Input-referred thermal white noise on the differential channel
+// dynamics, making it ideal for verifying simultaneous DM + CM `stb`,
+// CMRR (CM->CM & CM->DM), PSRR+/PSRR- (supply->CM & supply->DM), ICMR,
+// output swing, closed-loop DM/CM output impedance, THD, and power-ramp stability:
+//   - DM path: slew-limited transconductor (gm_dm, ro_dm, fp2_dm, i_tail_dm)
+//     with smooth ICMR rolloff and rail-to-rail soft output swing clamping
+//   - CMFB path: compares VCM_FB against VOCM with independent DC gain,
+//     bandwidth (gm_cm, ro_cm), and secondary pole (fp2_cm)
+//   - Realistic finite CM->CM gain, VDD/VSS->CM feedthrough, optional DM offset
+//     & mismatch (v_os_dm), and smooth VDD startup/brownout scaling
+//   - Input-referred thermal white noise + 1/f flicker noise on the DM channel
 
 `include "constants.vams"
 `include "disciplines.vams"
@@ -22,54 +26,117 @@ module va_ota_fd_cmfb(
     input  electrical VSS
 );
 
-parameter real gm_dm      = 400e-6 from (0:inf);   // DM transconductance [S]
-parameter real ro_dm      = 2.5e6  from (0:inf);   // DM output resistance per side [ohm] (A0_dm = gm_dm*ro_dm = 60 dB)
-parameter real i_tail_dm  = 80e-6  from (0:inf);   // DM slew tail current [A]
-parameter real fp2_dm     = 300e6  from (0:inf);   // DM internal non-dominant pole [Hz]
-parameter real gm_cm      = 250e-6 from (0:inf);   // CMFB loop transconductance [S]
-parameter real ro_cm      = 1.0e6  from (0:inf);   // CMFB output resistance [ohm] (A0_cm = 48 dB)
-parameter real fp2_cm     = 200e6  from (0:inf);   // CMFB internal non-dominant pole [Hz]
-parameter real vn_th      = 12e-9  from [0:inf);   // input-referred white noise [V/sqrt(Hz)]
-parameter real i_q        = 160e-6 from [0:inf);   // quiescent supply current [A]
+parameter real gm_dm        = 400e-6 from (0:inf);   // DM transconductance [S]
+parameter real ro_dm        = 2.5e6  from (0:inf);   // DM output resistance per side [ohm] (A0_dm = gm_dm*ro_dm = 60 dB)
+parameter real i_tail_dm    = 80e-6  from (0:inf);   // DM slew tail current [A]
+parameter real fp2_dm       = 300e6  from (0:inf);   // DM internal non-dominant pole [Hz]
+parameter real gm_cm        = 250e-6 from (0:inf);   // CMFB loop transconductance [S]
+parameter real ro_cm        = 1.0e6  from (0:inf);   // CMFB output resistance [ohm] (A0_cm = 48 dB)
+parameter real fp2_cm       = 200e6  from (0:inf);   // CMFB internal non-dominant pole [Hz]
+parameter real cm_to_cm_db  = -50.0  from (-160:0);  // Input CM -> Output CM closed-loop gain target [dB]
+parameter real psrr_p_cm_db = 55.0   from (0:200);   // VDD -> Output CM suppression [dB]
+parameter real psrr_n_cm_db = 50.0   from (0:200);   // VSS -> Output CM suppression [dB]
+parameter real v_os_dm      = 0.0;                   // Systematic DM input offset (0 for symmetric; set non-zero for skew) [V]
+parameter real tc_vos_dm    = 0.0;                   // DM offset tempco [V/C]
+parameter real v_os_cm      = 0.5e-3;                // Static VOCM error at 27 C [V]
+parameter real tc_vocm      = 2.0e-6;                // VOCM drift tempco [V/C]
+parameter real vdd_nom      = 0.9    from (0.2:10);  // Nominal supply voltage [V]
+parameter real vdd_on_min   = 0.55   from (0.1:5);   // Supply turn-on midpoint [V]
+parameter real v_icmr_lo    = 0.22   from [0:2);     // Input CM headroom above VSS [V]
+parameter real v_icmr_hi    = 0.15   from [0:2);     // Input CM headroom below VDD [V]
+parameter real v_headroom   = 0.10   from (0:0.4);   // Output swing headroom from rails [V]
+parameter real c_in         = 80f    from [0:inf);   // Input gate capacitance per terminal [F]
+parameter real vn_th        = 12e-9  from [0:inf);   // Input-referred white noise [V/sqrt(Hz)]
+parameter real vn_1f_1khz   = 40e-9  from [0:inf);   // Input-referred 1/f noise at 1 kHz [V/sqrt(Hz)]
+parameter real i_q          = 160e-6 from [0:inf);   // Quiescent supply current [A]
 
 electrical n_dm_p, n_cm_p;
-real vid, v_lin_dm, i_dm_raw, v_dm_filt;
-real vocm_meas, vcm_err, v_cm_filt;
+real vdd_val, vmid_rail, vcm_in, s_vdd, s_lo, s_hi, s_icmr;
+real gm_dm_eff, i_tail_eff, gm_cm_eff;
+real vid, vos_t, v_lin_dm, i_dm_raw, v_dm_filt;
+real vocm_meas, vcm_err, vcm_in_err, vdd_err, vss_err, vocm_os_t, v_cm_filt;
+real k_cm_cm, k_vdd_cm, k_vss_cm;
 real c_p2_dm, c_p2_cm;
+real v_hi_lim, v_lo_lim, dp_hi, dp_lo, dn_hi, dn_lo, cp_hi, cp_lo, cn_hi, cn_lo;
 
 analog begin
     // Internal 1-ohm RC filter nodes creating physical non-dominant poles fp2_dm & fp2_cm
     c_p2_dm = 1.0 / (2.0 * `M_PI * fp2_dm);
     c_p2_cm = 1.0 / (2.0 * `M_PI * fp2_cm);
 
-    vid      = V(VIP, VIN);
-    v_lin_dm = i_tail_dm / gm_dm;
-    i_dm_raw = i_tail_dm * tanh(vid / v_lin_dm);
+    vdd_val   = V(VDD, VSS);
+    vmid_rail = 0.5 * (V(VDD) + V(VSS));
 
-    // 1-pole filtered DM drive voltage (n_dm_p = i_dm_raw / (1 + s/wp2_dm))
+    // Smooth supply turn-on and ICMR transconductance envelope
+    s_vdd  = 0.5 * (1.0 + tanh((vdd_val - vdd_on_min) / 0.04));
+    vcm_in = 0.5 * (V(VIP) + V(VIN)) - V(VSS);
+    s_lo   = 0.5 * (1.0 + tanh((vcm_in - v_icmr_lo) / 0.025));
+    s_hi   = 0.5 * (1.0 + tanh((vdd_val - v_icmr_hi - vcm_in) / 0.025));
+    s_icmr = 1e-3 + 0.999 * s_vdd * s_lo * s_hi;
+
+    // Input gate capacitances
+    if (c_in > 0.0) begin
+        I(VIP, VSS) <+ c_in * ddt(V(VIP, VSS));
+        I(VIN, VSS) <+ c_in * ddt(V(VIN, VSS));
+    end
+
+    vos_t      = (v_os_dm + tc_vos_dm * ($temperature - 300.15)) * s_vdd;
+    vid        = V(VIP, VIN) + vos_t;
+    gm_dm_eff  = gm_dm * s_icmr;
+    i_tail_eff = i_tail_dm * s_icmr;
+    v_lin_dm   = i_tail_eff / gm_dm_eff;
+    i_dm_raw   = i_tail_eff * tanh(vid / v_lin_dm);
+
+    // 1-pole filtered DM drive current (n_dm_p = i_dm_raw / (1 + s/wp2_dm))
     I(n_dm_p, VSS) <+ (V(n_dm_p, VSS) - i_dm_raw) + c_p2_dm * ddt(V(n_dm_p, VSS));
     v_dm_filt = V(n_dm_p, VSS);
 
     // CMFB error sensing via breakable VCM_FB (allows Tian balun CM stb probing!)
-    vocm_meas = V(VCM_FB);
-    vcm_err   = V(VOCM) - vocm_meas;
-    I(n_cm_p, VSS) <+ (V(n_cm_p, VSS) - gm_cm * vcm_err) + c_p2_cm * ddt(V(n_cm_p, VSS));
+    // Includes realistic input-CM and supply-to-output-CM feedthrough terms.
+    vocm_meas  = V(VCM_FB);
+    vcm_in_err = 0.5 * (V(VIP) + V(VIN)) - V(VOCM);
+    vdd_err    = V(VDD) - vdd_nom;
+    vss_err    = V(VSS);
+    vocm_os_t  = (v_os_cm + tc_vocm * ($temperature - 300.15)) * s_vdd;
+    k_cm_cm    = pow(10.0, cm_to_cm_db / 20.0);
+    k_vdd_cm   = pow(10.0, -psrr_p_cm_db / 20.0);
+    k_vss_cm   = pow(10.0, -psrr_n_cm_db / 20.0);
+
+    gm_cm_eff = gm_cm * (1e-3 + 0.999 * s_vdd);
+    vcm_err   = (V(VOCM) + vocm_os_t + k_cm_cm * vcm_in_err + k_vdd_cm * vdd_err + k_vss_cm * vss_err) - vocm_meas;
+    I(n_cm_p, VSS) <+ (V(n_cm_p, VSS) - gm_cm_eff * vcm_err) + c_p2_cm * ddt(V(n_cm_p, VSS));
     v_cm_filt = V(n_cm_p, VSS);
 
+    // Smooth C-infinity rail clamping on both outputs
+    v_hi_lim = V(VDD) - v_headroom * s_vdd;
+    v_lo_lim = V(VSS) + v_headroom * s_vdd;
+    dp_hi = V(VOP) - v_hi_lim;
+    dp_lo = v_lo_lim - V(VOP);
+    dn_hi = V(VON) - v_hi_lim;
+    dn_lo = v_lo_lim - V(VON);
+    cp_hi = (dp_hi > 0.2) ? dp_hi : 0.008 * ln(1.0 + exp(dp_hi / 0.008));
+    cp_lo = (dp_lo > 0.2) ? dp_lo : 0.008 * ln(1.0 + exp(dp_lo / 0.008));
+    cn_hi = (dn_hi > 0.2) ? dn_hi : 0.008 * ln(1.0 + exp(dn_hi / 0.008));
+    cn_lo = (dn_lo > 0.2) ? dn_lo : 0.008 * ln(1.0 + exp(dn_lo / 0.008));
+
     // Complementary DM currents + common-mode restoring CMFB currents + output resistance
-    // VIP > VIN -> v_dm_filt > 0 -> sources into VOP (-v_dm_filt), sinks from VON (+v_dm_filt)
-    // vocm_meas < VOCM -> v_cm_filt > 0 -> sources equally into VOP & VON (-v_cm_filt)
+    // Differential gain is A_DM = 2*gm_dm*R_o, so 2*(gm_dm*vn_th)^2 per side yields exact
+    // differential input-referred PSD = (2 + 2)*(gm_dm*vn_th*R_o)^2 / (2*gm_dm*R_o)^2 = vn_th^2.
     I(VOP, VSS) <+ -v_dm_filt - v_cm_filt
                    + (V(VOP) - V(VOCM)) / ro_dm
                    + (vocm_meas - V(VOCM)) / ro_cm
-                   + white_noise(0.5 * (gm_dm * vn_th) * (gm_dm * vn_th), "fd_ota_th_p");
+                   + 2e-2 * cp_hi - 2e-2 * cp_lo
+                   + white_noise(2.0 * (gm_dm_eff * vn_th) * (gm_dm_eff * vn_th), "fd_ota_th_p")
+                   + flicker_noise(2.0 * (gm_dm_eff * vn_1f_1khz) * (gm_dm_eff * vn_1f_1khz) * 1e3, 1.0, "fd_ota_1f_p");
 
     I(VON, VSS) <+ +v_dm_filt - v_cm_filt
                    + (V(VON) - V(VOCM)) / ro_dm
                    + (vocm_meas - V(VOCM)) / ro_cm
-                   + white_noise(0.5 * (gm_dm * vn_th) * (gm_dm * vn_th), "fd_ota_th_n");
+                   + 2e-2 * cn_hi - 2e-2 * cn_lo
+                   + white_noise(2.0 * (gm_dm_eff * vn_th) * (gm_dm_eff * vn_th), "fd_ota_th_n")
+                   + flicker_noise(2.0 * (gm_dm_eff * vn_1f_1khz) * (gm_dm_eff * vn_1f_1khz) * 1e3, 1.0, "fd_ota_1f_n");
 
-    I(VDD, VSS) <+ i_q;
+    I(VDD, VSS) <+ i_q * s_vdd * tanh(vdd_val / 0.1);
 end
 
 endmodule

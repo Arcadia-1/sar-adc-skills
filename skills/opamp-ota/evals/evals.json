@@ -34,7 +34,7 @@
     {
       "id": 6,
       "prompt": "How do I measure CMRR(f), PSRR+(f), PSRR-(f), and input-referred noise of a 90 dB opamp in Spectre without the open-loop output railing at DC?",
-      "expected_output": "Should point to assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs: use 4 matched replicas stabilized by ultra-low-frequency DC servo loops (1 Gohm + 1 F -> f_servo = 0.16 nHz) so all replicas share identical DC bias while measuring open-loop A_DM, A_CM, A_VDD, A_VSS and input-referred noise cleanly from 1 Hz upward.",
+      "expected_output": "Should point to assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs: use matched replicas stabilized by ultra-low-frequency DC servo loops (1 Gohm + 1 F -> f_servo = 0.16 nHz) so all replicas share identical DC bias while measuring open-loop A_DM, A_CM, A_VDD, A_VSS and input-referred noise cleanly from 1 Hz upward.",
       "files": ["references/simulation-and-verification.md", "assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs"]
     },
     {
@@ -70,8 +70,56 @@
     {
       "id": 12,
       "prompt": "Which behavioral Verilog-A models are included in opamp-ota-skill for system-level verification before transistor design?",
-      "expected_output": "Should point to assets/va/va_ota_2stage.va (2-stage Miller with Rz, slew limit, rail clamp, CMRR/PSRR, white+1/f noise) and assets/va/va_ota_fd_cmfb.va (independent DM+CMFB dynamics and thermal noise).",
+      "expected_output": "Should point to assets/va/va_ota_2stage.va (2-stage Miller with Rz, slew limit, rail clamp, ICMR/VDD turn-on, CMRR/PSRR, white+1/f noise) and assets/va/va_ota_fd_cmfb.va (independent DM+CMFB dynamics, CM/supply feedthrough, and thermal+1/f noise).",
       "files": ["SKILL.md", "assets/va/va_ota_2stage.va", "assets/va/va_ota_fd_cmfb.va"]
+    },
+    {
+      "id": 13,
+      "prompt": "Why does a textbook 4-resistor unity-gain bridge report only 40 dB CMRR on my single-stage folded-cascode OTA when its true A_DM / A_CM is over 90 dB?",
+      "expected_output": "Should explain that high-Rout OTAs are loaded by the feedback resistor R, capping the 4-resistor bridge reading near gm*R; recommend comparing true matched-replica DC-servo A_DM/A_CM against the 4-resistor bridge in tb_ota_cmrr_psrr_noise.scs.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/single_ended/tb_ota_cmrr_psrr_noise.scs"]
+    },
+    {
+      "id": 14,
+      "prompt": "How do I decouple input common-mode range (ICMR) from output swing in a Spectre AC or DC characterization deck?",
+      "expected_output": "Should explain using a level-shifted DC-only servo (E_srv keeping VOUT at mid-rail while sweeping VIP=VIN=vcm_ac across 0..VDD) to find the pure -6 dB A_DM/CMRR ICMR boundary, and using inverting gain (-2 SE / -4 FD) for output swing so inputs remain near mid-rail, pointing to tb_ota_dc_signoff.scs / tb_fd_ota_dc_signoff.scs.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/single_ended/tb_ota_dc_signoff.scs", "assets/tb/fully_diff/tb_fd_ota_dc_signoff.scs"]
+    },
+    {
+      "id": 15,
+      "prompt": "How should I measure true OTA forward transconductance gm(f) vs. real-load transconductance without letting the output offset saturate or RL||CL distort the pole?",
+      "expected_output": "Should recommend sensing short-circuit output current through a small resistor (r_gm = 10 ohm << Ro) nulled at DC by a high-gain ultra-low-frequency servo (gain=1e4 + 1G/1F), and contrasting that with the real RL||CL loaded replica in tb_ota_cl_zout_gm.scs and tb_fd_ota_cl_zout_gm.scs.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/single_ended/tb_ota_cl_zout_gm.scs", "assets/tb/fully_diff/tb_fd_ota_cl_zout_gm.scs"]
+    },
+    {
+      "id": 16,
+      "prompt": "In a perfectly symmetric fully differential OTA netlist, DC offset is 0 V and CMRR_DM exceeds 200 dB. What extra signoff checks must I run to verify real-world FD performance?",
+      "expected_output": "Should recommend: (1) measuring finite CM->CM gain, VDD/VSS->output-CM PSRR, and CMFB closed-loop Z_out,cm(f); (2) injecting a deterministic 1% input-pair W skew plus 100-run Monte Carlo mismatch for sigma_VOS and mismatch-limited CMRR_DM; and (3) checking both differential and CMFB output deviations under supply surge and input CM steps.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/fully_diff/tb_fd_ota_cmrr_psrr_noise.scs", "assets/tb/fully_diff/tb_fd_ota_cl_zout_gm.scs"]
+    },
+    {
+      "id": 17,
+      "prompt": "How do I measure closed-loop differential AND common-mode (CMFB) output impedance of a fully differential OTA in Spectre?",
+      "expected_output": "Should point to assets/tb/fully_diff/tb_fd_ota_cl_zout_gm.scs and analyze_fd_ota.py cl_zout_gm: inject anti-phase +0.5 A / -0.5 A AC currents into VOP/VON for per-output Z_out,dm(f) = |VOP - VON|, and in-phase +1 A / +1 A into both outputs for CMFB Z_out,cm(f) = |0.5*(VOP + VON)|.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/fully_diff/tb_fd_ota_cl_zout_gm.scs", "assets/tb/fully_diff/analyze_fd_ota.py"]
+    },
+    {
+      "id": 18,
+      "prompt": "How do I measure coherent THD, HD2, HD3, and full-power bandwidth (BW_full) in Spectre X without FFT leakage or solver-tolerance noise floors?",
+      "expected_output": "Should explain coherent strobing (odd m_bin coprime with n_fft, strobedelay to discard settling cycles, strobeoutput=strobeonly), passing `-preset_override` with `+preset=cx` for <-90 dB distortion accuracy, comparing follower vs. inverting THD to isolate input-CM vs. output-stage distortion, and sweeping frequency/amplitude to the THD = 1% (-40 dB) criterion using tb_ota_thd_fpbw.scs / tb_fd_ota_thd_fpbw.scs.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/single_ended/tb_ota_thd_fpbw.scs", "assets/tb/fully_diff/tb_fd_ota_thd_fpbw.scs"]
+    },
+    {
+      "id": 19,
+      "prompt": "How should I set up power-up/power-down ramp and supply-surge stability checks for an OTA in Spectre X without creating artificial startup failures or slow simulations?",
+      "expected_output": "Should recommend separating slow millisecond supply ramps (5 ms / 10 ms in tb_*_power_ramp.scs) from fast microsecond +/-50 mV 10 ns-edge supply surges (100k/300k/1M Hz in tb_*_supply_surge_cmstep.scs), and scaling VCM/VOCM proportionally with 0.5*VDD via a VCVS during ramps so inputs do not forward-bias junctions when VDD=0.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/single_ended/tb_ota_power_ramp.scs", "assets/tb/single_ended/tb_ota_supply_surge_cmstep.scs"]
+    },
+    {
+      "id": 20,
+      "prompt": "How do I avoid a factor-of-2 error when measuring differential input-referred noise of a fully differential OTA with Spectre noise analysis?",
+      "expected_output": "Should reference assets/tb/fully_diff/tb_fd_ota_cmrr_psrr_noise.scs: drive a single AC source VSRC_DM through +0.5 and -0.5 VCVS splitters onto VIP and VIN (with a purely differential DC servo) and set `iprobe=VSRC_DM` in `noise (VOP_DM VON_DM)` so Spectre computes exact differential input-referred noise `in` = vn_out_diff / |A_DM(f)|.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/fully_diff/tb_fd_ota_cmrr_psrr_noise.scs"]
     }
   ]
 }

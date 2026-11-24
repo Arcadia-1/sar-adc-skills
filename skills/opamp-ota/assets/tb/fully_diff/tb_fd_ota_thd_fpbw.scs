@@ -1,0 +1,75 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Coherent THD, HD2/HD3 & BW_full
+// =============================================================================
+// Drives a closed-loop inverting (-1) FD amplifier with a coherently strobed
+// differential sine wave:
+//   IN_P = vocm + v_amp*sin(2*pi*f_in*t)
+//   IN_N = vocm - v_amp*sin(2*pi*f_in*t)
+//   -> differential V_od_pp = 4 * v_amp  (each output swings 2 * v_amp pp)
+//
+// Extracts exact coherent FFT metrics on V_od = VOP - VON:
+//   - Differential THD [dB & %], HD2 [dBc] (verifies even-harmonic suppression),
+//     HD3 [dBc], SFDR [dB], SNDR [dB], V_od_pp [V]
+//   - Sweep `v_amp` at f_in = 1 kHz for transient dynamic swing (THD <= 1%)
+//   - Sweep `f_in` at full swing for full-power bandwidth BW_full (THD <= 1%)
+//
+// Spectre X note: pass `-preset_override` alongside `+preset=cx` when
+// evaluating ultra-low distortion (< -90 dB).
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    v_amp=0.20 \
+    f_in=10k \
+    n_fft=1024 \
+    m_bin=3 \
+    n_settle=2 \
+    cload=2p \
+    rload=1M \
+    rf=100k \
+    rcm=500k \
+    temp_c=27 \
+    t_settle=n_settle/f_in \
+    t_strobe=m_bin/(f_in*n_fft) \
+    t_stop=t_settle+m_bin/f_in
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+VSINP (IN_P 0) vsource type=sine sinedc=vocm ampl=v_amp  freq=f_in
+VSINN (IN_N 0) vsource type=sine sinedc=vocm ampl=-v_amp freq=f_in
+
+RGP   (IN_P VIN) resistor r=rf
+RGN   (IN_N VIP) resistor r=rf
+RFP   (VOP  VIN) resistor r=rf
+RFN   (VON  VIP) resistor r=rf
+
+I0    (VIP VIN VOCM VCM_FB VOP VON VDD VSS) dut_fd_ota
+RCMP  (VOP VCM_FB) resistor  r=rcm
+RCMN  (VON VCM_FB) resistor  r=rcm
+CLP   (VOP VSS)    capacitor c=cload
+CLN   (VON VSS)    capacitor c=cload
+RLP   (VOP VOCM)   resistor  r=rload
+RLN   (VON VOCM)   resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-6 vabstol=1e-9 iabstol=1e-14 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative \
+    outputstart=t_settle strobeperiod=t_strobe strobeoutput=strobeonly \
+    maxstep=1/(f_in*256)
+
+save IN_P IN_N VOP VON
+saveOptions options save=selected

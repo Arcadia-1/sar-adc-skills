@@ -229,11 +229,13 @@ def main() -> int:
 
         p_dcop = pathlib.Path(td) / "mc1-001_dcOp.dc"
         p_dcop.write_text(
-            'HEADER\nVALUE\n"OUTP" "V" 0.752\n"OUTN" "V" 0.748\nEND\n',
+            'HEADER\nVALUE\n"VSUP:p" "I" -1.0e-4 PROP(\n"units" "A"\n)\n'
+            '"OUTP" "V" 0.752\n"OUTN" "V" 0.748\nEND\n',
             encoding="utf-8",
         )
         dop = psf_mod.parse_psf_ascii(p_dcop)
         assert abs((dop["OUTP"][0] - dop["OUTN"][0]) - 0.004) < 1e-12
+        assert abs(dop["VSUP:p"][0] - (-1.0e-4)) < 1e-15
 
     # Test extract_uniform_strobe drops off-grid endpoints
     t_grid = np.array([0.0, 0.1, 1.1, 2.1, 3.1, 4.1, 5.0])

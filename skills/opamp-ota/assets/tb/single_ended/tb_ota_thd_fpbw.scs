@@ -1,0 +1,69 @@
+// =============================================================================
+// Process-Independent Single-Ended OpAmp/OTA TB — Coherent THD, HD2/HD3 & BW_full
+// =============================================================================
+// Drives BOTH a unity-gain follower (`VOUT_FOL`) and an inverting gain=-1 stage
+// (`VOUT_INV`) with a coherently strobed sine wave:
+//   f_s = f_in * n_fft / m_bin   (m_bin odd, gcd(m_bin, n_fft) = 1)
+//
+// Extracts via coherent FFT (zero spectral leakage):
+//   - THD [dB & %], HD2 [dBc], HD3 [dBc], SFDR [dB], SNDR [dB], V_out_pp [V]
+//   - Sweep `v_amp` at f_in = 1 kHz to measure transient dynamic swing (THD <= 1%)
+//   - Sweep `f_in` at full swing to find full-power bandwidth BW_full (THD <= 1%)
+//
+// Spectre X note: when measuring ultra-low distortion (< -90 dB), pass
+// `-preset_override` alongside `+preset=cx` so Spectre X honors reltol=1e-6.
+//
+// DUT interface contract:
+//   subckt dut_ota VIP VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    v_amp=0.25 \
+    f_in=10k \
+    n_fft=1024 \
+    m_bin=3 \
+    n_settle=2 \
+    cload=2p \
+    rload=1M \
+    r_net=100k \
+    temp_c=27 \
+    t_settle=n_settle/f_in \
+    t_strobe=m_bin/(f_in*n_fft) \
+    t_stop=t_settle+m_bin/f_in
+
+VSUP (VDD 0)     vsource dc=vdd type=dc
+VGND (VSS 0)     vsource dc=0   type=dc
+VVCM (VCM_REF 0) vsource dc=vcm type=dc
+
+VSIN (VIN_SINE 0) vsource type=sine sinedc=vcm ampl=v_amp freq=f_in
+
+// 1. Unity-gain follower (tests combined ICMR + output swing nonlinearity)
+I_FOL  (VIN_SINE VOUT_FOL VOUT_FOL VDD VSS) dut_ota
+CL_FOL (VOUT_FOL VSS)     capacitor c=cload
+RL_FOL (VOUT_FOL VCM_REF) resistor  r=rload
+
+// 2. Inverting gain = -1 (isolates output-stage distortion at fixed input CM)
+R1_INV (VIN_SINE INV_VN)  resistor r=r_net
+R2_INV (VOUT_INV INV_VN)  resistor r=r_net
+I_INV  (VCM_REF INV_VN VOUT_INV VDD VSS) dut_ota
+CL_INV (VOUT_INV VSS)     capacitor c=cload
+RL_INV (VOUT_INV VCM_REF) resistor  r=rload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-6 vabstol=1e-9 iabstol=1e-14 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative \
+    outputstart=t_settle strobeperiod=t_strobe strobeoutput=strobeonly \
+    maxstep=1/(f_in*256)
+
+save VIN_SINE VOUT_FOL VOUT_INV
+saveOptions options save=selected
