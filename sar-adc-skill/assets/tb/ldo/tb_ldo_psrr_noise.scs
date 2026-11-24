@@ -1,0 +1,48 @@
+// =============================================================================
+// Process-Independent LDO Testbench — PSRR(f) and Integrated Output Noise
+// =============================================================================
+// Measures in one fast run:
+//   1. AC Power Supply Rejection Ratio: PSRR(f) = -20*log10(|V(VOUT)/V(VDD)|)
+//      from 1 Hz to 10 GHz (DC, 1 MHz, 100 MHz, worst-case peak).
+//   2. Output thermal/flicker noise spectral density and integrated RMS noise
+//      from 10 Hz to 100 MHz (verify V_n,rms << LSB / PSRR_adc).
+//
+// DUT interface contract:
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    iload=1m \
+    cload=100p \
+    resr=0.5 \
+    temp_c=27
+
+// 1 V AC stimulus on VDD for direct transfer V(VOUT)/V(VDD)
+VSUP  (VDD 0)      vsource dc=vdd_in mag=1 type=dc
+VGND  (VSS 0)      vsource dc=0            type=dc
+VVREF (VREF 0)     vsource dc=vref         type=dc
+
+// Closed-loop connection: FB_IN tied directly to VOUT
+I0    (VDD VREF VOUT VOUT VSS) dut_ldo
+
+ILOAD (VOUT VSS)    isource dc=iload type=dc
+RESR  (VOUT V_CESR) resistor r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac    ac start=1 stop=10G dec=20 annotate=status
+noise (VOUT 0) noise start=10 stop=100M dec=20 annotate=status
+
+save VOUT VDD
+saveOptions options save=selected

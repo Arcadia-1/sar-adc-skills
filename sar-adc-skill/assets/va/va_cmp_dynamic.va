@@ -1,0 +1,120 @@
+// Process-independent behavioral dynamic comparator for SAR ADC verification
+//
+// Models:
+//   - Input-referred static offset (vos)
+//   - Per-comparison Gaussian thermal noise (vnoise_rms, via $rdist_normal)
+//   - Input-dependent logarithmic regeneration delay:
+//       td_eval = td_min + tau_regen * ln(vdd / max(|vid_eff|, v_meta))
+//     enabling realistic async SAR bit-time borrowing and metastability checks.
+//   - Clean reset phase (CMPCK=0 -> DCMPP=0, DCMPN=0 after td_rst).
+//
+// Polarity (VIP > VIN, vid_eff >= 0):
+//   CMPCK rising  -> DCMPP = vdd, DCMPN = 0 after td_eval
+//   CMPCK falling -> DCMPP = 0,   DCMPN = 0 after td_rst
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_cmp_dynamic(
+    input  electrical CMPCK,
+    input  electrical VINN,
+    input  electrical VINP,
+    output electrical DCMPN,
+    output electrical DCMPP
+);
+
+parameter real    vdd        = 0.9  from (0:inf);
+parameter real    vos        = 0.0;                 // static input offset [V]
+parameter real    vnoise_rms = 0.0  from [0:inf);   // input-referred RMS noise [V]
+parameter integer seed       = 1;                   // PRNG seed for thermal noise
+parameter real    td_min     = 40p  from (0:inf);   // minimum decision delay [s]
+parameter real    tau_regen  = 15p  from [0:inf);   // regeneration time constant [s]
+parameter real    v_meta     = 1u   from (0:inf);   // metastability delay clamp [V]
+parameter real    td_rst     = 30p  from [0:inf);   // reset delay [s]
+parameter real    tr         = 10p  from (0:inf);   // output rise/fall time [s]
+
+integer outp, outn;
+integer pending_p, pending_n;
+integer armed_eval, armed_rst;
+integer rng_seed;
+real t_eval_fire, t_rst_fire;
+real vid_eff, vabs, td_eval, nsample;
+
+analog begin
+    @(initial_step) begin
+        outp        = 0;
+        outn        = 0;
+        pending_p   = 0;
+        pending_n   = 0;
+        armed_eval  = 0;
+        armed_rst   = 0;
+        t_eval_fire = -1.0;
+        t_rst_fire  = -1.0;
+        rng_seed    = seed;
+    end
+
+    // Clock rising edge: sample differential input, inject offset/noise, schedule decision
+    @(cross(V(CMPCK) - vdd/2, +1)) begin
+        nsample = (vnoise_rms > 0.0) ? ($rdist_normal(rng_seed, 0.0, vnoise_rms)) : 0.0;
+        vid_eff = (V(VINP) - V(VINN)) - vos + nsample;
+
+        if (vid_eff >= 0.0) begin
+            pending_p = 1;
+            pending_n = 0;
+            vabs      = vid_eff;
+        end else begin
+            pending_p = 0;
+            pending_n = 1;
+            vabs      = -vid_eff;
+        end
+
+        if (vabs < v_meta) begin
+            vabs = v_meta;
+        end
+
+        if (tau_regen > 0.0 && vabs < vdd) begin
+            td_eval = td_min + tau_regen * ln(vdd / vabs);
+        end else begin
+            td_eval = td_min;
+        end
+
+        armed_rst   = 0;
+        armed_eval  = 1;
+        t_eval_fire = $abstime + td_eval;
+    end
+
+    // Commit evaluated decision if clock is still high
+    @(timer(t_eval_fire)) begin
+        if (armed_eval && V(CMPCK) > vdd/2) begin
+            outp       = pending_p;
+            outn       = pending_n;
+            armed_eval = 0;
+        end
+    end
+
+    // Clock falling edge: cancel pending evaluation and schedule reset
+    @(cross(V(CMPCK) - vdd/2, -1)) begin
+        armed_eval = 0;
+        if (td_rst > 0.0) begin
+            armed_rst  = 1;
+            t_rst_fire = $abstime + td_rst;
+        end else begin
+            outp      = 0;
+            outn      = 0;
+            armed_rst = 0;
+        end
+    end
+
+    @(timer(t_rst_fire)) begin
+        if (armed_rst && V(CMPCK) <= vdd/2) begin
+            outp      = 0;
+            outn      = 0;
+            armed_rst = 0;
+        end
+    end
+
+    V(DCMPP) <+ transition(outp * vdd, 0, tr, tr);
+    V(DCMPN) <+ transition(outn * vdd, 0, tr, tr);
+end
+
+endmodule

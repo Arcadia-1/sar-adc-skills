@@ -1,0 +1,88 @@
+// =============================================================================
+// Process-Independent SAR Logic Testbench — Closed-Loop Timing & Race Check
+// =============================================================================
+// Pairs your SAR logic DUT with configurable-delay Verilog-A dynamic comparator
+// (`va_cmp_dynamic.va`) and 10-bit differential CDAC (`va_cdac_10b_diff.va`) to
+// verify over multiple conversion frames (including a near-metastable frame):
+//   1. Exact 10 CMPCK pulses per conversion and clean EOC / NOR3 stop (0 extra pulses)
+//   2. Correct decoded 10-bit code matching the sampled differential input
+//   3. Per-bit timing breakdown (t_cmp, t_valid_to_rst, t_rst_to_next_cmp)
+//   4. Freedom from VALID_L-vs-EN races across fast/slow comparator delays
+//
+// DUT interface contract (10-bit async SAR logic):
+//   subckt dut_sar_logic CLKS DCMPP DCMPN CMPCK EOC \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+//       DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_cmp_dynamic.va"
+ahdl_include "../../va/va_cdac_10b_diff.va"
+ahdl_include "../../va/va_dac_10b_diff.va"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    ts=20n \
+    t_track=4n \
+    tr=15p \
+    tf=15p \
+    cmp_td_min=40p \
+    cmp_tau=15p \
+    cmp_td_rst=30p \
+    cdac_tau=50p \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=t_track
+
+// Drive 4 distinct test frames via PWL differential input:
+//   Frame 0 (t=0..20n)  : Vid = +0.500 V (positive mid-high)
+//   Frame 1 (t=20..40n) : Vid = -0.350 V (negative)
+//   Frame 2 (t=40..60n) : Vid = +0.0001 V (near-zero metastability stress on MSB!)
+//   Frame 3 (t=60..80n) : Vid = +0.850 V (near +FS)
+VVIP (VIP 0) vsource type=pwl wave=[ \
+    0           (vcm+0.250)  (0.9*ts) (vcm+0.250) \
+    (1.0*ts)    (vcm-0.175)  (1.9*ts) (vcm-0.175) \
+    (2.0*ts)    (vcm+0.00005) (2.9*ts) (vcm+0.00005) \
+    (3.0*ts)    (vcm+0.425)  (5.0*ts) (vcm+0.425) ]
+VVIN (VIN 0) vsource type=pwl wave=[ \
+    0           (vcm-0.250)  (0.9*ts) (vcm-0.250) \
+    (1.0*ts)    (vcm+0.175)  (1.9*ts) (vcm+0.175) \
+    (2.0*ts)    (vcm-0.00005) (2.9*ts) (vcm-0.00005) \
+    (3.0*ts)    (vcm-0.425)  (5.0*ts) (vcm-0.425) ]
+
+I_CDAC (VIP VIN CLKS \
+    DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    VCP VCN) va_cdac_10b_diff vdd=vdd vrefp=vdd vrefn=0 tau_settle=cdac_tau
+
+I_CMP (CMPCK VCN VCP DCMPN DCMPP) va_cmp_dynamic \
+    vdd=vdd td_min=cmp_td_min tau_regen=cmp_tau td_rst=cmp_td_rst
+
+I0 (CLKS DCMPP DCMPN CMPCK EOC \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    VDD VSS) dut_sar_logic
+
+// Latch completed word on next CLKS rising edge for clean digital readout
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLKS AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vdd
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=4.5*ts errpreset=moderate maxstep=50p
+
+save CLKS CMPCK EOC DCMPP DCMPN VCP VCN VIP VIN AOUT CODE
+saveOptions options save=selected

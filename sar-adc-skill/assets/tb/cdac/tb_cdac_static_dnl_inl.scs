@@ -1,0 +1,72 @@
+// =============================================================================
+// Process-Independent CDAC Testbench — Static Transfer Curve (DNL / INL / Vcm)
+// =============================================================================
+// Drives a 10-bit differential CDAC across all 512 unique 9-bit switch states
+// using `va_code_ramp_10b.va`, strobing differential output (VCP - VCN) and
+// common-mode 0.5*(VCP + VCN) after each code settles.
+//
+// DUT interface contract (differential 10-bit CDAC with 9 switched bit groups):
+//   subckt dut_cdac VIP VIN CLKS \
+//       DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+//       DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+//       VCP VCN VDD VSS
+//   Note: For behavioral checks you can wrap `va_cdac_10b_diff.va` inside `dut_cdac`.
+//         For real transistor/capacitor arrays, sample mid-scale (VIP=VIN=Vcm)
+//         on the initial CLKS pulse and hold during the code sweep (or use one
+//         fresh CLKS reset pulse per code if switches are non-reversible).
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_code_ramp_10b.va"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    t_step=20n \
+    n_codes=512 \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VVIP (VIP 0) vsource dc=vcm type=dc
+VVIN (VIN 0) vsource dc=vcm type=dc
+
+// Initial sampling pulse (t=0..0.3*t_step) resets top plates to Vcm, then holds
+VCLKS (CLKS 0) vsource type=pwl wave=[ \
+    0               vdd \
+    (0.3*t_step)    vdd \
+    (0.3*t_step+tf) 0   \
+    ((n_codes+2)*t_step) 0 ]
+
+// Code clock advances every t_step starting at 0.5*t_step
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_step delay=0.5*t_step rise=tr fall=tf width=0.3*t_step
+
+I_RAMP (CLK \
+    CODE9 CODE8 CODE7 CODE6 CODE5 CODE4 CODE3 CODE2 CODE1 CODE0 \
+    DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    CODE_MON) va_code_ramp_10b vdd=vdd start_code=0 stop_code=1023 step_size=2
+
+I0 (VIP VIN CLKS \
+    DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    VCP VCN VDD VSS) dut_cdac
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe right before each next code edge (strobedelay=0.45*t_step < strobeperiod;
+// point 0 is during initial hold before code 0 settles, points [1..n_codes] are codes 0..n_codes-1)
+tran tran stop=(n_codes+1)*t_step errpreset=moderate \
+    strobeperiod=t_step strobedelay=0.45*t_step strobeoutput=strobeonly
+
+save VCP VCN CODE_MON
+saveOptions options save=selected

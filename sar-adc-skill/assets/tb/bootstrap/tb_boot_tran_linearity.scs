@@ -1,0 +1,62 @@
+// =============================================================================
+// Process-Independent Bootstrapped Switch Testbench — Coherent Sampling Linearity
+// =============================================================================
+// Measures dynamic sampling THD, SFDR, SNDR, and ENOB on a capacitive load CL
+// (representing the SAR CDAC sampling capacitance) using coherent sine-wave
+// sampling and strobeoutput=strobeonly.
+//
+// Coherent sampling setup:
+//   f_in = f_s * m_bin / n_fft,  with gcd(m_bin, n_fft) = 1.
+//   Use high-frequency input (e.g. m_bin = 61 for n_fft = 128, near Nyquist)
+//   to expose signal-dependent Ron distortion and aperture nonlinearity.
+//
+// DUT interface contract:
+//   subckt dut_bootstrap CLKS VIN VOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    amp=0.4 \
+    fs=100M \
+    n_fft=128 \
+    m_bin=61 \
+    n_settle=4 \
+    cload=200f \
+    duty_track=0.25 \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+// Derived coherent frequency and period
+parameters \
+    ts=1/fs \
+    fin=fs*m_bin/n_fft \
+    t_settle=n_settle*ts \
+    t_stop=(n_settle+n_fft)*ts
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VVIN  (VIN 0)  vsource type=sine sinedc=vcm ampl=amp freq=fin
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+I0 (CLKS VIN VOUT VDD VSS) dut_bootstrap
+CL (VOUT 0) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe in the held phase (0.75*ts < strobeperiod; analyzer uses final n_fft points)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.75*ts strobeoutput=strobeonly
+
+save VOUT VIN CLKS
+saveOptions options save=selected

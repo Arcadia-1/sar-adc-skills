@@ -1,0 +1,72 @@
+// =============================================================================
+// Process-Independent CDAC Testbench — Worst-Case MSB Settling
+// =============================================================================
+// Measures transient settling of the largest capacitor transition (MSB bit 9)
+// after sampling, extracting:
+//   - Final differential step size (Delta_V_MSB)
+//   - 0.5 LSB settling time (t_settle_0p5lsb) relative to the target resolution
+//   - Common-mode step (Delta_Vcm)
+//
+// DUT interface contract:
+//   subckt dut_cdac VIP VIN CLKS \
+//       DCTRLP9..DCTRLP1 DCTRLN9..DCTRLN1 VCP VCN VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm=0.45 \
+    vin_diff=0.8 \
+    t_sample=5n \
+    t_msb=8n \
+    t_stop=20n \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VVIP (VIP 0) vsource dc=vcm+0.5*vin_diff type=dc
+VVIN (VIN 0) vsource dc=vcm-0.5*vin_diff type=dc
+
+// Sample from 0..t_sample, then hold
+VCLKS (CLKS 0) vsource type=pwl wave=[0 vdd t_sample vdd (t_sample+tf) 0 t_stop 0]
+
+// Assert DCTRLN9 at t_msb (worst-case MSB step); hold all other controls at 0
+VN9 (DCTRLN9 0) vsource type=pwl wave=[0 0 t_msb 0 (t_msb+tr) vdd t_stop vdd]
+VP9 (DCTRLP9 0) vsource dc=0 type=dc
+VN8 (DCTRLN8 0) vsource dc=0 type=dc
+VP8 (DCTRLP8 0) vsource dc=0 type=dc
+VN7 (DCTRLN7 0) vsource dc=0 type=dc
+VP7 (DCTRLP7 0) vsource dc=0 type=dc
+VN6 (DCTRLN6 0) vsource dc=0 type=dc
+VP6 (DCTRLP6 0) vsource dc=0 type=dc
+VN5 (DCTRLN5 0) vsource dc=0 type=dc
+VP5 (DCTRLP5 0) vsource dc=0 type=dc
+VN4 (DCTRLN4 0) vsource dc=0 type=dc
+VP4 (DCTRLP4 0) vsource dc=0 type=dc
+VN3 (DCTRLN3 0) vsource dc=0 type=dc
+VP3 (DCTRLP3 0) vsource dc=0 type=dc
+VN2 (DCTRLN2 0) vsource dc=0 type=dc
+VP2 (DCTRLP2 0) vsource dc=0 type=dc
+VN1 (DCTRLN1 0) vsource dc=0 type=dc
+VP1 (DCTRLP1 0) vsource dc=0 type=dc
+
+I0 (VIP VIN CLKS \
+    DCTRLP9 DCTRLP8 DCTRLP7 DCTRLP6 DCTRLP5 DCTRLP4 DCTRLP3 DCTRLP2 DCTRLP1 \
+    DCTRLN9 DCTRLN8 DCTRLN7 DCTRLN6 DCTRLN5 DCTRLN4 DCTRLN3 DCTRLN2 DCTRLN1 \
+    VCP VCN VDD VSS) dut_cdac
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=20p
+
+save VCP VCN CLKS DCTRLN9
+saveOptions options save=selected

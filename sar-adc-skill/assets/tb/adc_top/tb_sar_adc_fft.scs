@@ -1,0 +1,80 @@
+// =============================================================================
+// Process-Independent Full SAR ADC Testbench — Coherent Sine FFT (ENOB/SNDR)
+// =============================================================================
+// Measures dynamic ADC performance (ENOB, SNDR, SNR, SFDR, THD) using coherent
+// sine-wave sampling, `strobeoutput=strobeonly`, and `save=selected`.
+//
+// Key Spectre conventions enforced here:
+//   - Coherent tone: f_in = f_s * m_bin / n_fft with gcd(m_bin, n_fft) = 1
+//   - Input amplitude set to `a_in_ratio = 0.90` (~ -0.9 dBFS) to avoid early
+//     clipping from top-plate parasitics
+//   - `va_dac_10b_diff.va` latches `DOUT[9:0]` on `CLKS` rising edge (capturing
+//     the completed word from the previous cycle) and is strobed cleanly at
+//     `t_settle + 0.1*ts` with zero switching glitches
+//   - To add circuit thermal noise, append `noisefmax=5*fs noiseruns=1` to `tran`
+//     (always use `noiseruns=1` for multi-cycle FFT; never default Maestro sweeps)
+//   - Run Spectre with `+aps` (avoid `+mx`, which can degrade ENOB by ~0.3 bit)
+//
+// DUT interface contract (10-bit fully differential SAR ADC):
+//   subckt dut_sar_adc VIP VIN CLKS \
+//       DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+//       VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_10b_diff.va"
+
+parameters \
+    vdd=0.9 \
+    vref=0.9 \
+    vcm=0.45 \
+    a_in_ratio=0.90 \
+    fs=50M \
+    n_fft=128 \
+    m_bin=19 \
+    n_settle=4 \
+    duty_track=0.20 \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+// Derived coherent frequency and timing
+parameters \
+    ts=1/fs \
+    fin=fs*m_bin/n_fft \
+    amp_se=0.5*a_in_ratio*vref \
+    t_settle=n_settle*ts \
+    t_stop=(n_settle+n_fft+1)*ts
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VCLKS (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=ts delay=0 rise=tr fall=tf width=duty_track*ts
+
+// Fully differential coherent sine stimulus: V(VIP) - V(VIN) = a_in_ratio*vref*sin(2*pi*fin*t)
+VVIP  (VIP 0)  vsource type=sine sinedc=vcm ampl=amp_se  freq=fin
+VVIN  (VIN 0)  vsource type=sine sinedc=vcm ampl=-amp_se freq=fin
+
+I0 (VIP VIN CLKS \
+    DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    VDD VSS) dut_sar_adc
+
+// Latch completed digital word on each CLKS rising edge for glitch-free strobe
+I_DAC (DOUT9 DOUT8 DOUT7 DOUT6 DOUT5 DOUT4 DOUT3 DOUT2 DOUT1 DOUT0 \
+    CLKS AOUT CODE) va_dac_10b_diff vdd=vdd vth=0.5*vdd vref=vref
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe 0.1*ts after each CLKS rising edge (strobedelay < strobeperiod;
+// analyzer uses the final n_fft samples, skipping startup and 1-sample latch latency)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.1*ts strobeoutput=strobeonly
+
+save CODE AOUT VIP VIN
+saveOptions options save=selected

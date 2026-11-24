@@ -1,0 +1,59 @@
+// Process-independent behavioral sampling switch (bootstrapped vs. plain NMOS)
+//
+// Models:
+//   - mode = 0 (bootstrapped): VG = VIN + vdd_eff -> constant Vgs -> flat Ron
+//   - mode = 1 (plain NMOS)  : VG = vdd -> Vgs = vdd - Vmid -> signal-dependent Ron
+//     causing HD2/HD3 sampling distortion on high-frequency sine inputs
+//   - Smooth switch conductance transition + optional overlap clock feedthrough (c_ov)
+//   - VG_MON output tracks the effective gate voltage for waveform verification
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bootstrap_sw(
+    input  electrical CLKS,
+    input  electrical VIN,
+    inout  electrical VOUT,
+    output electrical VG_MON
+);
+
+parameter integer mode     = 0    from [0:1];    // 0=bootstrapped, 1=plain NMOS
+parameter real    vdd      = 0.9  from (0:inf);
+parameter real    vth      = 0.25 from (0:inf);  // NMOS threshold voltage [V]
+parameter real    ron0     = 50.0 from (0:inf);  // nominal on-resistance at Vov = vdd-vth [ohm]
+parameter real    roff     = 1e9  from (0:inf);  // off-resistance [ohm]
+parameter real    c_ratio  = 0.08 from [0:0.5);  // bootstrap droop C_par/(CB+C_par)
+parameter real    c_ov     = 0.0  from [0:inf);  // gate-to-output overlap cap [F]
+
+real clk_norm, vmid, vgs_eff, vov_nom, vov_eff, ron_eff, g_sw, vg_val;
+
+analog begin
+    // Smooth normalized clock weight in [0, 1]
+    clk_norm = 0.5 * (1.0 + tanh((V(CLKS) - vdd/2.0) / (0.05 * vdd)));
+    vmid     = 0.5 * (V(VIN) + V(VOUT));
+    vov_nom  = max(vdd - vth, 0.05);
+
+    if (mode == 0) begin
+        // Bootstrapped gate: VG = (1 - c_ratio)*vdd + VIN during ON
+        vg_val  = clk_norm * ((1.0 - c_ratio) * vdd + V(VIN));
+        vgs_eff = (1.0 - c_ratio) * vdd;
+    end else begin
+        // Plain NMOS gate: VG = vdd during ON -> Vgs shrinks with input voltage
+        vg_val  = clk_norm * vdd;
+        vgs_eff = vdd - vmid;
+    end
+
+    // Smoothly floored overdrive so Ron stays physical across the full rail
+    vov_eff = 0.5 * ((vgs_eff - vth) + sqrt((vgs_eff - vth)*(vgs_eff - vth) + 1e-4));
+    ron_eff = ron0 * (vov_nom / max(vov_eff, 1e-3));
+    g_sw    = clk_norm / ron_eff + (1.0 - clk_norm) / roff;
+
+    I(VIN, VOUT) <+ g_sw * V(VIN, VOUT);
+    V(VG_MON)    <+ vg_val;
+
+    if (c_ov > 0.0) begin
+        I(VOUT) <+ c_ov * ddt(V(VOUT) - vg_val);
+    end
+end
+
+endmodule

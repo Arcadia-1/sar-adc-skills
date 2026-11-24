@@ -95,6 +95,8 @@ $$T_0 = \beta \cdot A_{v1} \cdot g_{m2} r_{o2}, \qquad A_{v1} = g_{m1}(r_{o1} \p
 
 ## How to Verify an LDO
 
+> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/ldo/`](../assets/tb/ldo/README.md) (`tb_ldo_stb.scs`, `tb_ldo_psrr_noise.scs`, `tb_ldo_load_tran.scs`, `analyze_ldo.py`) and the PMOS-pass behavioral macro-model [`../assets/va/va_ldo_ideal.va`](../assets/va/va_ldo_ideal.va) (exposing breakable `FB_IN` for `iprobe` `stb`, realistic DC/HF PSRR, and white output noise).
+
 1. **DC Operating Point, Line & Load Regulation:**
    - Sweep $I_{\text{load}}$ from $I_{\text{min}}$ (light load) to $I_{\text{max}}$ (full load) and $V_{\text{in}}$ from $V_{\text{in,min}}$ to $V_{\text{in,max}}$ across PVT.
    - Verify `VOUT` accuracy (typically within $\pm 1\%$), dropout headroom, quiescent current $I_Q$, and that every device (`M0`–`M6`, `M2`) stays in saturation.

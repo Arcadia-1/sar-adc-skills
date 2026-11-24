@@ -1,0 +1,63 @@
+// =============================================================================
+// Synthetic Process-Independent Generic BSIM4 Model Card (Demo / Smoke Use Only)
+// =============================================================================
+// A foundry-free, textbook-level Spectre BSIM4 model pair (`nch` / `pch`) with
+// realistic threshold voltages, mobility, overlap/junction capacitances, and
+// channel thermal noise enabled.
+//
+// Purpose:
+//   - Allows running transistor-level smoke demos of the bundled testbenches on
+//     any Spectre installation without attaching a proprietary PDK.
+//   - NOT calibrated to any real foundry technology; replace with your own
+//     `models_corner.scs` for real design sizing and signoff.
+// =============================================================================
+
+simulator lang=spectre
+
+model nch bsim4 type=n \
+    vth0=0.28 \
+    k1=0.35 \
+    u0=0.032 \
+    vsat=1.2e5 \
+    toxe=1.8e-9 \
+    toxp=1.5e-9 \
+    lint=5e-9 \
+    rdsw=200 \
+    nfactor=1.3 \
+    pclm=0.8 \
+    pdiblc1=0.05 \
+    pdiblc2=0.005 \
+    cgso=1.8e-10 \
+    cgdo=1.8e-10 \
+    cgbo=1.0e-10 \
+    cj=1.0e-3 \
+    cjsw=1.5e-10 \
+    tnoimod=0 \
+    fnoimod=1 \
+    noia=1e20 \
+    noib=5e4 \
+    noic=-1.4e-12
+
+model pch bsim4 type=p \
+    vth0=-0.28 \
+    k1=0.35 \
+    u0=0.014 \
+    vsat=9.0e4 \
+    toxe=1.8e-9 \
+    toxp=1.5e-9 \
+    lint=5e-9 \
+    rdsw=350 \
+    nfactor=1.3 \
+    pclm=0.9 \
+    pdiblc1=0.05 \
+    pdiblc2=0.005 \
+    cgso=1.8e-10 \
+    cgdo=1.8e-10 \
+    cgbo=1.0e-10 \
+    cj=1.0e-3 \
+    cjsw=1.5e-10 \
+    tnoimod=0 \
+    fnoimod=1 \
+    noia=1e20 \
+    noib=5e4 \
+    noic=-1.4e-12

@@ -81,6 +81,8 @@ Use two matched bootstrap instances (one per differential input channel) sharing
 
 ## How to Verify a Bootstrap Switch
 
+> **Ready-to-run process-independent Spectre testbenches:** See [`../assets/tb/bootstrap/`](../assets/tb/bootstrap/README.md) (`tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py`) and the behavioral comparison model [`../assets/va/va_bootstrap_sw.va`](../assets/va/va_bootstrap_sw.va) (`mode=0` bootstrapped vs. `mode=1` plain NMOS).
+
 ### 1. Differential Sampling Linearity (THD / SFDR — Primary Gate)
 
 Mirror the real SAR front end: drive two bootstrap instances with a coherent differential sine wave (`VIP = Vcm + A*sin(2*pi*Fin*t)`, `VIN = Vcm - A*sin(2*pi*Fin*t)`), connect `VGBTS` to matched NMOS switches `M0`/`M1` sampling onto load capacitors `CL` equal to the CDAC total capacitance (e.g., `CL = 200 fF`–`1 pF`), and clock `CLKS` at target $f_s$ (~20–25% high duty cycle).
@@ -92,9 +94,9 @@ Mirror the real SAR front end: drive two bootstrap instances with a coherent dif
 
 ### 2. $R_{\text{on}}$ Flatness vs. $V_{\text{in}}$
 
-- Hold `CLKS` active (or sample at a low rate with small probe current/voltage across `MS`) while sweeping $V_{\text{in}}$ from $0$ to $V_{\text{DD}}$ (or across the intended input swing).
+- **Important:** Do **not** use a pure DC sweep with `CLKS = VDD` on a real capacitive bootstrapped switch — DC leaves the flying capacitor `CB` uncharged! Use a **clocked multi-step transient sweep** (as in [`tb_boot_ron_sweep.scs`](../assets/tb/bootstrap/tb_boot_ron_sweep.scs)) that toggles `CLKS` (`0` to precharge `CB`, then `VDD` to measure `I_sw`) at each stepped $V_{\text{in}}$ across $0$ to $V_{\text{DD}}$ with a fixed small probe voltage $V_{\text{ds}}$ (e.g., `1 mV`).
 - Extract $R_{\text{on}}(V_{\text{in}}) = V_{\text{ds}} / I_{\text{ds}}$ (or `1 / M0:gds`).
-- **Pass criterion:** $R_{\text{on}}$ variation $< 10\%$ across the usable input range (compared to 2–5× for a plain NMOS). Rising $R_{\text{on}}$ near $V_{\text{DD}}$ points to undersized `CB`, excessive `CB_TOP` parasitic, or strong body effect.
+- **Pass criterion:** $R_{\text{on}}$ variation $< 10\%$ across the usable input range (compared to 2–5× or cutoff for a plain NMOS). Rising $R_{\text{on}}$ near $V_{\text{DD}}$ points to undersized `CB`, excessive `CB_TOP` parasitic, or strong body effect.
 
 ### 3. Tracking Bandwidth & Settling
 

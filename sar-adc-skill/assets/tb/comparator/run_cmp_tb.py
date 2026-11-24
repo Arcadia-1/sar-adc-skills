@@ -38,12 +38,20 @@ def _trapz(y: np.ndarray, x: np.ndarray) -> float:
 
 def parse_psf_ascii(path: Path) -> dict[str, np.ndarray]:
     """Parse a Spectre PSF ASCII file into {signal: np.ndarray}."""
-    from virtuoso_bridge.spectre.parsers import parse_spectre_psf_ascii
+    try:
+        from virtuoso_bridge.spectre.parsers import parse_spectre_psf_ascii
 
-    res = parse_spectre_psf_ascii(path)
-    if not res.data:
-        raise RuntimeError(f"Empty or unreadable PSF file: {path}")
-    return {k: np.asarray(v, dtype=float) for k, v in res.data.items()}
+        res = parse_spectre_psf_ascii(path)
+        if not res.data:
+            raise RuntimeError(f"Empty or unreadable PSF file: {path}")
+        return {k: np.asarray(v, dtype=float) for k, v in res.data.items()}
+    except ImportError:
+        common_dir = TB_DIR.parent / "common"
+        if str(common_dir) not in sys.path:
+            sys.path.insert(0, str(common_dir))
+        from psf_utils import parse_psf_ascii as _fallback_parse
+
+        return _fallback_parse(path)
 
 
 def crossings(
