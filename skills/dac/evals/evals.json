@@ -70,8 +70,32 @@
     {
       "id": 12,
       "prompt": "Which behavioral Verilog-A DAC model lets me inject finite unit-cell impedance (r_cell/c_cell), MSB mismatch, and switching timing skew to test my Spectre DAC verification flow before building transistors?",
-      "expected_output": "Should point to assets/va/va_dac_cs_10b.va (and va_dac_r2r_8b.va for R-2R), listing r_cell, c_cell, dm_msb, t_skew, v_ov_min, and in_lsb parameters.",
-      "files": ["SKILL.md", "assets/va/va_dac_cs_10b.va"]
+      "expected_output": "Should point to assets/va/va_dac_cs_10b.va (and va_dac_cs_dem_10b.va for segmented DWA/DEM, PSRR, and clocked jitter, plus va_dac_r2r_8b.va for R-2R), listing r_cell, c_cell, dm_msb, t_skew, v_ov_min, and in_lsb parameters.",
+      "files": ["SKILL.md", "assets/va/va_dac_cs_10b.va", "assets/va/va_dac_cs_dem_10b.va"]
+    },
+    {
+      "id": 13,
+      "prompt": "How do I sweep coherent SFDR(f_in) across the Nyquist band in Spectre so code-dependent unit-cell capacitance c_cell roll-off is captured accurately without ZOH aliasing?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_sfdr_vs_fin.scs and analyze_cs_dac.py sfdr_sweep, explaining the 4-frequency coherent prime-bin alter sweep (M={7, 29, 67, 113} / N=256), why osr=1 settled strobing misses c_cell transient settling, and how a 3rd-order passive Butterworth anti-aliasing filter (fc=0.65*fs) with osr=8 strobing captures true Nyquist HD3/SFDR roll-off.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_sfdr_vs_fin.scs", "assets/tb/current_steering/analyze_cs_dac.py"]
+    },
+    {
+      "id": 14,
+      "prompt": "How do I verify dynamic supply PSRR (feedthrough spur and f_out +/- f_rip AM sidebands) and RMS clock jitter SNR degradation of a clocked Current-Steering DAC in Spectre?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_psrr_jitter.scs, assets/va/va_dac_clk_jitter.va, and analyze_cs_dac.py psrr_jitter: run coherent 50 mVpp VDD ripple at non-harmonic prime bin m_rip=17 alongside m_bin=67 to extract psrr_db and f_out +/- f_rip sidebands, then alter to clean VDD + calibrated t_jitter_rms=5p on CLK_DAC through an anti-aliased continuous-time capture to verify SNR matches -20*log10(2*pi*f_out*t_j).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_psrr_jitter.scs", "assets/va/va_dac_clk_jitter.va"]
+    },
+    {
+      "id": 15,
+      "prompt": "How do I extract DC output compliance headroom (v_comp_max), effective array output resistance R_out, and differential R_load mismatch HD2 conversion of a Current-Steering DAC in Spectre?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_output_compliance.scs and analyze_cs_dac.py compliance: sweep DC termination voltage v_term to measure I_out(V_out), fit saturation r_out_eff_kohm and the 1%-drop compliance knee v_comp_max_v, then run dynamic alter with dr_load=0% vs 2% to quantify how P/N load asymmetry converts single-ended even-order impedance distortion into differential HD2 (and how cascode R_out mitigates it).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_output_compliance.scs", "assets/tb/current_steering/analyze_cs_dac.py"]
+    },
+    {
+      "id": 16,
+      "prompt": "How do I verify in Spectre that first-order Data-Weighted Averaging (DWA / DEM) suppresses static thermometer current-cell mismatch harmonics and rescues a high-mismatch DAC?",
+      "expected_output": "Should point to assets/tb/current_steering/tb_dac_dem_mismatch.scs, assets/va/va_dac_cs_dem_10b.va, and analyze_cs_dac.py dem: run the identical mismatched 4+6 segmented DAC with DEM_EN=0 (static thermometer -> large HD2/HD3 spurs) vs DEM_EN=vdd_dig (DWA rotating pointer -> +12 to +25 dB in-band OSR=4 SFDR gain and +20 dB/dec high-pass mismatch noise shaping).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/current_steering/tb_dac_dem_mismatch.scs", "assets/va/va_dac_cs_dem_10b.va"]
     }
   ]
 }

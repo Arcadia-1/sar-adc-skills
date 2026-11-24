@@ -1,0 +1,102 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — Multi-Frequency SFDR(f_in) Sweep
+// =============================================================================
+// Sweeps four coherent prime-bin output tones via Spectre `alter` spanning low
+// frequency to near-Nyquist (default M = {7, 29, 67, 113} / N = 256 @ 200 MS/s)
+// to quantify code-dependent unit-cell impedance Z_out(f) HD3/SFDR roll-off.
+//
+// Buffers V(IOUTP) - V(IOUTN) through a unity-gain 3rd-order passive Butterworth
+// anti-aliasing/reconstruction filter (fc = 0.65*fs) and strobes at `osr = 8`
+// so continuous-time capacitive impedance distortion is captured inside the
+// first Nyquist zone [0, fs/2] without out-of-band ZOH staircase aliasing.
+//
+// DUT interface contract (10-bit differential Current-Steering DAC):
+//   subckt dut_cs_dac DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_sine_gen_10b.va"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    fs=200M \
+    n_fft=256 \
+    m_f0=7 \
+    m_f1=29 \
+    m_f2=67 \
+    m_f3=113 \
+    m_cur=m_f0 \
+    amp_fs=0.98 \
+    n_warmup=16 \
+    osr=8 \
+    fc_lpf=0.65*fs \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    t_strobe=ts/osr \
+    t_stop=(n_warmup+n_fft+2)*ts \
+    wc_lpf=2*3.141592653589793*fc_lpf
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_GEN (CLK VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_sine_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig sig_mode=0 \
+    n_fft=n_fft m_bin=m_cur amp_fs=amp_fs tr=tr
+
+I0 (DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    VDD VSS IOUTP IOUTN) dut_cs_dac
+
+RLP (IOUTP VSS) resistor  r=rload
+RLN (IOUTN VSS) resistor  r=rload
+CLP (IOUTP VSS) capacitor c=cload
+CLN (IOUTN VSS) capacitor c=cload
+
+// Unity-gain 3rd-order Butterworth anti-aliasing filter (doubly terminated 1 ohm)
+E_FILT (FILT_SRC 0 IOUTP IOUTN) vcvs gain=2.0
+R_F1   (FILT_SRC FILT_N1) resistor  r=1
+C_F1   (FILT_N1  0)       capacitor c=1/wc_lpf
+L_F2   (FILT_N1  V_FILT)  inductor  l=2/wc_lpf
+C_F3   (V_FILT   0)       capacitor c=1/wc_lpf
+R_F2   (V_FILT   0)       resistor  r=1
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Low-frequency baseline (M = 7 -> 5.47 MHz)
+tran_f0 tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+// 2) Lower mid-band (M = 29 -> 22.66 MHz)
+alt_f1 alter param=m_cur value=m_f1
+tran_f1 tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+// 3) Upper mid-band (M = 67 -> 52.34 MHz)
+alt_f2 alter param=m_cur value=m_f2
+tran_f2 tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+// 4) Near-Nyquist (M = 113 -> 88.28 MHz)
+alt_f3 alter param=m_cur value=m_f3
+tran_f3 tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+save IOUTP IOUTN V_FILT
+saveOptions options save=selected
