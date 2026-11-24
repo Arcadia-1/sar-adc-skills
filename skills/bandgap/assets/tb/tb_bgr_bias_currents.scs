@@ -1,0 +1,64 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — Companion Bias Currents & Vos Sens.
+// =============================================================================
+// Characterizes companion PTAT & ZTC bias current mirrors and opamp-offset TC
+// sensitivity in a single multi-analysis Spectre run:
+//   1. `dc_temp`:      -40..125 C sweep -> IPTAT slope (~+3300 ppm/C) & IZTC TC
+//   2. `dc_comp`:      V_compliance 0..1.2 V -> min compliance headroom & r_o
+//   3. `ac_psrr`:      1 Hz..100 MHz AC -> normalized current-mirror PSRR(f)
+//   4. `dc_temp_vosp` & `dc_temp_vosm`: +/-3 mV opamp offset perturbation via
+//      `alter` -> VREF gain & TC degradation sensitivity [ppm/C per mV]
+//
+// DUT interface contract (8-pin signoff Bandgap Reference):
+//   subckt dut_bandgap_signoff VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS
+//     // (uses optional global parameter `vos_inj` for +/-3 mV offset check)
+//   ends dut_bandgap_signoff
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vtrim_code=16 \
+    v_comp=0.6 \
+    vos_inj=0 \
+    cload=1p \
+    temp_c=27
+
+VSUP    (VDD        0) vsource dc=vdd_nom    mag=1 type=dc
+VGND    (VSS        0) vsource dc=0          type=dc
+VEN     (EN         0) vsource dc=vdd_nom    type=dc
+VTRM    (VTRIM      0) vsource dc=vtrim_code type=dc
+VIPTAT  (IPTAT      0) vsource dc=v_comp     type=dc
+VIZTC   (IZTC       0) vsource dc=v_comp     type=dc
+VISTART (ISTART_MON 0) vsource dc=0          type=dc
+
+I0 (VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS) dut_bandgap_signoff
+CL (VREF VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Temperature sweep of VREF, IPTAT(T), and IZTC(T) at vos_inj = 0
+dc_temp dc param=temp   start=-40 stop=125 step=5
+
+// 2. Output compliance sweep (0..1.2 V) at 27 C
+dc_comp dc param=v_comp start=0.0 stop=1.2 step=0.02
+
+// 3. Companion bias current AC PSRR (1 Hz..100 MHz, VDD mag=1)
+ac_psrr ac start=1 stop=100M dec=20 annotate=status
+
+// 4. Opamp input-offset (+/-3 mV) VREF & TC degradation sensitivity
+alt_vosp alter param=vos_inj value=3m
+dc_temp_vosp dc param=temp start=-40 stop=125 step=5
+
+alt_vosm alter param=vos_inj value=-3m
+dc_temp_vosm dc param=temp start=-40 stop=125 step=5
+
+save VREF VDD VIPTAT:p VIZTC:p VSUP:p
+saveOptions options save=selected

@@ -1,0 +1,189 @@
+// Process-independent Signoff Bandgap Voltage Reference (BGR) Verilog-A Model
+//
+// Models full tapeout-signoff SoC bandgap reference physics:
+//   - Kuijk/Banba PTAT + CTAT cancellation with Tsividis 2nd-order curvature
+//     using live `$temperature` [K]
+//   - 5-bit voltage trim via `VTRIM` (codes 0..31) with optional binary MSB
+//     mismatch (`dnl_msb_lsb`)
+//   - Opamp input offset injection (`v_os_err`) amplified by `k_os` with PTAT
+//     temperature dependence (shifts both DC VREF and box-method TC!)
+//   - True bistable core dynamics with zero-current dead state (`s=0`) and
+//     locked bandgap state (`s=1`):
+//       * `startup_en=1`: active dead-state detector pulses `ISTART_MON` during
+//         startup/brownout recovery and shuts off cleanly (< 10 nA) once locked
+//       * `startup_en=0`: disables active startup kick (fast cold-boot edge may
+//         accidentally kick via parasitic capacitive coupling, while brownout
+//         recovery and ultra-slow ramps collapse into the zero-current dead state)
+//       * `fault_startup_leak=1`: injects steady-state startup-switch leakage
+//         (> 1 uA) to verify startup-turnoff signoff audits
+//   - Enable/shutdown switch (`EN`) with finite off-state leakage (`i_shdn`)
+//   - Closed-loop VREF output buffer (`r_out_dc` at DC, `r_out_hf` above buffer
+//     bandwidth `tau_buf`) for load regulation and capacitive-kick recovery
+//   - Companion `IPTAT` (~10 uA @ 27 C, ~+3330 ppm/C) and `IZTC` (~10 uA @ 27 C,
+//     < 80 ppm/C) NMOS current-sink mirrors with finite compliance voltage,
+//     channel-length modulation (`lambda_bias`), and frequency-dependent PSRR
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bgr_signoff(
+    input  electrical VDD,
+    input  electrical EN,
+    input  electrical VTRIM,
+    output electrical VREF,
+    inout  electrical IPTAT,
+    inout  electrical IZTC,
+    output electrical ISTART_MON,
+    input  electrical VSS
+);
+
+parameter real vref_nom        = 0.60   from (0.1:2.0);   // nominal VREF at t0_c, code 16 [V]
+parameter real t0_c            = 35.0;                    // zero-TC peak temperature [deg C]
+parameter real c_curv          = 1.1e-4 from [0:inf);     // 2nd-order Tsividis curvature [V/K]
+parameter real tc1_ppm         = 0.0;                     // residual 1st-order linear TC [ppm/C]
+parameter real k_os_core       = 10.5   from (1.0:50.0);  // core offset gain (1 + R2/R1)
+parameter real v_os_err        = 0.0;                     // opamp input offset voltage [V]
+
+parameter real step_mv         = 1.6    from (0.05:50.0); // 5-bit trim LSB step [mV/code]
+parameter real dnl_msb_lsb     = 0.14   from (-0.9:0.9);  // binary MSB major-carry mismatch [LSB]
+
+parameter real vdd_nom         = 1.20   from (0.5:5.0);   // nominal supply voltage [V]
+parameter real vdd_min         = 0.78   from (0.2:4.5);   // minimum core headroom [V]
+parameter real v_en_th         = 0.50   from (0.1:4.0);   // enable threshold voltage [V]
+parameter real tau_core        = 1.0e-6 from (1e-9:inf);  // core bistable loop time constant [s]
+parameter real tau_edge        = 0.6e-6 from [0:inf);     // parasitic VDD-edge kick coupling [s]
+parameter real tau_hp          = 0.5e-6 from (1e-9:inf);  // parasitic edge-kick decay tau [s]
+
+parameter integer startup_en         = 1 from [0:1];      // 1=active dead-state startup; 0=disabled
+parameter integer fault_startup_leak = 0 from [0:1];      // 1=leaky startup switch (> 1 uA steady)
+parameter real i_start_peak    = 4.0e-6 from (0:inf);     // startup kick pulse peak current [A]
+parameter real i_start_leak    = 0.5e-9 from [0:inf);     // clean steady-state startup leakage [A]
+parameter real i_start_fault   = 2.5e-6 from [0:inf);     // faulty steady-state startup leakage [A]
+parameter real i_q             = 18.0e-6 from [0:inf);    // locked quiescent supply current [A]
+parameter real i_shdn          = 12.0e-9 from [0:inf);    // shutdown supply leakage (EN=0) [A]
+
+parameter real r_out_dc        = 25.0   from (0.1:1e6);   // closed-loop DC VREF output resistance [ohm]
+parameter real r_out_hf        = 250.0  from (1.0:1e6);   // open-loop HF VREF output resistance [ohm]
+parameter real tau_buf         = 8.0e-6 from (1e-9:inf);  // output buffer open-loop dominant tau [s]
+parameter real psrr_dc_db      = 70.0   from (0:160);     // VREF DC PSRR [dB]
+parameter real f_psrr_p        = 50e3   from (1:inf);     // VREF PSRR roll-off pole [Hz]
+
+parameter real i_ptat_27c      = 10.0e-6 from (1e-8:1e-2);// companion IPTAT at 27 C [A]
+parameter real i_ztc_27c       = 10.0e-6 from (1e-8:1e-2);// companion IZTC at 27 C [A]
+parameter real tc_r_ext_ppm    = 25.0;                    // ZTC scaling resistor TC [ppm/C]
+parameter real v_dsat_bias     = 0.11   from (0.01:1.0);  // bias mirror compliance scale [V]
+parameter real lambda_bias     = 0.05   from [0:2.0);     // bias mirror CLM factor [1/V]
+parameter real psrr_bias_dc_db = 65.0   from (0:160);     // companion current mirror DC PSRR [dB]
+parameter real f_psrr_bias     = 80e3   from (1:inf);     // companion current mirror PSRR pole [Hz]
+
+electrical n_state, n_dvdd, n_psrr, n_psrr_b, n_buf;
+real t_k, t0_k, t27_k, v_dd, v_en, g_vdd, g_en, g_on;
+real s, s_clip, f_core, v_dvdd, v_edge_pos, f_edge;
+real start_gate, f_start, i_start_out, v_leak_err;
+real code, b4, v_trim, k_os_eff, v_temp, v_os_term, v_ref_ideal;
+real inv_psrr, c_psrr, inv_psrr_b, c_psrr_b, v_vref_tgt, a_buf;
+real v_ptat, v_ztc, vp_pos, vz_pos, f_sat_p, f_sat_z;
+real i_ptat_t, i_ztc_t, bias_psrr_mod, i_ptat_out, i_ztc_out;
+
+analog begin
+    t_k   = $temperature;
+    t0_k  = t0_c + 273.15;
+    t27_k = 27.0 + 273.15;
+
+    v_dd = V(VDD, VSS);
+    v_en = V(EN, VSS);
+
+    // Smooth supply-headroom and enable gating
+    g_vdd = 0.5 * (1.0 + tanh((v_dd - vdd_min) / 0.04));
+    g_en  = 0.5 * (1.0 + tanh((v_en - v_en_th) / 0.03));
+    g_on  = g_vdd * g_en;
+
+    // Parasitic high-pass VDD-edge coupling (models fast-boot edge kick only)
+    I(n_dvdd, VSS) <+ V(n_dvdd, VSS) - tau_edge * ddt(v_dd) + tau_hp * ddt(V(n_dvdd, VSS));
+    v_dvdd     = V(n_dvdd, VSS);
+    v_edge_pos = 0.5 * (v_dvdd + sqrt(v_dvdd * v_dvdd + 1e-6));
+
+    // Normalized bistable bandgap core state s = V(n_state, VSS) in [0, 1]
+    //   s = 0: zero-current dead state (stable without startup kick)
+    //   s = 1: locked bandgap operating point (stable)
+    //   s = 0.30: unstable saddle point
+    s = V(n_state, VSS);
+    f_core = -4.0 * g_on * s * (s - 0.30) * (s - 1.0) - (1.0 - g_on) * 3.0 * s;
+
+    // Startup detector gate: active while enabled & core unlocked (s < 0.50),
+    // smoothly shuts completely off once locked (s -> 1.0)
+    start_gate = 0.5 * (1.0 - tanh((s - 0.50) / 0.07));
+    f_start    = (startup_en != 0) ? (0.80 * g_on * start_gate) : 0.0;
+    f_edge     = g_on * start_gate * v_edge_pos;
+
+    I(n_state, VSS) <+ tau_core * ddt(s) - (f_core + f_start + f_edge);
+    s_clip = 0.5 * (s + sqrt(s * s + 1e-10));
+    if (s_clip > 1.2)
+        s_clip = 1.2;
+
+    // Startup-branch current monitor (sourced out of ISTART_MON into 0 V ammeter)
+    i_start_out = ((startup_en != 0) ? (i_start_peak * g_on * start_gate + i_start_leak * g_on) : 0.0)
+                  + ((fault_startup_leak != 0) ? (i_start_fault * g_on) : 0.0);
+    I(ISTART_MON, VSS) <+ -i_start_out + V(ISTART_MON, VSS) * 1e-11;
+
+    // 5-bit trim voltage with realistic binary MSB major-carry mismatch (code 15 -> 16)
+    code = V(VTRIM, VSS);
+    if (code < 0.0)
+        code = 0.0;
+    if (code > 31.0)
+        code = 31.0;
+    b4     = 0.5 * (1.0 + tanh((code - 15.5) / 0.05));
+    v_trim = (code - 16.0 + dnl_msb_lsb * (b4 - 1.0)) * step_mv * 1e-3;
+
+    // Bandgap curvature + opamp offset amplification (with PTAT T-dependence)
+    k_os_eff   = k_os_core * (vref_nom / 1.20);
+    v_os_term  = k_os_eff * v_os_err * (t_k / t27_k);
+    v_leak_err = (fault_startup_leak != 0) ? (-0.004 * (t_k / t27_k)) : 0.0;
+
+    v_temp = vref_nom * (1.0 + tc1_ppm * 1e-6 * (t_k - t0_k))
+             + c_curv * (t_k - t0_k - t_k * ln(t_k / t0_k));
+    v_ref_ideal = v_temp + v_trim + v_os_term + v_leak_err;
+
+    // Frequency-dependent supply feedthrough into VREF
+    inv_psrr = pow(10.0, -psrr_dc_db / 20.0);
+    c_psrr   = inv_psrr / (2.0 * `M_PI * f_psrr_p);
+    I(n_psrr, VSS) <+ V(n_psrr, VSS) - inv_psrr * (v_dd - vdd_nom) - c_psrr * ddt(v_dd);
+
+    // Closed-loop VREF output buffer (DC R_out = r_out_dc, HF R_out = r_out_hf)
+    v_vref_tgt = (v_ref_ideal + V(n_psrr, VSS)) * s_clip;
+    a_buf      = max(r_out_hf / r_out_dc - 1.0, 0.0);
+    I(n_buf, VSS) <+ (V(n_buf, VSS) - a_buf * (v_vref_tgt - V(VREF, VSS)))
+                     + tau_buf * ddt(V(n_buf, VSS));
+    I(VREF, VSS)  <+ (V(VREF, VSS) - (v_vref_tgt + V(n_buf, VSS))) / r_out_hf;
+
+    // Companion bias current mirror PSRR coupling (normalized to vdd_nom)
+    inv_psrr_b = pow(10.0, -psrr_bias_dc_db / 20.0);
+    c_psrr_b   = inv_psrr_b / (2.0 * `M_PI * f_psrr_bias);
+    I(n_psrr_b, VSS) <+ V(n_psrr_b, VSS)
+                        - (inv_psrr_b / vdd_nom) * (v_dd - vdd_nom)
+                        - (c_psrr_b / vdd_nom) * ddt(v_dd);
+    bias_psrr_mod = 1.0 + V(n_psrr_b, VSS);
+
+    // Companion IPTAT(T) (~+3330 ppm/C) and IZTC(T) (< 80 ppm/C) NMOS current sinks
+    i_ptat_t = i_ptat_27c * (t_k / t27_k);
+    i_ztc_t  = i_ztc_27c * ((v_temp + v_os_term) / vref_nom)
+               * (1.0 - tc_r_ext_ppm * 1e-6 * (t_k - t27_k));
+
+    v_ptat  = V(IPTAT, VSS);
+    v_ztc   = V(IZTC, VSS);
+    vp_pos  = 0.5 * (v_ptat + sqrt(v_ptat * v_ptat + 1e-8));
+    vz_pos  = 0.5 * (v_ztc  + sqrt(v_ztc  * v_ztc  + 1e-8));
+    f_sat_p = tanh(vp_pos / v_dsat_bias);
+    f_sat_z = tanh(vz_pos / v_dsat_bias);
+
+    i_ptat_out = i_ptat_t * s_clip * f_sat_p * (1.0 + lambda_bias * (vp_pos - 0.6)) * bias_psrr_mod;
+    i_ztc_out  = i_ztc_t  * s_clip * f_sat_z * (1.0 + lambda_bias * (vz_pos - 0.6)) * bias_psrr_mod;
+
+    I(IPTAT, VSS) <+ i_ptat_out + v_ptat * 1e-11;
+    I(IZTC, VSS)  <+ i_ztc_out  + v_ztc  * 1e-11;
+
+    // Total supply current: locked core + startup branch + shutdown leakage
+    I(VDD, VSS) <+ i_q * s_clip * g_on + i_start_out + i_shdn * (v_dd / vdd_nom);
+end
+
+endmodule

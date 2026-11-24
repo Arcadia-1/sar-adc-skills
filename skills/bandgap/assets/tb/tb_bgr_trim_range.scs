@@ -1,0 +1,57 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — 5-Bit Trim Range, DNL/INL & Corners
+// =============================================================================
+// Sweeps the 5-bit trim code (0..31) across DC at nominal offset (`vos_inj=0`)
+// and at -3sigma / +3sigma opamp-offset corners via `alter` to verify:
+//   - Trim span [mV], LSB step [mV], monotonic transfer curve
+//   - Endpoint DNL/INL [LSB] across binary/thermometer trim transitions
+//   - Post-trim centering error < 0.5 LSB for +/-3% process/offset shifts
+//
+// DUT interface contract (8-pin signoff Bandgap Reference):
+//   subckt dut_bandgap_signoff VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS
+//     // (uses optional global parameter `vos_inj` for offset corner sweep)
+//   ends dut_bandgap_signoff
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vtrim_code=16 \
+    v_bias_load=0.6 \
+    vos_inj=0 \
+    cload=1p \
+    temp_c=27
+
+VSUP    (VDD        0) vsource dc=vdd_nom     type=dc
+VGND    (VSS        0) vsource dc=0           type=dc
+VEN     (EN         0) vsource dc=vdd_nom     type=dc
+VTRM    (VTRIM      0) vsource dc=vtrim_code  type=dc
+VIPTAT  (IPTAT      0) vsource dc=v_bias_load type=dc
+VIZTC   (IZTC       0) vsource dc=v_bias_load type=dc
+VISTART (ISTART_MON 0) vsource dc=0           type=dc
+
+I0 (VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS) dut_bandgap_signoff
+CL (VREF VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Nominal 5-bit trim transfer curve (codes 0..31)
+dc_trim_nom dc param=vtrim_code start=0 stop=31 step=1
+
+// 2. -3sigma offset corner (~ -3% untrimmed shift -> verify centering < 0.5 LSB)
+alt_m3s alter param=vos_inj value=-3.4m
+dc_trim_m3s dc param=vtrim_code start=0 stop=31 step=1
+
+// 3. +3sigma offset corner (~ +3% untrimmed shift -> verify centering < 0.5 LSB)
+alt_p3s alter param=vos_inj value=3.4m
+dc_trim_p3s dc param=vtrim_code start=0 stop=31 step=1
+
+save VREF VTRIM VDD VSUP:p
+saveOptions options save=selected
