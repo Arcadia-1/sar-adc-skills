@@ -1,0 +1,72 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Over-Current & Foldback Short-Circuit
+// =============================================================================
+// Runs two signoff checks in one Spectre simulation:
+//   1. `dc_iv`      : Log sweep of RLOAD (0.5 ohm .. 1 kOhm) mapping the full
+//                     regulated + knee + foldback short-circuit VOUT(I_out)
+//                     curve (`i_lim_peak_ma`, `i_short_ma`, `foldback_ratio`).
+//   2. `tran_short` : Restores nominal RLOAD and applies a hard output short
+//                     (`r_short = 0.5 ohm`) from `t_sh1` to `t_sh2`, then
+//                     releases it to verify latch-up-free recovery (`t_recover`).
+//
+// DUT interface contract (5-pin LDO exposing breakable FB_IN):
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    cload=2.2u \
+    resr=200m \
+    r_load=180 \
+    r_nom=180 \
+    r_short=0.5 \
+    t_sh1=20u \
+    t_sh2=50u \
+    t_stop=250u \
+    tr=50n \
+    temp_c=27
+
+VSUP   (VDD  0) vsource dc=vdd_in type=dc
+VGND   (VSS  0) vsource dc=0      type=dc
+VVREF  (VREF 0) vsource dc=vref   type=dc
+
+VSHORT (SHORT_EN 0) vsource dc=0 type=pwl wave=[ \
+    0            0 \
+    t_sh1        0 \
+    (t_sh1+tr)   1.0 \
+    t_sh2        1.0 \
+    (t_sh2+tr)   0 \
+    t_stop       0 ]
+
+I0     (VDD VREF VOUT VOUT VSS) dut_ldo
+
+RESR   (VOUT V_CESR)  resistor  r=resr
+CLOAD  (V_CESR VSS)   capacitor c=cload
+
+// Zero-volt ammeter directly measures output load + short-circuit current
+VMEAS  (VOUT VOUT_LD) vsource dc=0 type=dc
+RLOAD  (VOUT_LD VSS)  resistor r=r_load
+
+model sw_short relay rclosed=r_short ropen=1e9 vt1=0.4 vt2=0.6
+S_SHORT (VOUT_LD VSS SHORT_EN 0) sw_short
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. DC foldback I-V curve (short -> knee -> light load)
+dc_iv dc param=r_load start=0.5 stop=1000 dec=40
+
+// 2. Transient hard-short pulse & latch-up-free recovery
+alt_nom    alter param=r_load value=r_nom
+tran_short tran stop=t_stop errpreset=conservative maxstep=250n
+
+save VOUT SHORT_EN VSUP:p VMEAS:p
+saveOptions options save=selected

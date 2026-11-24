@@ -52,7 +52,7 @@
     {
       "id": 9,
       "prompt": "Which PVT and load corners are worst-case for LDO stability vs. dropout voltage?",
-      "expected_output": "Should specify lightest load I_min + max CL + ss/high-T for worst-case phase margin, heavy load I_max + ff/low-T for gain margin, and heavy load I_max + ss/high-T for worst-case dropout voltage.",
+      "expected_output": "Should specify lightest load I_min + max CL + ss/high-T for worst-case capless phase margin (or heavy load at ESR extremes for external-cap LDOs), heavy load I_max + ff/low-T for gain margin, and heavy load I_max + ss/high-T for worst-case dropout voltage.",
       "files": ["references/simulation-and-verification.md"]
     },
     {
@@ -60,6 +60,36 @@
       "prompt": "How do I test both load-step undershoot/overshoot and dynamic line-step glitch in one Spectre transient deck?",
       "expected_output": "Should point to assets/tb/tb_ldo_load_line_tran.scs and analyze_ldo.py tran, plus va_ldo_pmos.va / va_ldo_capless.va for behavioral baseline verification.",
       "files": ["SKILL.md", "assets/tb/tb_ldo_load_line_tran.scs", "assets/va/va_ldo_pmos.va"]
+    },
+    {
+      "id": 11,
+      "prompt": "How do I verify LDO enable soft-start inrush current, startup monotonicity, overshoot, and active output discharge in Spectre?",
+      "expected_output": "Should point to assets/tb/tb_ldo_startup_inrush.scs, assets/va/va_ldo_signoff.va, and analyze_ldo.py startup: drive EN 0 -> VDD -> 0 into a resistive load (never an ideal isource), extract t_start_90pct_us, t_settle_1pct_us, overshoot_mv/pct, monotonic_startup, i_inrush_peak_ma, and t_discharge_10pct_us, and note that too-short t_ss causes huge inrush and EA windup overshoot.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_startup_inrush.scs", "assets/va/va_ldo_signoff.va"]
+    },
+    {
+      "id": 12,
+      "prompt": "How do I verify foldback over-current protection and hard-short recovery without foldback latch-up in Spectre?",
+      "expected_output": "Should reference assets/tb/tb_ldo_ocp_foldback.scs and analyze_ldo.py ocp: run a logarithmic DC R_load sweep for i_lim_peak_ma, i_short_ma, and foldback_ratio plus a transient 0.5 Ohm short-circuit pulse checking vout_recover_ok and t_recover_us; warn that I_sc must exceed I_load_max for constant-current loads to avoid latch-up.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_ocp_foldback.scs"]
+    },
+    {
+      "id": 13,
+      "prompt": "How do I map an external-cap LDO's 2D Load x ESR stability tunnel in a single Spectre run, and why do both too-low and too-high ESR collapse phase margin?",
+      "expected_output": "Should point to assets/tb/tb_ldo_stb_esr_grid.scs and analyze_ldo.py esr_grid (9-point alter+stb across 10 uA/1 mA/10 mA and 5 mOhm/200 mOhm/5 Ohm): explain that too-low ESR pushes f_z_ESR above UGF (no phase boost for pass-gate pole f_p2), while too-high ESR lowers f_z_ESR too much and extends UGF past internal pole f_p3.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_stb_esr_grid.scs"]
+    },
+    {
+      "id": 14,
+      "prompt": "How do I simulate deep VDD brown-out recovery overshoot when the PMOS pass transistor exits triode, plus large-signal dynamic PSRR?",
+      "expected_output": "Should point to assets/tb/tb_ldo_dropout_tran.scs and analyze_ldo.py dropout_tran: apply a deep VDD brown-out dip (1.2 V -> 0.85 V -> 1.2 V) to extract vout_min_dip_v, vout_recover_overshoot_mv, and t_recover_1pct_us, followed via alter by a 100 mVpp periodic supply ripple to measure large-signal dyn_psrr_db.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_dropout_tran.scs"]
+    },
+    {
+      "id": 15,
+      "prompt": "How do I characterize LDO output temperature drift, multi-decade IQ(Iload) current efficiency, and EN=0 shutdown leakage across -40 to 125 C in one Spectre deck?",
+      "expected_output": "Should point to assets/tb/tb_ldo_temp_shdn.scs and analyze_ldo.py temp_shdn: run active dc_temp (-40..125 C), dc_iq_load (10 uA..10 mA), and alter EN=0/ILOAD=0 dc_shdn_temp (-40..125 C) to extract vout_27c_v, tc_ppm_per_c, iq_light/full_ua, current_eff_light/full_pct, i_shdn_27c_na, and i_shdn_125c_ua.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_ldo_temp_shdn.scs", "assets/va/va_ldo_signoff.va"]
     }
   ]
 }

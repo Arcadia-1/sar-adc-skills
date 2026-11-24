@@ -1,0 +1,61 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Enable Soft-Start, Inrush & Discharge
+// =============================================================================
+// Drives active-high EN from 0 -> VDD (measuring soft-start ramp time, 1%
+// settling, startup overshoot, monotonicity, and peak capacitive inrush current
+// into C_L) and later VDD -> 0 (measuring active output discharge time to 10%).
+//
+// Uses a resistive load RLOAD (never an ideal isource) so VOUT starts cleanly
+// from 0 V and discharges to 0 V without pulling below VSS when EN = 0.
+//
+// DUT interface contract (6-pin LDO with active-high EN and breakable FB_IN):
+//   subckt dut_ldo_en VDD VREF EN VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    cload=2.2u \
+    resr=200m \
+    rload=900 \
+    t_en_on=10u \
+    t_en_off=250u \
+    t_stop=450u \
+    tr=50n \
+    tf=50n \
+    temp_c=27
+
+VSUP  (VDD  0) vsource dc=vdd_in type=dc
+VGND  (VSS  0) vsource dc=0      type=dc
+VVREF (VREF 0) vsource dc=vref   type=dc
+
+VEN (EN 0) vsource type=pwl wave=[ \
+    0              0 \
+    t_en_on        0 \
+    (t_en_on+tr)   vdd_in \
+    t_en_off       vdd_in \
+    (t_en_off+tf)  0 \
+    t_stop         0 ]
+
+I0    (VDD VREF EN VOUT VOUT VSS) dut_ldo_en
+
+RLOAD (VOUT VSS)    resistor  r=rload
+RESR  (VOUT V_CESR) resistor  r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+ic VOUT=0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=250n
+
+save VOUT EN VDD VSUP:p
+saveOptions options save=selected

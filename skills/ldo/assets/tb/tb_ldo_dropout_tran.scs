@@ -1,0 +1,73 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Dropout Brown-Out & Large-Signal PSRR
+// =============================================================================
+// Executes two large-signal supply transient signoff tests via `alter`:
+//   1. `tran_brownout` : Deep VDD brown-out dip into triode dropout
+//                        (1.2 V -> 0.85 V -> 1.2 V) measuring dropout tracking
+//                        floor (`vout_min_dip_v`), pass-gate windup recovery
+//                        overshoot (`vout_recover_overshoot_mv`), and 1%
+//                        recovery time (`t_recover_1pct_us`).
+//   2. `tran_ripple`   : Large-signal periodic 100 mVpp (50 mV amplitude) supply
+//                        ripple at `f_rip = 50 kHz` measuring large-signal
+//                        dynamic PSRR (`dyn_psrr_db`).
+//
+// DUT interface contract (5-pin LDO exposing breakable FB_IN):
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vdd_dip=0.85 \
+    vref=0.9 \
+    cload=2.2u \
+    resr=200m \
+    r_load=180 \
+    t_dip1=20u \
+    t_dip2=60u \
+    tr=100n \
+    t_stop_bo=160u \
+    v_rip_amp=0.0 \
+    v_rip_test=50m \
+    f_rip=50k \
+    t_stop_rip=200u \
+    temp_c=27
+
+// Base supply with PWL brown-out dip + series large-signal ripple injector
+VSUP_DIP (VDD_BASE 0) vsource dc=vdd_nom type=pwl wave=[ \
+    0           vdd_nom \
+    t_dip1      vdd_nom \
+    (t_dip1+tr) vdd_dip \
+    t_dip2      vdd_dip \
+    (t_dip2+tr) vdd_nom \
+    t_stop_bo   vdd_nom ]
+
+VSUP_RIP (VDD VDD_BASE) vsource dc=0 type=sine sinedc=0 ampl=v_rip_amp freq=f_rip
+VGND     (VSS  0)       vsource dc=0    type=dc
+VVREF    (VREF 0)       vsource dc=vref type=dc
+
+I0    (VDD VREF VOUT VOUT VSS) dut_ldo
+
+RLOAD (VOUT VSS)    resistor  r=r_load
+RESR  (VOUT V_CESR) resistor  r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Deep brown-out dip into dropout & triode-exit recovery overshoot
+tran_brownout tran stop=t_stop_bo errpreset=conservative maxstep=200n
+
+// 2. Large-signal periodic 100 mVpp supply ripple injection (flat DC baseline)
+alt_no_dip alter param=vdd_dip   value=vdd_nom
+alt_rip    alter param=v_rip_amp value=v_rip_test
+tran_ripple tran stop=t_stop_rip errpreset=conservative maxstep=200n
+
+save VOUT VDD VSUP_DIP:p
+saveOptions options save=selected
