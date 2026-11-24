@@ -1,88 +1,77 @@
-# sar-adc-skills
+# ams-skills
 
-Process-independent SAR ADC design knowledge base and Spectre verification toolkit for agentic IC design — covering system-level budgeting, circuit topologies, top-level integration, Verilog-A behavioral modeling, and standalone Spectre testbenches for every building block.
+Process-independent Analog & Mixed-Signal (AMS) IC design skills, Verilog-A behavioral model libraries, and standalone Spectre testbench suites for agentic IC design.
 
-## What This Skill Covers
+> Formerly `sar-adc-skills` — expanded into a multi-skill AMS repository where each circuit domain is an independently installable AI agent skill sharing a unified, process-independent Spectre verification foundation.
 
-| Topic | Reference | Standalone Spectre TB |
-|---|---|---|
-| SAR operation, residue viewpoint, CDAC-centered architecture, sync vs. async | [core-architecture.md](sar-adc-skill/references/core-architecture.md) | — |
-| Design flow, noise budgets (Q, kT/C, comparator, jitter), switching schemes, redundancy | [design-and-tradeoffs.md](sar-adc-skill/references/design-and-tradeoffs.md) | — |
-| PVT vs. Monte Carlo, metastability, BER, reference path, input drive, supply integrity | [robustness-and-system.md](sar-adc-skill/references/robustness-and-system.md) | — |
-| CDAC: charge redistribution, differential kT/C sizing, binary & sub-radix-2 arrays | [cdac.md](sar-adc-skill/references/cdac.md) | [assets/tb/cdac/](sar-adc-skill/assets/tb/cdac/README.md) |
-| Dynamic comparators: StrongARM & Miyahara two-stage, sizing, noise, offset, FoM1/FoM2 | [comparator.md](sar-adc-skill/references/comparator.md) | [assets/tb/comparator/](sar-adc-skill/assets/tb/comparator/README.md) |
-| Bootstrapped sampling switch: gate boosting, clocked `Ron` flatness, linearity | [bootstrap_switch.md](sar-adc-skill/references/bootstrap_switch.md) | [assets/tb/bootstrap/](sar-adc-skill/assets/tb/bootstrap/README.md) |
-| Sync & async SAR logic: latch chain, `NOR3` stop logic, `VALID_L`/`EN` race | [sar-logic.md](sar-adc-skill/references/sar-logic.md) | [assets/tb/sar_logic/](sar-adc-skill/assets/tb/sar_logic/README.md) |
-| PMOS-pass LDO regulator: Miller compensation, `stb`, DC/HF PSRR, noise, load step | [ldo.md](sar-adc-skill/references/ldo.md) | [assets/tb/ldo/](sar-adc-skill/assets/tb/ldo/README.md) |
-| Top-level integration: module connectivity, polarity conventions, bring-up debug | [integration.md](sar-adc-skill/references/integration.md) | — |
-| Spectre simulation: coherent FFT, `strobeonly`, `noiseruns=1`, ADCToolbox, Maestro pitfalls | [simulation-and-verification.md](sar-adc-skill/references/simulation-and-verification.md) | [assets/tb/adc_top/](sar-adc-skill/assets/tb/adc_top/README.md) |
+## Included Skills
 
-All guides, Verilog-A models, and Spectre testbenches are **100% process-independent** — plug in your own PDK `models_corner.scs` + `dut_subckt.scs`, or smoke-test with the bundled synthetic BSIM4 model card in [assets/tb/common/](sar-adc-skill/assets/tb/common/README.md).
+| Skill | Coverage | References | Verilog-A | Spectre TBs | Evals |
+|---|---|---|---|---|---|
+| [**`skills/sar-adc/`**](skills/sar-adc/SKILL.md) | SAR ADC architecture, CDAC (binary & sub-radix-2), StrongARM & Miyahara comparators, bootstrapped switch, sync/async SAR logic, LDO, top-level integration & coherent FFT verification | 10 guides | 14 models (4b & 10b) + `cmp_bisect.va` | 6 suites (`comparator`, `bootstrap`, `cdac`, `sar_logic`, `ldo`, `adc_top`) | 28 |
+| [**`skills/pll/`**](skills/pll/SKILL.md) | Integer-N CP-PLL, Fractional-N $\Delta\Sigma$ (MASH 1-1-1) PLL, All-Digital PLL (TDC-ADPLL & Bang-Bang ADPLL), LC/Ring VCO & DCO, tri-state PFD/CP, MMD dividers, autonomous PSS+PNOISE & RMS jitter | 7 guides | 10 models | 7 suites (`vco`, `pfd_cp`, `divider`, `tdc_dco`, `int_n_pll`, `frac_n_pll`, `adpll`) | 16 |
 
-## Bundled Assets
+## Shared Verification Foundation (`common/`)
 
-### Per-Block Spectre Testbench Suite (`sar-adc-skill/assets/tb/`)
+All skills share a single, zero-PDK verification core under [`common/`](common/README.md):
 
-Every core SAR ADC block ships with standalone Spectre `.scs` decks and a zero-dependency Python PSF ASCII analyzer (`numpy` only):
+- **[`common/psf_utils.py`](common/psf_utils.py)** — Zero-dependency Python (`numpy` only) Spectre PSF ASCII parser (handles real `tran`/`dc`/`noise`/`pss`/`pnoise` and complex `ac`/`stb` traces), `extract_uniform_strobe` (filters Spectre's off-grid `t=0`/`t=t_stop` endpoints), coherent FFT (`ENOB`/`SNDR`/`SNR`/`SFDR`/`THD`), endpoint `DNL`/`INL`, and IEEE-1139 phase-noise-to-RMS-jitter integration.
+- **[`common/models_generic_bsim4.scs`](common/models_generic_bsim4.scs)** — Synthetic, foundry-free Spectre BSIM4 model pair (`nch` / `pch`) with thermal noise enabled for out-of-the-box smoke verification when no PDK is attached.
 
-| Directory | Testbenches & Analyzer | Key Extracted Metrics |
-|---|---|---|
-| `common/` | `psf_utils.py`, `models_generic_bsim4.scs` | Real + complex PSF ASCII parser, `extract_uniform_strobe`, coherent FFT, DNL/INL, generic BSIM4 demo card |
-| `comparator/` | `tb_cmp_pss_pnoise.scs`, `tb_cmp_delay.scs`, `tb_cmp_trannoise.scs`, `tb_cmp_offset.scs`, `cmp_bisect.va`, `run_cmp_tb.py` | Input-referred RMS noise, `t_cmp`, `t_rst`, regeneration `tau`, `E_cmp`, `FoM1`, `FoM2`, offset/hysteresis |
-| `bootstrap/` | `tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py` | Clocked flying-cap `Ron(VIN)` flatness, Nyquist sampled `SFDR`, `THD`, `SNDR`, `ENOB` |
-| `cdac/` | `tb_cdac_static_dnl_inl.scs`, `tb_cdac_settling.scs`, `analyze_cdac.py` | 512-state static `DNL`/`INL`, common-mode shift `Vcm`, worst-case MSB `0.5 LSB` settling time |
-| `sar_logic/` | `tb_sar_logic_timing.scs`, `analyze_sar_logic.py` | 4-frame closed-loop timing (incl. `0.1 mV` metastability stress), exact `N` `CMPCK` count, `EOC` stop, code error |
-| `ldo/` | `tb_ldo_stb.scs`, `tb_ldo_psrr_noise.scs`, `tb_ldo_load_tran.scs`, `analyze_ldo.py` | DC loop gain `T0`, `UGF`, `PM`, `GM`, `PSRR(f)`, integrated output noise, load-step droop |
-| `adc_top/` | `tb_sar_adc_fft.scs`, `tb_sar_adc_ramp_dnl.scs`, `analyze_adc_top.py` | Coherent `ENOB`/`SNDR`/`SNR`/`SFDR`/`THD`, clipping flag, ramp `DNL`/`INL`, missing codes, usable full swing |
-
-### Verilog-A Behavioral Library (`sar-adc-skill/assets/va/`)
-
-14 Spectre-verified Verilog-A models (plus `cmp_bisect.va` under `assets/tb/comparator/`):
-
-- **10-bit & non-ideality-injectable models** (Phase 1–3 behavioral & hybrid verification): `va_cmp_dynamic.va` (offset, Gaussian thermal noise, logarithmic metastability delay), `va_cdac_10b_diff.va` (Vcm-based/monotonic, `c_par_ratio`, `dm_msb`, `tau_settle`), `va_sar_logic_10b_async.va`, `va_dac_10b_diff.va`, `va_bootstrap_sw.va`, `va_code_ramp_10b.va`, `va_ldo_ideal.va`.
-- **4-bit tutorial baseline models**: `L2_cdac_4b_ideal.va`, `L2_comparator_ideal.va`, `L2_logic_4b_sync.va`, `L3_logic_4b_async.va`, `_va_dac_4b.va`, `_va_dac_4b_se.va`, `sar_4b_se_ideal.va`.
+All guides, Verilog-A models, and Spectre testbenches are **100% process-independent** — plug in your own PDK `models_corner.scs` + `dut_subckt.scs` for real process sizing and signoff.
 
 ## Quick Start
 
-Install as a skill for your AI coding agent:
+Install any individual skill (or all of them) for your AI coding agent:
 
 ```bash
-# Symlink into your project's skills directory
-ln -s /path/to/sar-adc-skills/sar-adc-skill .claude/skills/sar-adc
+# Install the SAR ADC skill
+ln -s /path/to/ams-skills/skills/sar-adc .claude/skills/sar-adc
+
+# Install the PLL skill (Integer-N, Fractional-N, ADPLL)
+ln -s /path/to/ams-skills/skills/pll .claude/skills/pll
 ```
 
-Validate repository integrity offline:
+Run the offline repository validation suite (leak scan, schema, links, `ahdl_include` paths, Python syntax & unit tests):
 
 ```bash
-python3 scripts/validate_repo.py
+python3 -B scripts/validate_repo.py
 ```
+
+## Skill Details
+
+### 1. SAR ADC Skill (`skills/sar-adc/`)
+
+- **References (`skills/sar-adc/references/`)**: [core-architecture.md](skills/sar-adc/references/core-architecture.md), [design-and-tradeoffs.md](skills/sar-adc/references/design-and-tradeoffs.md), [robustness-and-system.md](skills/sar-adc/references/robustness-and-system.md), [cdac.md](skills/sar-adc/references/cdac.md), [comparator.md](skills/sar-adc/references/comparator.md), [bootstrap_switch.md](skills/sar-adc/references/bootstrap_switch.md), [sar-logic.md](skills/sar-adc/references/sar-logic.md), [ldo.md](skills/sar-adc/references/ldo.md), [integration.md](skills/sar-adc/references/integration.md), [simulation-and-verification.md](skills/sar-adc/references/simulation-and-verification.md).
+- **Spectre Testbenches (`skills/sar-adc/assets/tb/`)**: [comparator/](skills/sar-adc/assets/tb/comparator/README.md), [bootstrap/](skills/sar-adc/assets/tb/bootstrap/README.md), [cdac/](skills/sar-adc/assets/tb/cdac/README.md), [sar_logic/](skills/sar-adc/assets/tb/sar_logic/README.md), [ldo/](skills/sar-adc/assets/tb/ldo/README.md), [adc_top/](skills/sar-adc/assets/tb/adc_top/README.md).
+- **Verilog-A Library (`skills/sar-adc/assets/va/`)**: 10-bit non-ideality-injectable models (`va_cmp_dynamic`, `va_cdac_10b_diff`, `va_sar_logic_10b_async`, `va_dac_10b_diff`, `va_bootstrap_sw`, `va_code_ramp_10b`, `va_ldo_ideal`) plus 7 baseline 4-bit tutorial models.
+
+### 2. PLL Skill (`skills/pll/`)
+
+- **References (`skills/pll/references/`)**: [pll-fundamentals.md](skills/pll/references/pll-fundamentals.md), [integer-n-pll.md](skills/pll/references/integer-n-pll.md), [fractional-n-pll.md](skills/pll/references/fractional-n-pll.md), [adpll.md](skills/pll/references/adpll.md), [vco-and-dco.md](skills/pll/references/vco-and-dco.md), [pfd-cp-divider.md](skills/pll/references/pfd-cp-divider.md), [simulation-and-verification.md](skills/pll/references/simulation-and-verification.md).
+- **Spectre Testbenches (`skills/pll/assets/tb/`)**: [vco/](skills/pll/assets/tb/vco/README.md), [pfd_cp/](skills/pll/assets/tb/pfd_cp/README.md), [divider/](skills/pll/assets/tb/divider/README.md), [tdc_dco/](skills/pll/assets/tb/tdc_dco/README.md), [int_n_pll/](skills/pll/assets/tb/int_n_pll/README.md), [frac_n_pll/](skills/pll/assets/tb/frac_n_pll/README.md), [adpll/](skills/pll/assets/tb/adpll/README.md).
+- **Verilog-A Library (`skills/pll/assets/va/`)**: `va_pfd`, `va_cp`, `va_vco`, `va_div_int`, `va_mmd_mash111`, `va_tdc`, `va_dco`, `va_dlf_pi`, `va_bbpd`, and `va_phase_err_mon`.
 
 ## Repository Layout
 
 ```text
-sar-adc-skill/
-├── SKILL.md                      # Skill definition and read-order guide
-├── agents/
-│   └── openai.yaml               # Agent interface metadata
-├── references/                   # 10 process-independent technical references
-├── assets/
-│   ├── tb/                       # Per-block standalone Spectre testbenches + analyzers
-│   │   ├── common/               # Shared PSF parser + synthetic BSIM4 demo card
-│   │   ├── comparator/           # PSS+PNOISE, delay, trannoise, offset bisection
-│   │   ├── bootstrap/            # Clocked Ron sweep + coherent sampling FFT
-│   │   ├── cdac/                 # Static DNL/INL + MSB settling
-│   │   ├── sar_logic/            # Closed-loop timing & metastability race check
-│   │   ├── ldo/                  # stb, AC PSRR + noise, load-step transient
-│   │   └── adc_top/              # Full-ADC coherent FFT + ramp DNL/INL
-│   └── va/                       # 14 Verilog-A behavioral models (10-bit & 4-bit)
-└── evals/
-    └── evals.json                # Evaluation prompts for skill testing
-scripts/
-└── validate_repo.py              # Offline CI validation (leaks, links, YAML/JSON, helpers)
+ams-skills/
+├── common/                       # Shared PSF parser + synthetic BSIM4 demo card
+│   ├── psf_utils.py
+│   └── models_generic_bsim4.scs
+├── skills/
+│   ├── sar-adc/                  # SAR ADC skill (10 refs, 14 VA, 6 TB suites, 28 evals)
+│   └── pll/                      # PLL skill: Int-N, Frac-N, ADPLL (7 refs, 10 VA, 7 TB suites, 16 evals)
+├── scripts/
+│   └── validate_repo.py          # Multi-skill offline CI validator
+└── .github/workflows/
+    └── validate.yml              # GitHub Actions validation workflow
 ```
 
 ## Related Repositories
 
-- [Arcadia-1/analog-circuit-skills](https://github.com/Arcadia-1/analog-circuit-skills) — transistor-level comparator and bootstrap switch skills with ngspice simulation
-- [Arcadia-1/ADCToolbox](https://github.com/Arcadia-1/ADCToolbox) — ADC performance analysis (ENOB, SNDR, SFDR, DNL/INL)
-- [Arcadia-1/virtuoso-bridge-lite](https://github.com/Arcadia-1/virtuoso-bridge-lite) — remote Cadence Virtuoso / Spectre simulation
+- [Arcadia-1/awesome-ams-skills](https://github.com/Arcadia-1/awesome-ams-skills) — Curated portal of AMS IC design agent skills
+- [Arcadia-1/virtuoso-bridge-lite](https://github.com/Arcadia-1/virtuoso-bridge-lite) — Remote Cadence Virtuoso / Spectre automation bridge
+- [Arcadia-1/ADCToolbox](https://github.com/Arcadia-1/ADCToolbox) — ADC characterization, diagnosis, and calibration toolbox
+- [Arcadia-1/analog-circuit-skills](https://github.com/Arcadia-1/analog-circuit-skills) — Open-source ngspice + PTM single-block analog circuit skills (zero commercial license)
+- [Arcadia-1/circuits-and-systems-classroom](https://github.com/Arcadia-1/circuits-and-systems-classroom) — Interactive web classroom and mathematical derivations for AMS circuits & systems

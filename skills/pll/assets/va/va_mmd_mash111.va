@@ -1,0 +1,90 @@
+// Process-independent Multi-Modulus Divider (MMD) + 3rd-Order MASH 1-1-1 DSM
+//
+// Produces an exact average fractional division ratio:
+//   N_eff = n_int + k_frac / 2^m_bits
+//
+// Architecture:
+//   - Three cascaded 1st-order digital accumulators modulo 2^m_bits
+//   - Exact 3rd-order error cancellation:
+//       y[n] = c1[n] + (c2[n] - c2[n-1]) + (c3[n] - 2*c3[n-1] + c3[n-2])
+//     spanning [-3 .. +4], shaping quantization noise by (1 - z^-1)^3
+//   - Optional 1-LSB initial seed on accumulator 1 (seed_lsb=1) breaks short
+//     deterministic limit cycles on simple rational fractions (e.g., 1/4, 1/8)
+//   - MOD_MON outputs the instantaneous integer modulus cur_mod for inspection
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_mmd_mash111(
+    input  electrical CLK_IN,
+    output electrical CLK_OUT,
+    output electrical MOD_MON
+);
+
+parameter integer n_int    = 20   from [5:65535];  // integer part (keep >= 5 so n_int-3 >= 2)
+parameter integer k_frac   = 13   from [0:1048575]; // fractional numerator
+parameter integer m_bits   = 7    from [3:20];     // accumulator bit width (denom = 2^m_bits)
+parameter integer seed_lsb = 1    from [0:1];      // initial LSB seed in acc1 to break cycles
+parameter real    vdd      = 0.9  from (0:inf);
+parameter real    vth      = 0.45;
+parameter real    td       = 20p  from [0:inf);
+parameter real    tr       = 10p  from (0:inf);
+
+integer mod_val, cnt, cur_mod, out_st;
+integer acc1, acc2, acc3;
+integer s1, s2, s3, c1, c2, c3;
+integer c2_z1, c3_z1, c3_z2, y_dsm;
+integer k;
+
+analog begin
+    @(initial_step) begin
+        mod_val = 1;
+        for (k = 0; k < m_bits; k = k + 1) begin
+            mod_val = mod_val * 2;
+        end
+        acc1    = seed_lsb;
+        acc2    = 0;
+        acc3    = 0;
+        c2_z1   = 0;
+        c3_z1   = 0;
+        c3_z2   = 0;
+        cur_mod = n_int;
+        cnt     = 0;
+        out_st  = 0;
+    end
+
+    @(cross(V(CLK_IN) - vth, +1)) begin
+        cnt = cnt + 1;
+        if (cnt >= cur_mod) begin
+            cnt = 0;
+            // Advance 3-stage MASH 1-1-1 accumulator chain synchronously on divided cycle
+            s1   = acc1 + (k_frac % mod_val);
+            c1   = (s1 >= mod_val) ? 1 : 0;
+            acc1 = s1 - c1 * mod_val;
+
+            s2   = acc2 + acc1;
+            c2   = (s2 >= mod_val) ? 1 : 0;
+            acc2 = s2 - c2 * mod_val;
+
+            s3   = acc3 + acc2;
+            c3   = (s3 >= mod_val) ? 1 : 0;
+            acc3 = s3 - c3 * mod_val;
+
+            y_dsm = c1 + (c2 - c2_z1) + (c3 - 2 * c3_z1 + c3_z2);
+            c2_z1 = c2;
+            c3_z2 = c3_z1;
+            c3_z1 = c3;
+
+            cur_mod = n_int + y_dsm;
+            if (cur_mod < 2) begin
+                cur_mod = 2;
+            end
+        end
+        out_st = (cnt < (cur_mod / 2)) ? 1 : 0;
+    end
+
+    V(CLK_OUT) <+ transition(out_st * vdd, td, tr, tr);
+    V(MOD_MON) <+ transition(cur_mod, 0, tr, tr);
+end
+
+endmodule

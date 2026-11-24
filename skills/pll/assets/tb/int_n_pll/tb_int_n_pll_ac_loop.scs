@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent Integer-N / Frac-N CP-PLL — Phase-Domain AC & STB Loop
+// =============================================================================
+// Instant (< 0.5 s) small-signal phase-domain model of a Type-II CP-PLL with
+// 2nd-order (R1, C1, C2) or 3rd-order (add R3, C3) passive loop filter:
+//   - `stb` via `iprobe`: exact unity-gain bandwidth f_u, Phase Margin PM, Gain Margin GM
+//   - `ac`: closed-loop H(s) = Phi_div/Phi_ref (peaking & -3 dB BW) and VCO NTF 1-H(s)
+//
+// Default worked example (matches references/integer-n-pll.md):
+//   f_ref=50 MHz, N=20, I_cp=100 uA, K_VCO=200 MHz/V, R1=13.5k, C1=22p, C2=1.7p
+//   -> f_u ~= 2.0 MHz, PM ~= 60 deg!
+//   To enable 3rd-order Frac-N filter, set r3=30k, c3=0.4p.
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+parameters \
+    i_cp=100u \
+    kvco=200e6 \
+    n_div=20 \
+    r1=13.5k \
+    c1=22p \
+    c2=1.7p \
+    r3=1m \
+    c3=1e-18 \
+    pi=3.141592653589793
+
+// Reference phase stimulus: 1 V AC = 1 rad
+VREF (PHI_REF 0) vsource dc=0 mag=1 type=dc
+
+// PFD + CP gain Kd = I_cp / (2*pi) [A/rad]
+G_CP (0 VCTRL PHI_REF PHI_FB) vccs gm=i_cp/(2*pi)
+
+// Passive loop filter: R1+C1 || C2 -> optional R3/C3
+R_1  (VCTRL N_C1)    resistor  r=r1
+C_1  (N_C1 0)        capacitor c=c1
+C_2  (VCTRL 0)       capacitor c=c2
+R_3  (VCTRL VCTRL_F) resistor  r=r3
+C_3  (VCTRL_F 0)     capacitor c=c3
+R_DC1 (VCTRL 0)      resistor  r=1e12
+
+// VCO phase integrator: Phi_out(s) = (2*pi*K_VCO / s) * VCTRL_F(s)
+G_VCO (0 PHI_OUT VCTRL_F 0) vccs gm=2*pi*kvco
+C_INT (PHI_OUT 0)           capacitor c=1.0
+R_DC2 (PHI_OUT 0)           resistor  r=1e12
+
+// Feedback divider: Phi_div = Phi_out / N
+E_DIV (PHI_DIV 0 PHI_OUT 0) vcvs gain=1.0/n_div
+
+// Stability probe inside feedback loop
+IPRB  (PHI_DIV PHI_FB) iprobe
+
+simulatorOptions options psfversion="1.4.0" reltol=1e-5 gmin=1e-12
+
+stb stb start=1k stop=100M dec=40 probe=IPRB annotate=status
+ac  ac  start=1k stop=100M dec=40 annotate=status
+
+save PHI_REF PHI_FB PHI_OUT VCTRL_F
+saveOptions options save=selected

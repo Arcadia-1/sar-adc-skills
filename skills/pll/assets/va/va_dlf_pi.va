@@ -1,0 +1,58 @@
+// Process-independent Digital PI Loop Filter (DLF) for ADPLL
+//
+// Updates on rising edge of CLK (typically delayed FREF so TDC_OUT has settled):
+//   i[k]   = clamp(i[k-1] + beta * ERR_IN, i_min, i_max)
+//   FTW[k] = clamp(ftw0 + alpha * ERR_IN + i[k], ftw_min, ftw_max)
+//
+// Mapping from target bandwidth f_u and zero ratio gamma = omega_u / omega_z:
+//   alpha ~= N * f_ref * t_res * (2*pi*f_u) / K_DCO
+//   beta  ~= alpha * (2*pi*f_u) / (gamma * f_ref)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dlf_pi(
+    input  electrical CLK,
+    input  electrical ERR_IN,
+    output electrical FTW_OUT
+);
+
+parameter real    vth          = 0.45;
+parameter real    alpha        = 1.0;                 // proportional gain [LSB_FTW / LSB_ERR]
+parameter real    beta         = 0.05;                // integral gain [LSB_FTW / LSB_ERR]
+parameter real    ftw0         = 512.0;               // initial / nominal FTW
+parameter real    ftw_init_err = 0.0;                 // initial integrator offset [LSB]
+parameter real    ftw_min      = 0.0;
+parameter real    ftw_max      = 1023.0;
+parameter integer quantize_out = 0    from [0:1];     // 1 = round FTW_OUT to integer
+parameter real    td           = 50p  from [0:inf);
+parameter real    tr           = 15p  from (0:inf);
+
+real acc, ftw_val, err_s;
+
+analog begin
+    @(initial_step) begin
+        acc     = ftw_init_err;
+        ftw_val = ftw0 + acc;
+        if (ftw_val < ftw_min) ftw_val = ftw_min;
+        if (ftw_val > ftw_max) ftw_val = ftw_max;
+    end
+
+    @(cross(V(CLK) - vth, +1)) begin
+        err_s = V(ERR_IN);
+        acc   = acc + beta * err_s;
+        if (acc < (ftw_min - ftw0)) acc = ftw_min - ftw0;
+        if (acc > (ftw_max - ftw0)) acc = ftw_max - ftw0;
+
+        ftw_val = ftw0 + alpha * err_s + acc;
+        if (ftw_val < ftw_min) ftw_val = ftw_min;
+        if (ftw_val > ftw_max) ftw_val = ftw_max;
+        if (quantize_out == 1) begin
+            ftw_val = floor(ftw_val + 0.5);
+        end
+    end
+
+    V(FTW_OUT) <+ transition(ftw_val, td, tr, tr);
+end
+
+endmodule

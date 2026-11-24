@@ -1,0 +1,52 @@
+// =============================================================================
+// Process-Independent Fractional-N MASH 1-1-1 CP-PLL — Closed-Loop Lock TB
+// =============================================================================
+// Verifies a Fractional-N Delta-Sigma PLL locking to a non-integer multiple of
+// f_ref:
+//   f_target = f_ref * (n_int + k_frac / 2^m_bits)
+//   Default: 50 MHz * (20 + 13/128) = 1.005078125 GHz
+//
+// Measures exact cycle-counted steady-state frequency error [ppm], VCTRL DSM
+// quantization ripple, and steady-state output period jitter (enabling direct
+// A/B comparison of matched CP vs. mismatched CP noise folding!).
+//
+// DUT interface contract (5-pin Fractional-N PLL core):
+//   subckt dut_frac_n_pll FREF OUTP OUTN VCTRL VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    f_ref=50M \
+    vctrl_init=0.30 \
+    t_stop=10u \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+parameters t_ref=1/f_ref
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=tr fall=tf width=0.5*t_ref
+
+I0    (FREF OUTP OUTN VCTRL VDD VSS) dut_frac_n_pll
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=1.0G
+
+ic VCTRL=vctrl_init
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate
+
+save VCTRL F_INST OUTP
+saveOptions options save=selected

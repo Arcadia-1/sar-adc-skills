@@ -1,0 +1,54 @@
+// =============================================================================
+// Process-Independent ADPLL DCO Testbench — FTW Tuning & K_DCO Monotonicity
+// =============================================================================
+// Steps the digital tuning word FTW across 9 integer points and monitors
+// settled oscillation frequency via `va_phase_err_mon.va`.
+//
+// DUT interface contract (5-pin DCO):
+//   subckt dut_dco FTW OUTP OUTN VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    ftw_start=480 \
+    ftw_step=8 \
+    n_pts=9 \
+    t_dwell=30n \
+    f_init=1.0G \
+    temp_c=27
+
+parameters t_stop=n_pts*t_dwell
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+VFTW (FTW 0) vsource type=pwl wave=[ \
+    0             (ftw_start+0*ftw_step)  (1*t_dwell-1n) (ftw_start+0*ftw_step) \
+    (1*t_dwell)   (ftw_start+1*ftw_step)  (2*t_dwell-1n) (ftw_start+1*ftw_step) \
+    (2*t_dwell)   (ftw_start+2*ftw_step)  (3*t_dwell-1n) (ftw_start+2*ftw_step) \
+    (3*t_dwell)   (ftw_start+3*ftw_step)  (4*t_dwell-1n) (ftw_start+3*ftw_step) \
+    (4*t_dwell)   (ftw_start+4*ftw_step)  (5*t_dwell-1n) (ftw_start+4*ftw_step) \
+    (5*t_dwell)   (ftw_start+5*ftw_step)  (6*t_dwell-1n) (ftw_start+5*ftw_step) \
+    (6*t_dwell)   (ftw_start+6*ftw_step)  (7*t_dwell-1n) (ftw_start+6*ftw_step) \
+    (7*t_dwell)   (ftw_start+7*ftw_step)  (8*t_dwell-1n) (ftw_start+7*ftw_step) \
+    (8*t_dwell)   (ftw_start+8*ftw_step)  t_stop         (ftw_start+8*ftw_step) ]
+
+I0    (FTW OUTP OUTN VDD VSS) dut_dco
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=f_init
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate \
+    strobeperiod=t_dwell strobedelay=0.9*t_dwell strobeoutput=strobeonly
+
+save FTW F_INST T_PER
+saveOptions options save=selected

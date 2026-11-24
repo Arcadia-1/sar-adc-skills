@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent Bootstrapped Switch Testbench — Clocked Ron(VIN) Sweep
+// =============================================================================
+// Why clocked transient instead of pure DC sweep?
+//   A real capacitive bootstrapped switch requires CLKS=0 phases to precharge
+//   its flying bootstrap capacitor CB before CLKS=VDD boosts VG = VIN + VDD.
+//   A pure DC sweep leaves CB uncharged. This clocked sweep toggles CLKS across
+//   N_PTS input voltages from 0 to VDD while maintaining an exact Vds = vds_probe
+//   across the switch, so Ron(VIN) = vds_probe / I_sw is measured accurately
+//   for BOTH real transistor bootstrapped switches and behavioral models.
+//
+// DUT interface contract (5-pin bootstrapped switch + optional VG monitor):
+//   subckt dut_bootstrap CLKS VIN VOUT VDD VSS
+//   (Optional: expose internal boosted gate as I0.VG to verify VG - VIN flatness.)
+//
+// External files supplied alongside this testbench:
+//   - models_corner.scs : foundry or generic device models (e.g. repo-root common/models_generic_bsim4.scs)
+//   - dut_subckt.scs    : defines `subckt dut_bootstrap CLKS VIN VOUT VDD VSS`
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vds_probe=1m \
+    tclk=10n \
+    n_pts=20 \
+    tr=50p \
+    tf=50p \
+    temp_c=27
+
+// Ramp VIN slowly from 0 to VDD over n_pts clock cycles
+VVIN    (VIN 0)        vsource type=pwl wave=[0 0 (n_pts*tclk) vdd]
+// Track VIN on VOUT with an exact fixed offset vds_probe so V(VIN)-V(VOUT) = vds_probe
+ETRACK  (VOUT_REF 0 VIN 0) vcvs gain=1.0
+VPROBE  (VOUT_REF VOUT)    vsource dc=vds_probe type=dc
+
+VSUP    (VDD 0)  vsource dc=vdd type=dc
+VGND    (VSS 0)  vsource dc=0   type=dc
+// CLKS=0 during first half of each cycle (precharge CB), CLKS=VDD during second half (measure Ron)
+VCLKS   (CLKS 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=0.5*tclk rise=tr fall=tf width=0.5*tclk
+
+I0 (CLKS VIN VOUT VDD VSS) dut_bootstrap
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe near the end of each CLKS=VDD window (0.9*tclk)
+tran tran stop=n_pts*tclk errpreset=conservative \
+    strobeperiod=tclk strobedelay=0.9*tclk strobeoutput=strobeonly
+
+// I(VPROBE:p) flows VOUT_REF -> VOUT; switch current VIN -> VOUT is -I(VPROBE:p)
+save VIN VOUT CLKS VPROBE:p
+saveOptions options save=selected

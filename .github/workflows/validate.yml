@@ -1,4 +1,4 @@
-name: Validate SAR ADC Skills
+name: Validate AMS Skills
 
 on:
   push:

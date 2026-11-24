@@ -1,0 +1,153 @@
+{
+  "skill_name": "pll-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need a 2.4 GHz frequency synthesizer with 100 kHz channel spacing from a 50 MHz crystal reference. Should I use an Integer-N PLL, a Fractional-N MASH PLL, or an ADPLL?",
+      "expected_output": "Should show that Integer-N would force f_ref = 100 kHz and N = 24,000 (+87.6 dB in-band noise penalty and tiny < 10 kHz loop BW), so Fractional-N CP-PLL (MASH 1-1-1 with f_ref = 50 MHz, N ~ 48) or Fractional-N ADPLL is required; compare passive area, CP linearity/noise folding, and TDC/DCO quantization tradeoffs.",
+      "files": [
+        "references/pll-fundamentals.md",
+        "references/fractional-n-pll.md",
+        "references/adpll.md"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Size a 2nd-order passive loop filter (R, C1, C2) for a 1 GHz Integer-N CP-PLL with f_ref = 50 MHz, N = 20, I_cp = 100 uA, K_VCO = 200 MHz/V, targeting f_u = 2 MHz and 60 degrees phase margin.",
+      "expected_output": "Should apply the exact geometric-mean PM formula: gamma = tan(60) + sec(60) ~= 3.73, b = gamma^2 ~= 13.9, R = N*omega_u/(I_cp*K_VCO) * b/(b-1) ~= 13.5 kOhm, C1 = gamma/(R*omega_u) ~= 22 pF, C2 = C1/(b-1) ~= 1.7 pF, and verify f_u <= f_ref/10 and R thermal noise.",
+      "files": [
+        "references/integer-n-pll.md",
+        "assets/tb/int_n_pll/tb_int_n_pll_ac_loop.scs"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Why does my Fractional-N MASH 1-1-1 PLL show a 15 dB worse in-band phase noise floor in transistor simulation than my linear behavioral model predicted?",
+      "expected_output": "Should diagnose charge-pump Up/Down current mismatch (or PFD/CP nonlinearity around Delta_t = 0) rectifying the +/-3..4 T_vco MASH 1-1-1 phase swing and folding shaped high-frequency quantization noise down into the in-band floor; recommend static bleed/offset current to bias CP onto one linear slope, tighter CP matching/replica buffer, or DTC/DAC cancellation.",
+      "files": [
+        "references/fractional-n-pll.md",
+        "references/pfd-cp-divider.md"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Why is a 3rd-order passive loop filter (adding R3, C3) strongly recommended for a MASH 1-1-1 Fractional-N PLL instead of a 2nd-order filter?",
+      "expected_output": "Should derive that a 3rd-order MASH 1-1-1 shapes phase quantization noise at +20*(L-1) = +40 dB/dec, so a 2nd-order filter's -40 dB/dec closed-loop roll-off barely flattens the high-offset noise, whereas a 3rd-order filter provides -60 dB/dec roll-off above omega_p3 to attenuate out-of-band DSM quantization noise cleanly.",
+      "files": [
+        "references/fractional-n-pll.md",
+        "references/integer-n-pll.md"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Calculate the in-band phase noise floor contributed by a 15 ps resolution TDC in a 2.4 GHz ADPLL with f_ref = 50 MHz, and map a 1 MHz loop bandwidth into digital PI gains (alpha, beta).",
+      "expected_output": "Should compute L_TDC = 10*log10((2*pi)^2/12 * (15p/416.7p)^2 / 50M) ~= -100.7 dBc/Hz, explain how halving t_res improves floor by 6 dB, and map f_u and zero ratio omega_u/omega_z (~4-8) into alpha = N*f_ref*t_res*omega_u/K_DCO and beta = alpha*omega_z/f_ref while accounting for pipeline delay PM loss.",
+      "files": [
+        "references/adpll.md",
+        "assets/tb/adpll/tb_adpll_lock.scs"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "How do I set up Spectre PSS + PNOISE for a free-running differential LC-VCO, and why does my symmetric LC-VCO converge to DC instead of oscillating?",
+      "expected_output": "Should specify autonomous PSS syntax supplying the oscillator differential nodes `pss (OUTP OUTN) pss fund=f_est harms=20 errpreset=conservative tstab=... autotstab=yes` with `+aps`, relative `pnoise (OUTP OUTN) pnoise sweeptype=relative relharmnum=1 pnoisemethod=fullspectrum noisetype=timeaverage noiseout=[pm]`, and explain injecting a brief asymmetric startup kick pulse strictly during initial transient so a symmetric LC tank leaves its unstable DC saddle point.",
+      "files": [
+        "references/vco-and-dco.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/vco/tb_vco_pss_pnoise.scs"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "How do I convert a measured VCO or PLL phase-noise curve L(df) in dBc/Hz into integrated RMS phase jitter in femtoseconds?",
+      "expected_output": "Should give sigma_phi = sqrt(2 * integral_{f_low}^{f_high} 10^(L(f)/10) df) (noting the factor of 2 for both sidebands) and sigma_t = sigma_phi / (2*pi*f_out), distinguish absolute phase jitter from period and cycle-to-cycle jitter, and reference common/psf_utils.py integrate_phase_noise_jitter.",
+      "files": [
+        "references/pll-fundamentals.md",
+        "references/simulation-and-verification.md"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Why does a tri-state PFD intentionally add a reset pulse delay t_rst, and what breaks if t_rst is too short or too long?",
+      "expected_output": "Should explain that too-short t_rst creates a zero-gain dead zone around Delta_t = 0 where CP switches never fully turn on, whereas too-long t_rst increases simultaneous Up/Down CP thermal noise injection, magnifies mismatch-induced reference spurs (Delta_t_mis ~= (Delta_I/I_cp)*t_rst), and caps f_ref,max < 1/(2*t_rst).",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "assets/tb/pfd_cp/tb_pfd_cp_transfer.scs"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "How can I characterize PFD + Charge Pump linearity, Up/Down current mismatch, and dead zone in a single fast Spectre transient simulation?",
+      "expected_output": "Should point to assets/tb/pfd_cp/tb_pfd_cp_transfer.scs and analyze_pfd_cp.py: hold IOUT at fixed DC compliance voltages via VMEAS, apply a slightly detuned beat-clock pair (T_div = T_ref + dt_step) to sweep Delta_t across negative, zero, and positive offsets, integrate per-cycle charge Q(Delta_t), and verify K_d, Up/Down slope mismatch, Q(0), and slope through zero.",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "assets/tb/pfd_cp/tb_pfd_cp_transfer.scs",
+        "assets/tb/pfd_cp/README.md"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Compare a TDC-based ADPLL against a Bang-Bang ADPLL (BBPLL) — when should I pick each, and what stability pitfall is unique to a BBPLL?",
+      "expected_output": "Should explain that BBPLL replaces the multi-bit TDC with a 1-bit DFF/comparator (saving power and eliminating TDC INL spurs), but has nonlinear jitter-dependent effective gain K_BBPD = sqrt(2/pi)/sigma_t, deterministic limit cycles if proportional step alpha is too large, and slower slew/slope-overload recovery during large frequency steps.",
+      "files": [
+        "references/adpll.md",
+        "assets/va/va_bbpd.va"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Why should I add a VCO-clocked retiming flip-flop at the output of a multi-stage MMD frequency divider?",
+      "expected_output": "Should explain that a cascaded 2/3-cell or ripple divider accumulates thermal and supply-induced jitter from every stage, which multiplies by N^2 inside the PLL bandwidth; retiming FDIV with a single clean DFF clocked directly by the VCO resets accumulated divider jitter down to just that final flip-flop.",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "references/pll-fundamentals.md"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "How do I choose the optimal PLL loop bandwidth to minimize total integrated RMS jitter?",
+      "expected_output": "Should explain that in-band noise (Ref, CP, Div, TDC) is low-pass filtered by N*H(s) while VCO/DCO noise is high-pass filtered by 1-H(s), so minimum integrated jitter occurs near the crossover frequency where the referred in-band noise floor intersects the free-running VCO phase noise, bounded by f_ref/10 stability and Frac-N DSM/reference spur attenuation.",
+      "files": [
+        "references/pll-fundamentals.md",
+        "references/integer-n-pll.md"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "What behavioral Verilog-A models are bundled in pll-skill for phased verification of Integer-N, Fractional-N, and ADPLL loops?",
+      "expected_output": "Should list the 10 models in assets/va/ (va_pfd, va_cp, va_vco, va_div_int, va_mmd_mash111, va_tdc, va_dco, va_dlf_pi, va_bbpd, va_phase_err_mon) and show how to combine them with assets/tb/int_n_pll/, frac_n_pll/, and adpll/ for Phase 1 behavioral closure and Phase 3 incremental transistor replacement.",
+      "files": [
+        "SKILL.md",
+        "references/simulation-and-verification.md",
+        "assets/va/va_mmd_mash111.va"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "In an LC-VCO, why should I split tuning into a switched-capacitor coarse bank plus a small fine varactor instead of using one giant varactor?",
+      "expected_output": "Should explain that large K_VCO amplifies control-line thermal noise, loop-filter resistor noise, and reference/supply spurs by +20*log10(K_VCO), and worsens AM-to-PM noise conversion across the nonlinear C(V) varactor curve; using overlapping switched-cap coarse bands keeps fine K_VCO small and linear while covering PVT.",
+      "files": [
+        "references/vco-and-dco.md",
+        "assets/tb/vco/tb_vco_tuning_kvco.scs"
+      ]
+    },
+    {
+      "id": 15,
+      "prompt": "Why should I seed the LSB of the first accumulator in a MASH 1-1-1 Fractional-N modulator when simulating a simple fraction like 1/8?",
+      "expected_output": "Should explain that with zero initial state, simple rational fractions like K_frac/2^M = 1/8 fall into short periodic deterministic limit cycles generating discrete fractional spurs instead of pseudo-random shaped noise; seeding the first accumulator LSB (seed_lsb=1 in va_mmd_mash111.va) or adding 1-LSB LFSR dither breaks short cycles.",
+      "files": [
+        "references/fractional-n-pll.md",
+        "assets/va/va_mmd_mash111.va"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "How do I eliminate charge sharing at the output of a CMOS charge pump when UP and DN switches turn off?",
+      "expected_output": "Should explain that when UP/DN turn off, the floating current-source drain drifts toward VDD/VSS and dumps C_p*(VDD - Vctrl) spikes onto VCTRL on the next turn-on; adding a unity-gain opamp replica buffer steering the complementary switches (UPB/DNB) to a dummy node held at V_dummy = VCTRL eliminates charge-sharing spikes and reference spurs.",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "references/integer-n-pll.md"
+      ]
+    }
+  ]
+}

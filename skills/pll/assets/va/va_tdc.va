@@ -1,0 +1,88 @@
+// Process-independent signed Time-to-Digital Converter (TDC) for ADPLL
+//
+// Uses PFD-style tri-state edge pairing so the ADPLL retains full frequency
+// pull-in range when starting out of lock, while producing linear quantized
+// signed timing error codes near lock:
+//   - FREF arrives before FDIV (FDIV late, DCO too slow) -> TDC_OUT > 0
+//   - FDIV arrives before FREF (FDIV early, DCO too fast) -> TDC_OUT < 0
+//   - Resolution: t_res [s/LSB], saturated to [-max_code, +max_code]
+//   - Optional static offset (t_offset) and smooth sinusoidal INL (inl_lsb)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_tdc(
+    input  electrical FREF,
+    input  electrical FDIV,
+    output electrical TDC_OUT
+);
+
+parameter real    vth      = 0.45;
+parameter real    t_res    = 10p  from (0:inf);  // TDC LSB resolution [s]
+parameter integer max_code = 63   from [1:4095]; // signed saturation range [-max_code..+max_code]
+parameter real    t_offset = 0.0;                // static timing offset [s]
+parameter real    inl_lsb  = 0.0;                // peak sinusoidal INL error [LSB]
+parameter real    tr       = 10p  from (0:inf);
+
+integer lead_ref, lead_div, code_out;
+real t_ref_last, t_div_last, dt, norm_val, q_val;
+
+analog begin
+    @(initial_step) begin
+        lead_ref   = 0;
+        lead_div   = 0;
+        t_ref_last = 0.0;
+        t_div_last = 0.0;
+        code_out   = 0;
+    end
+
+    @(cross(V(FREF) - vth, +1)) begin
+        if (lead_div == 1) begin
+            // FDIV arrived first -> FDIV is early (negative phase error)
+            dt       = -($abstime - t_div_last) + t_offset;
+            norm_val = dt / t_res;
+            if (inl_lsb != 0.0) begin
+                norm_val = norm_val + inl_lsb * sin(`M_PI * norm_val / max_code);
+            end
+            q_val = floor(norm_val + 0.5);
+            if (q_val >  max_code) q_val =  max_code;
+            if (q_val < -max_code) q_val = -max_code;
+            code_out = q_val;
+            lead_div = 0;
+        end else if (lead_ref == 1) begin
+            // Two consecutive FREF edges without FDIV -> DCO far too slow
+            code_out   = max_code;
+            t_ref_last = $abstime;
+        end else begin
+            lead_ref   = 1;
+            t_ref_last = $abstime;
+        end
+    end
+
+    @(cross(V(FDIV) - vth, +1)) begin
+        if (lead_ref == 1) begin
+            // FREF arrived first -> FDIV is late (positive phase error)
+            dt       = ($abstime - t_ref_last) + t_offset;
+            norm_val = dt / t_res;
+            if (inl_lsb != 0.0) begin
+                norm_val = norm_val + inl_lsb * sin(`M_PI * norm_val / max_code);
+            end
+            q_val = floor(norm_val + 0.5);
+            if (q_val >  max_code) q_val =  max_code;
+            if (q_val < -max_code) q_val = -max_code;
+            code_out = q_val;
+            lead_ref = 0;
+        end else if (lead_div == 1) begin
+            // Two consecutive FDIV edges without FREF -> DCO far too fast
+            code_out   = -max_code;
+            t_div_last = $abstime;
+        end else begin
+            lead_div   = 1;
+            t_div_last = $abstime;
+        end
+    end
+
+    V(TDC_OUT) <+ transition(code_out, 0, tr, tr);
+end
+
+endmodule

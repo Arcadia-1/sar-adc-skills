@@ -1,0 +1,67 @@
+// Process-independent behavioral tri-state Phase-Frequency Detector (PFD)
+//
+// Models:
+//   - Rising-edge FREF vs. FDIV comparison with full frequency acquisition range
+//   - Controlled minimum reset pulse width (td_rst) to eliminate the CP dead zone
+//   - Polarity: FREF leads FDIV (VCO too slow) -> wider UP pulse
+//               FDIV leads FREF (VCO too fast) -> wider DN pulse
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_pfd(
+    input  electrical FREF,
+    input  electrical FDIV,
+    output electrical UP,
+    output electrical DN
+);
+
+parameter real vdd    = 0.9 from (0:inf);
+parameter real vth    = 0.45;
+parameter real td_rst = 80p from (0:inf);  // minimum reset overlap pulse width [s]
+parameter real tr     = 10p from (0:inf);  // output rise/fall time [s]
+
+integer up_st, dn_st, armed_rst;
+real t_rst_fire;
+
+analog begin
+    @(initial_step) begin
+        up_st      = 0;
+        dn_st      = 0;
+        armed_rst  = 0;
+        t_rst_fire = -1.0;
+    end
+
+    @(cross(V(FREF) - vth, +1)) begin
+        if (!armed_rst) begin
+            up_st = 1;
+            if (up_st && dn_st) begin
+                armed_rst  = 1;
+                t_rst_fire = $abstime + td_rst;
+            end
+        end
+    end
+
+    @(cross(V(FDIV) - vth, +1)) begin
+        if (!armed_rst) begin
+            dn_st = 1;
+            if (up_st && dn_st) begin
+                armed_rst  = 1;
+                t_rst_fire = $abstime + td_rst;
+            end
+        end
+    end
+
+    @(timer(t_rst_fire)) begin
+        if (armed_rst) begin
+            up_st     = 0;
+            dn_st     = 0;
+            armed_rst = 0;
+        end
+    end
+
+    V(UP) <+ transition(up_st * vdd, 0, tr, tr);
+    V(DN) <+ transition(dn_st * vdd, 0, tr, tr);
+end
+
+endmodule

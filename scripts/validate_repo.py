@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Offline repository validation suite for sar-adc-skills.
+"""Offline repository validation suite for ams-skills (multi-skill layout).
 
-Checks:
+Automatically discovers and validates every skill under `skills/*`:
   1. Policy / leak scan (zero foundry, PDK, private-project, or lab host strings)
   2. LF-only line endings (zero CRLF)
-  3. SKILL.md YAML frontmatter & agents/openai.yaml schema
-  4. evals/evals.json schema, sequential IDs, and file existence
-  5. Complete reference coverage in SKILL.md and README.md
+  3. Per-skill SKILL.md YAML frontmatter & agents/openai.yaml schema
+  4. Per-skill evals/evals.json schema, sequential IDs, and file existence
+  5. Complete reference coverage in each SKILL.md and root README.md
   6. All relative Markdown links and SKILL.md backtick paths exist on disk
   7. All `ahdl_include` paths inside Spectre `.scs` decks exist on disk
-  8. Python syntax, CLI `--help`, and unit tests for `psf_utils.py` & `run_cmp_tb.py`
+  8. Python syntax, CLI `--help`, and unit tests for `common/psf_utils.py` & runners
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import numpy as np
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SKILL_DIR = ROOT / "sar-adc-skill"
+SKILLS_ROOT = ROOT / "skills"
 
 # Terms prohibited in public process-independent documentation and assets
 LEAK_RE = re.compile(
@@ -71,42 +71,76 @@ def main() -> int:
                 if m:
                     errors.append(f"Policy/leak match '{m.group(0)}' in {rel}:{lineno}")
 
-    # 3. YAML frontmatter & openai.yaml
-    skill_text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-    fm_match = re.match(r"^---\n(.*?)\n---\n", skill_text, re.S)
-    if not fm_match:
-        errors.append("SKILL.md missing YAML frontmatter")
-    else:
-        parsed = yaml.safe_load(fm_match.group(1))
-        if parsed.get("name") != "sar-adc-skill":
-            errors.append(f"Unexpected skill name: {parsed.get('name')}")
-        if not isinstance(parsed.get("description"), str) or len(parsed["description"]) < 50:
-            errors.append("SKILL.md frontmatter description too short")
+    # Discover all skills under skills/*
+    skill_dirs = sorted(p for p in SKILLS_ROOT.iterdir() if p.is_dir())
+    if not skill_dirs:
+        errors.append("No skill directories found under skills/")
 
-    oa = yaml.safe_load((SKILL_DIR / "agents/openai.yaml").read_text(encoding="utf-8"))
-    if "interface" not in oa or "policy" not in oa:
-        errors.append("agents/openai.yaml missing interface or policy")
-
-    # 4. evals.json
-    evals = json.loads((SKILL_DIR / "evals/evals.json").read_text(encoding="utf-8"))
-    ids = [e["id"] for e in evals["evals"]]
-    if ids != list(range(1, len(ids) + 1)):
-        errors.append(f"evals.json IDs not sequential 1..N: {ids}")
-    for e in evals["evals"]:
-        for f in e["files"]:
-            if not (SKILL_DIR / f).exists():
-                errors.append(f"eval {e['id']} missing file: {f}")
-
-    # 5. All references/*.md listed in SKILL.md and README.md
-    ref_files = sorted(p.name for p in (SKILL_DIR / "references").glob("*.md"))
     readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
-    for rf in ref_files:
-        if f"references/{rf}" not in skill_text:
-            errors.append(f"SKILL.md missing references/{rf}")
-        if rf not in readme_text:
-            errors.append(f"README.md missing {rf}")
+    total_refs = 0
+    total_evals = 0
+    total_va = 0
 
-    # 6. Relative Markdown links and SKILL.md backtick paths
+    bt_re = re.compile(r"`((?:references|assets)/[A-Za-z0-9_./-]+)`")
+
+    for sdir in skill_dirs:
+        sname = sdir.name
+        skill_md = sdir / "SKILL.md"
+        if not skill_md.exists():
+            errors.append(f"{sname}: missing SKILL.md")
+            continue
+
+        skill_text = skill_md.read_text(encoding="utf-8")
+        fm_match = re.match(r"^---\n(.*?)\n---\n", skill_text, re.S)
+        if not fm_match:
+            errors.append(f"{sname}/SKILL.md missing YAML frontmatter")
+        else:
+            parsed = yaml.safe_load(fm_match.group(1))
+            if not isinstance(parsed.get("name"), str) or not parsed["name"].strip():
+                errors.append(f"{sname}/SKILL.md frontmatter missing name")
+            if not isinstance(parsed.get("description"), str) or len(parsed["description"]) < 50:
+                errors.append(f"{sname}/SKILL.md frontmatter description too short")
+
+        oa_path = sdir / "agents/openai.yaml"
+        if not oa_path.exists():
+            errors.append(f"{sname}: missing agents/openai.yaml")
+        else:
+            oa = yaml.safe_load(oa_path.read_text(encoding="utf-8"))
+            if "interface" not in oa or "policy" not in oa:
+                errors.append(f"{sname}/agents/openai.yaml missing interface or policy")
+
+        # evals.json
+        evals_path = sdir / "evals/evals.json"
+        if not evals_path.exists():
+            errors.append(f"{sname}: missing evals/evals.json")
+        else:
+            evals = json.loads(evals_path.read_text(encoding="utf-8"))
+            ids = [e["id"] for e in evals["evals"]]
+            total_evals += len(ids)
+            if ids != list(range(1, len(ids) + 1)):
+                errors.append(f"{sname}/evals/evals.json IDs not sequential 1..N: {ids}")
+            for e in evals["evals"]:
+                for f in e["files"]:
+                    if not (sdir / f).exists():
+                        errors.append(f"{sname} eval {e['id']} missing file: {f}")
+
+        # References coverage in SKILL.md & root README.md
+        ref_files = sorted(p.name for p in (sdir / "references").glob("*.md"))
+        total_refs += len(ref_files)
+        for rf in ref_files:
+            if f"references/{rf}" not in skill_text:
+                errors.append(f"{sname}/SKILL.md missing references/{rf}")
+            if rf not in readme_text:
+                errors.append(f"README.md missing {sname} reference {rf}")
+
+        # Backtick paths in SKILL.md
+        for path_str in bt_re.findall(skill_text):
+            if not (sdir / path_str.rstrip("/")).exists():
+                errors.append(f"{sname}/SKILL.md backtick path missing: {path_str}")
+
+        total_va += len(list((sdir / "assets/va").glob("*.va")))
+
+    # 6. Relative Markdown links across entire repo
     link_re = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
     link_count = 0
     for md in sorted(p for p in all_files if p.suffix == ".md"):
@@ -119,11 +153,6 @@ def main() -> int:
             if not (md.parent / target).resolve().exists():
                 errors.append(f"Broken link in {md.relative_to(ROOT)}: {raw_target}")
 
-    bt_re = re.compile(r"`((?:references|assets)/[A-Za-z0-9_./-]+)`")
-    for path_str in bt_re.findall(skill_text):
-        if not (SKILL_DIR / path_str.rstrip("/")).exists():
-            errors.append(f"SKILL.md backtick path missing: {path_str}")
-
     # 7. Verify ahdl_include paths in all .scs decks
     ahdl_re = re.compile(r'^\s*ahdl_include\s+"([^"]+)"', re.M)
     scs_files = sorted(p for p in all_files if p.suffix == ".scs")
@@ -132,20 +161,17 @@ def main() -> int:
             if not (scs.parent / inc).resolve().exists():
                 errors.append(f"Missing ahdl_include '{inc}' in {scs.relative_to(ROOT)}")
 
-    # 8. Python syntax, --help, and unit tests
+    # 8. Python syntax, CLI --help, and unit tests
     py_files = sorted(p for p in all_files if p.suffix == ".py")
     for pf in py_files:
         with tempfile.NamedTemporaryFile(suffix=".pyc") as tf:
             py_compile.compile(str(pf), cfile=tf.name, doraise=True)
 
-    cli_scripts = [
-        SKILL_DIR / "assets/tb/comparator/run_cmp_tb.py",
-        SKILL_DIR / "assets/tb/bootstrap/analyze_bootstrap.py",
-        SKILL_DIR / "assets/tb/cdac/analyze_cdac.py",
-        SKILL_DIR / "assets/tb/sar_logic/analyze_sar_logic.py",
-        SKILL_DIR / "assets/tb/ldo/analyze_ldo.py",
-        SKILL_DIR / "assets/tb/adc_top/analyze_adc_top.py",
-    ]
+    cli_scripts = sorted(
+        p
+        for p in py_files
+        if p.name.startswith(("analyze_", "run_"))
+    )
     for script in cli_scripts:
         res = subprocess.run(
             [sys.executable, "-B", str(script), "--help"],
@@ -155,14 +181,13 @@ def main() -> int:
         if res.returncode != 0:
             errors.append(f"{script.relative_to(ROOT)} --help failed: {res.stderr}")
 
-    # Unit tests for psf_utils.py
-    psf_path = SKILL_DIR / "assets/tb/common/psf_utils.py"
+    # Unit tests for common/psf_utils.py
+    psf_path = ROOT / "common/psf_utils.py"
     spec = importlib.util.spec_from_file_location("psf_utils", psf_path)
     psf_mod = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(psf_mod)
 
-    # Test real + complex PSF ASCII parsing
     with tempfile.TemporaryDirectory() as td:
         p_real = pathlib.Path(td) / "real.tran"
         p_real.write_text(
@@ -183,13 +208,13 @@ def main() -> int:
         assert np.iscomplexobj(dc["loopGain"])
         assert abs(dc["loopGain"][0] - (100.0 - 50.0j)) < 1e-9
 
-    # Test extract_uniform_strobe drops off-grid t=0 and t=t_stop
+    # Test extract_uniform_strobe drops off-grid endpoints
     t_grid = np.array([0.0, 0.1, 1.1, 2.1, 3.1, 4.1, 5.0])
     y_grid = np.array([99.0, 1.0, 2.0, 3.0, 4.0, 5.0, 99.0])
     tf, yf = psf_mod.extract_uniform_strobe(t_grid, y_grid)
     assert len(tf) == 5 and np.allclose(yf, [1.0, 2.0, 3.0, 4.0, 5.0])
 
-    # Test coherent_fft_metrics on an exact 10-bit quantized sine wave
+    # Test coherent_fft_metrics
     n_fft, m_bin = 128, 19
     phase = 2.0 * math.pi * m_bin * np.arange(n_fft) / n_fft
     q_sine = np.floor((0.5 + 0.49 * np.sin(phase)) * 1024.0)
@@ -201,8 +226,15 @@ def main() -> int:
     m_dnl = psf_mod.dnl_inl_from_transfer(ramp)
     assert m_dnl["dnl_abs_max_lsb"] < 1e-12 and m_dnl["inl_abs_max_lsb"] < 1e-12
 
-    # Unit tests for run_cmp_tb.py
-    runner_path = SKILL_DIR / "assets/tb/comparator/run_cmp_tb.py"
+    # Test integrate_phase_noise_jitter (flat -120 dBc/Hz over 1 MHz BW -> 2e-6 rad^2)
+    f_pn = np.logspace(4, 7, 200)
+    l_pn = np.full_like(f_pn, -120.0)
+    jit = psf_mod.integrate_phase_noise_jitter(f_pn, l_pn, f_carrier_hz=1.0e9, f_low_hz=1e5, f_high_hz=1.1e6)
+    expected_rad = math.sqrt(2.0 * 1e-12 * 1.0e6)
+    assert abs(jit["rms_phase_rad"] - expected_rad) / expected_rad < 1e-3
+
+    # Unit tests for comparator run_cmp_tb.py
+    runner_path = SKILLS_ROOT / "sar-adc/assets/tb/comparator/run_cmp_tb.py"
     spec2 = importlib.util.spec_from_file_location("run_cmp_tb", runner_path)
     rmod = importlib.util.module_from_spec(spec2)
     assert spec2 and spec2.loader
@@ -220,9 +252,10 @@ def main() -> int:
 
     print(
         f"ALL VALIDATION CHECKS PASSED! "
-        f"({len(ref_files)} refs, {len(ids)} evals, {len(scs_files)} .scs decks, "
-        f"{len(list((SKILL_DIR / 'assets/va').glob('*.va')))} VA models, "
-        f"{len(py_files)} .py scripts, {link_count} relative links, 0 leaks, 0 CRLF)"
+        f"({len(skill_dirs)} skills, {total_refs} refs, {total_evals} evals, "
+        f"{len(scs_files)} .scs decks, {total_va} VA models, "
+        f"{len(py_files)} .py scripts, {len(cli_scripts)} CLI checks, "
+        f"{link_count} relative links, 0 leaks, 0 CRLF)"
     )
     return 0
 

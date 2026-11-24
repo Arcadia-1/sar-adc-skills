@@ -1,0 +1,39 @@
+// Process-independent behavioral Integer-N frequency divider
+//
+// Counts rising edges of CLK_IN crossing vth and emits a ~50%-duty-cycle
+// divided clock CLK_OUT at f_in / n_div.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_div_int(
+    input  electrical CLK_IN,
+    output electrical CLK_OUT
+);
+
+parameter integer n_div = 20   from [2:65535];
+parameter real    vdd   = 0.9  from (0:inf);
+parameter real    vth   = 0.45;
+parameter real    td    = 20p  from [0:inf);
+parameter real    tr    = 10p  from (0:inf);
+
+integer cnt, out_st;
+
+analog begin
+    @(initial_step) begin
+        cnt    = 0;
+        out_st = 0;
+    end
+
+    @(cross(V(CLK_IN) - vth, +1)) begin
+        cnt = cnt + 1;
+        if (cnt >= n_div) begin
+            cnt = 0;
+        end
+        out_st = (cnt < (n_div / 2)) ? 1 : 0;
+    end
+
+    V(CLK_OUT) <+ transition(out_st * vdd, td, tr, tr);
+end
+
+endmodule

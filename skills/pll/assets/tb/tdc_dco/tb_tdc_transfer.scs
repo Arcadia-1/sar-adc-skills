@@ -1,0 +1,49 @@
+// =============================================================================
+// Process-Independent ADPLL TDC Testbench — Transfer Curve & DNL/INL
+// =============================================================================
+// Sweeps arrival-time offset Delta_t = t(FDIV) - t(FREF) in fine `dt_step`
+// increments across `[-n_half*dt_step .. +n_half*dt_step]` via a detuned
+// beat-clock pair and strobes `TDC_OUT` after each edge pair resolves.
+//
+// DUT interface contract (5-pin TDC with analog/integer readout TDC_OUT):
+//   subckt dut_tdc FREF FDIV TDC_OUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    t_ref=20n \
+    dt_step=10p \
+    n_half=40 \
+    tr=10p \
+    tf=10p \
+    temp_c=27
+
+parameters \
+    n_cycles=2*n_half+1 \
+    t_stop=(n_cycles+1)*t_ref
+
+VSUP  (VDD 0)  vsource dc=vdd type=dc
+VGND  (VSS 0)  vsource dc=0   type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=n_half*dt_step rise=tr fall=tf width=0.5*t_ref
+VFDIV (FDIV 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref+dt_step delay=0 rise=tr fall=tf width=0.5*t_ref
+
+I0 (FREF FDIV TDC_OUT VDD VSS) dut_tdc
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe well after each cycle's edge pair settles (strobedelay < strobeperiod)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_ref strobedelay=0.45*t_ref strobeoutput=strobeonly
+
+save TDC_OUT
+saveOptions options save=selected

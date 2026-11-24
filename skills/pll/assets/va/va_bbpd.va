@@ -1,0 +1,54 @@
+// Process-independent 1-bit Bang-Bang Phase Detector (BBPD) for BB-ADPLL
+//
+// Outputs +1.0 when FDIV is late (FREF leads -> speed up DCO) and -1.0 when
+// FDIV is early (FDIV leads -> slow down DCO), using PFD-style edge pairing
+// so acquisition pulls in cleanly from arbitrary initial frequency error.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bbpd(
+    input  electrical FREF,
+    input  electrical FDIV,
+    output electrical BB_OUT
+);
+
+parameter real vth = 0.45;
+parameter real tr  = 10p from (0:inf);
+
+integer lead_ref, lead_div;
+real bb_val;
+
+analog begin
+    @(initial_step) begin
+        lead_ref = 0;
+        lead_div = 0;
+        bb_val   = 0.0;
+    end
+
+    @(cross(V(FREF) - vth, +1)) begin
+        if (lead_div == 1) begin
+            bb_val   = -1.0;
+            lead_div = 0;
+        end else if (lead_ref == 1) begin
+            bb_val = 1.0;
+        end else begin
+            lead_ref = 1;
+        end
+    end
+
+    @(cross(V(FDIV) - vth, +1)) begin
+        if (lead_ref == 1) begin
+            bb_val   = 1.0;
+            lead_ref = 0;
+        end else if (lead_div == 1) begin
+            bb_val = -1.0;
+        end else begin
+            lead_div = 1;
+        end
+    end
+
+    V(BB_OUT) <+ transition(bb_val, 0, tr, tr);
+end
+
+endmodule
