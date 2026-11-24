@@ -1,0 +1,65 @@
+// =============================================================================
+// Process-Independent Frequency Divider Testbench — Max Toggle & Cycle-Slip
+// =============================================================================
+// Drives `dut_divider` into a realistic capacitive load (c_load = 50 fF) across
+// 4 input clock frequencies spanning nominal operation to high-speed stress via
+// `alter`. Detects cycle slips, division collapse, duty-cycle distortion, and
+// 20%-80% edge degradation.
+//
+// Extracts (via `analyze_divider.py toggle`):
+//   - Per-frequency input/output edge counts, measured ratio N_meas, cycle_slip
+//   - Highest slip-free operating frequency f_max_pass [GHz]
+//   - Output duty cycle [%] and 20%-80% rise/fall times t_r / t_f [ps]
+//
+// DUT interface contract (4-pin frequency divider):
+//   subckt dut_divider CLK_IN CLK_OUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    f_1=1.5G \
+    f_2=3.0G \
+    f_3=4.5G \
+    f_4=6.0G \
+    f_in=f_1 \
+    n_in_cyc=128 \
+    c_load=50f \
+    tr=15p \
+    tf=15p \
+    temp_c=27
+
+VSUP  (VDD 0)    vsource dc=vdd type=dc
+VGND  (VSS 0)    vsource dc=0   type=dc
+VCLK  (CLK_IN 0) vsource type=pulse val0=0 val1=vdd \
+    period=1/f_in delay=0 rise=tr fall=tf width=0.5/f_in
+
+I0    (CLK_IN CLK_OUT VDD VSS) dut_divider
+CLOAD (CLK_OUT VSS) capacitor c=c_load
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Frequency point 1 (nominal)
+tran_f1 tran stop=n_in_cyc/f_1 errpreset=conservative maxstep=1/(24*f_1)
+
+// Frequency point 2 (mid-high speed)
+alt_f2  alter param=f_in value=f_2
+tran_f2 tran stop=n_in_cyc/f_2 errpreset=conservative maxstep=1/(24*f_2)
+
+// Frequency point 3 (near max toggle)
+alt_f3  alter param=f_in value=f_3
+tran_f3 tran stop=n_in_cyc/f_3 errpreset=conservative maxstep=1/(24*f_3)
+
+// Frequency point 4 (high-speed stress / slip detection)
+alt_f4  alter param=f_in value=f_4
+tran_f4 tran stop=n_in_cyc/f_4 errpreset=conservative maxstep=1/(24*f_4)
+
+save CLK_IN CLK_OUT
+saveOptions options save=selected

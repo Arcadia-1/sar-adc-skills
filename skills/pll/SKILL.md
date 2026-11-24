@@ -8,10 +8,12 @@ description: >
   jitter integration, optimal loop bandwidth, MASH quantization noise shaping
   and CP nonlinearity noise folding, TDC/DCO quantization budgets, digital PI
   loop filters, LC vs. Ring VCO/DCO design, tri-state PFD/CP/MMD dividers,
-  10 Verilog-A behavioral models, and 7 standalone Spectre testbench suites
-  (autonomous oscillator PSS+PNOISE, PFD+CP beat sweep, MMD, TDC/DCO, AC loop,
-  and closed-loop lock). Use for any PLL architecture, sizing, noise budgeting,
-  debugging, or Spectre verification task.
+  12 Verilog-A behavioral models, and 17 standalone Spectre X testbenches across
+  7 suites (autonomous oscillator PSS+PNOISE, cap-bank overlap, PFD+CP beat
+  sweep & compliance, MMD & max-toggle, TDC/DCO, AC loop, closed-loop lock,
+  auto band-calibration, reference spur FFT, closed-loop PSRR, and noise/N-ICP
+  signoff). Use for any PLL architecture, sizing, noise budgeting, debugging,
+  or Spectre verification task.
 ---
 
 # PLL Skill (Integer-N, Fractional-N & ADPLL)
@@ -52,20 +54,22 @@ Read only the minimum reference needed for the user's task:
 ### Process-Independent Spectre Testbenches (`assets/tb/`)
 Every testbench plugs in external `models_corner.scs` + `dut_subckt.scs` and pairs with a standalone Python PSF ASCII analyzer (sharing repo-root `common/psf_utils.py` and `common/models_generic_bsim4.scs`):
 
-- `assets/tb/vco/` — `tb_vco_tuning_kvco.scs`, `tb_vco_pss_pnoise.scs` (autonomous `pss` + relative `pm` `pnoise`), `analyze_vco.py`
-- `assets/tb/pfd_cp/` — `tb_pfd_cp_transfer.scs` (detuned beat-sweep $Q(\Delta t)$, mismatch & dead-zone check), `analyze_pfd_cp.py`
-- `assets/tb/divider/` — `tb_div_func_mmd.scs` (Integer-N and Fractional-N MMD ratio verification), `analyze_divider.py`
+- `assets/tb/vco/` — `tb_vco_tuning_kvco.scs`, `tb_vco_pss_pnoise.scs` (autonomous `pss` + relative `pm` `pnoise`), `tb_vco_capbank_overlap.scs` (multi-sub-band overlap & `K_LIN`), `analyze_vco.py`
+- `assets/tb/pfd_cp/` — `tb_pfd_cp_transfer.scs` (detuned beat-sweep $Q(\Delta t)$, mismatch & dead-zone check), `tb_cp_compliance_mismatch.scs` (DC compliance & UP/DN mismatch), `analyze_pfd_cp.py`
+- `assets/tb/divider/` — `tb_div_func_mmd.scs` (Integer-N and Fractional-N MMD ratio verification), `tb_div_max_toggle.scs` (multi-frequency `f_max`, cycle-slip, duty & slew), `analyze_divider.py`
 - `assets/tb/tdc_dco/` — `tb_tdc_transfer.scs` (TDC `t_res`, DNL/INL), `tb_dco_tuning.scs` (DCO $K_{\text{DCO}}$ & monotonicity), `analyze_tdc_dco.py`
-- `assets/tb/int_n_pll/` — `tb_int_n_pll_ac_loop.scs` (phase-domain `stb` + `ac`), `tb_int_n_pll_lock.scs` (closed-loop lock), `analyze_int_n_pll.py`
+- `assets/tb/int_n_pll/` — `tb_int_n_pll_ac_loop.scs` (phase-domain `stb` + `ac`), `tb_int_n_pll_lock.scs` (closed-loop lock), `tb_int_n_pll_bandcal_lock.scs` (AFC binary-search band-cal & lock-detect), `tb_int_n_pll_ref_spur.scs` (direct FFT vs. NBFM reference spurs), `tb_int_n_pll_psrr.scs` (closed-loop supply rejection), `tb_int_n_pll_noise_scaling.scs` (closed-loop phase-noise budget & 9-pt $N \times I_{\text{CP}}$ `stb` matrix), `analyze_int_n_pll.py`
 - `assets/tb/frac_n_pll/` — `tb_frac_n_pll_lock.scs` (MASH 1-1-1 fractional lock & DSM ripple), `analyze_frac_n_pll.py`
 - `assets/tb/adpll/` — `tb_adpll_lock.scs` (Integer/Fractional TDC-ADPLL & BBPLL lock), `analyze_adpll.py`
 
 ### Verilog-A Behavioral Library (`assets/va/`)
-10 Spectre-verified models for Phase 1–3 behavioral and hybrid PLL simulation:
+12 Spectre-verified models for Phase 1–3 behavioral and hybrid PLL simulation:
 
 - `assets/va/va_pfd.va` — tri-state PFD with controlled dead-zone reset delay `td_rst`
 - `assets/va/va_cp.va` — charge pump with `mismatch`, compliance clamping, `i_leak`, and Frac-N `i_offset`
 - `assets/va/va_vco.va` — differential VCO with `kvco` and optional per-cycle `jitter_rms`
+- `assets/va/va_vco_multiband.va` — multi-sub-band differential LC-VCO with coarse `VCODE`, S-curve `kvco_nl3`, supply pushing `k_vdd`, and core current `i_dd`
+- `assets/va/va_bandcal_lockdet.va` — digital binary-search auto-band-calibration FSM (`VCODE`, `CAL_DONE`, `VCFORCE`) & phase-window `LOCK` detector
 - `assets/va/va_div_int.va` — programmable Integer-N divider
 - `assets/va/va_mmd_mash111.va` — Multi-Modulus Divider + 3rd-order MASH 1-1-1 $\Delta\Sigma$ modulator
 - `assets/va/va_tdc.va` — PFD-assisted signed TDC with `t_res`, `t_offset`, and `inl_lsb`

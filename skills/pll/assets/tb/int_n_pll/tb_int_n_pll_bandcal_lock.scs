@@ -1,0 +1,94 @@
+// =============================================================================
+// Process-Independent Integer-N CP-PLL — Auto Band-Calibration & Lock-Detect TB
+// =============================================================================
+// Full closed-loop Type-II Integer-N CP-PLL combining:
+//   - Multi-sub-band VCO (`va_vco_multiband.va`, 16 coarse sub-bands)
+//   - Binary-search AFC & phase-window lock detector (`va_bandcal_lockdet.va`)
+//   - Tri-state PFD (`va_pfd.va`), Charge Pump (`va_cp.va`), passive R1-C1 || C2
+//   - Integer-N feedback divider (`va_div_int.va`) + open-loop VCTRL=VDD/2 switch
+//
+// On PLL_EN rising edge: VCFORCE=VDD isolates CP and forces VCTRL=VDD/2 while
+// the 4-bit binary search selects the nearest coarse sub-band; at CAL_DONE=VDD,
+// VCFORCE drops to 0 to close the analog CP loop until LOCK asserts.
+//
+// Swap any individual behavioral instance (I_VCO, I_CP, I_DIV, I_AFC) with a
+// transistor subcircuit for Phase-3 hybrid signoff.
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../../va/va_pfd.va"
+ahdl_include "../../va/va_cp.va"
+ahdl_include "../../va/va_vco_multiband.va"
+ahdl_include "../../va/va_div_int.va"
+ahdl_include "../../va/va_bandcal_lockdet.va"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    f_ref=50M \
+    n_div=40 \
+    i_cp=200u \
+    r1=13.5k \
+    c1=22p \
+    c2=1.7p \
+    f_start=1.60G \
+    f_step=65M \
+    kvco=200M \
+    kvco_nl3=-500M \
+    k_vdd=150M \
+    t_en=50n \
+    t_stop=6.5u \
+    temp_c=27
+
+parameters \
+    t_ref=1/f_ref \
+    f_target=n_div*f_ref
+
+VSUP  (VDD  0) vsource dc=vdd     type=dc
+VGND  (VSS  0) vsource dc=0       type=dc
+VMID  (VMID 0) vsource dc=0.5*vdd type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=15p fall=15p width=0.5*t_ref
+VEN   (PLL_EN 0) vsource type=pulse val0=0 val1=vdd \
+    delay=t_en rise=20p fall=20p width=t_stop period=2*t_stop
+
+// Ideal calibration switches controlled by VCFORCE (active-high during AFC)
+model sw_cal_on  relay vt1=0.35 vt2=0.55 ropen=1e12 rclosed=10
+model sw_cal_off relay vt1=0.35 vt2=0.55 ropen=10   rclosed=1e12
+SW_FRC (VCTRL  VMID  VCFORCE VSS) sw_cal_on
+SW_ISO (CP_OUT VCTRL VCFORCE VSS) sw_cal_off
+SW_DUM (CP_OUT VMID  VCFORCE VSS) sw_cal_on
+
+// Phase-Frequency Detector + Charge Pump + 2nd-Order Passive Loop Filter
+I_PFD (FREF FDIV UP DN) va_pfd vdd=vdd vth=0.5*vdd td_rst=80p tr=10p
+I_CP  (UP DN CP_OUT VDD VSS) va_cp vdd_nom=vdd i_cp=i_cp mismatch=0.01 v_comp=0.12
+R_1   (VCTRL N_C1) resistor  r=r1
+C_1   (N_C1  VSS)  capacitor c=c1
+C_2   (VCTRL VSS)  capacitor c=c2
+
+// Multi-Sub-Band LC-VCO + Integer-N Feedback Divider
+I_VCO (VCTRL VCODE VDD VSS OUTP OUTN) va_vco_multiband \
+    f_start=f_start f_step=f_step n_codes=16 kvco=kvco kvco_nl3=kvco_nl3 \
+    vctrl0=0.5*vdd vdd_nom=vdd k_vdd=k_vdd i_dd=2.0m vcm=0.5*vdd vamp=vdd
+I_DIV (OUTP FDIV) va_div_int n_div=n_div vdd=vdd vth=0.5*vdd td=20p tr=10p
+
+// Digital Auto-Band-Calibration FSM & Phase-Window Lock Detector
+I_AFC (FREF FDIV PLL_EN VDD VSS VCODE CAL_DONE VCFORCE LOCK) va_bandcal_lockdet \
+    n_bits=4 n_count=32 n_settle=2 n_lock=24 n_unlock=4 ldw=100p \
+    vdd_nom=vdd vth=0.5*vdd tr=20p i_dd=0.2m
+
+// Instantaneous frequency monitor (1.0 V == 1.0 GHz)
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=f_start
+
+ic VCTRL=0.5*vdd
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate
+
+save PLL_EN VCODE CAL_DONE VCFORCE LOCK VCTRL F_INST OUTP VSUP:p
+saveOptions options save=selected

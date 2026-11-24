@@ -1,0 +1,91 @@
+// =============================================================================
+// Process-Independent Integer-N CP-PLL — Closed-Loop Supply Rejection (PSRR)
+// =============================================================================
+// Closed-loop Integer-N CP-PLL with supply-sensitive VCO (`k_vdd = 200 MHz/V`
+// in `va_vco_multiband.va`) initialized near lock. Injects a clean sinusoidal
+// ripple `v_rip` onto the VCO supply `VDDA` across 3 key frequencies via `alter`:
+//   1. f_rip_1 = 200 kHz  (in-band, well below f_u -> strong loop suppression)
+//   2. f_rip_2 = 1.5 MHz  (near loop bandwidth f_u -> transition / peaking)
+//   3. f_rip_3 = 10  MHz  (out-of-band -> open-loop limit 20*log10(K_VCO/K_VDD))
+//
+// Extracts (via `analyze_int_n_pll.py psrr`):
+//   - Peak frequency deviation Delta_f from F_INST(t) and OUTP(t) FM sidebands
+//   - Equivalent control ripple V_CTRL,eq = Delta_f / K_VCO
+//   - Closed-loop PSRR(f) = 20*log10(V_rip / V_CTRL,eq) [dB] vs. loop NTF
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../../va/va_pfd.va"
+ahdl_include "../../va/va_cp.va"
+ahdl_include "../../va/va_vco_multiband.va"
+ahdl_include "../../va/va_div_int.va"
+ahdl_include "../../va/va_phase_err_mon.va"
+
+parameters \
+    vdd=0.9 \
+    v_rip=5m \
+    f_rip_1=200k \
+    f_rip_2=1.5M \
+    f_rip_3=10M \
+    f_rip=f_rip_1 \
+    f_ref=50M \
+    n_div=20 \
+    i_cp=100u \
+    r1=13.5k \
+    c1=22p \
+    c2=1.7p \
+    kvco=200M \
+    k_vdd=200M \
+    t_strobe=200p \
+    temp_c=27
+
+parameters \
+    t_ref=1/f_ref \
+    f_target=n_div*f_ref
+
+// Clean digital rail for PFD/CP/Div; rippled analog rail VDDA for VCO
+VSUP_D (VDD_D 0) vsource dc=vdd type=dc
+VSUP_A (VDDA  0) vsource dc=vdd type=sine sinedc=vdd ampl=v_rip freq=f_rip
+VGND   (VSS   0) vsource dc=0   type=dc
+VCODE0 (VCODE 0) vsource dc=0   type=dc
+VFREF  (FREF  0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=15p fall=15p width=0.5*t_ref
+
+// Closed-loop Type-II Integer-N CP-PLL (f_u ~= 2.0 MHz, PM ~= 60 deg)
+I_PFD (FREF FDIV UP DN) va_pfd vdd=vdd vth=0.5*vdd td_rst=80p tr=10p
+I_CP  (UP DN VCTRL VDD_D VSS) va_cp vdd_nom=vdd i_cp=i_cp mismatch=0 v_comp=0.12
+R_1   (VCTRL N_C1) resistor  r=r1
+C_1   (N_C1  VSS)  capacitor c=c1
+C_2   (VCTRL VSS)  capacitor c=c2
+
+I_VCO (VCTRL VCODE VDDA VSS OUTP OUTN) va_vco_multiband \
+    f_start=f_target f_step=65M n_codes=8 kvco=kvco kvco_nl3=0 \
+    vctrl0=0.5*vdd vdd_nom=vdd k_vdd=k_vdd i_dd=2.0m \
+    vcm=0.5*vdd vamp=vdd pts_per_cycle=24
+I_DIV (OUTP FDIV) va_div_int n_div=n_div vdd=vdd vth=0.5*vdd td=20p tr=10p
+I_MON (OUTP F_INST T_PER) va_phase_err_mon vth=0.5*vdd f_init=f_target
+
+ic VCTRL=0.5*vdd
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Point 1: In-band ripple (200 kHz, 2 us settle + 4 coherent cycles = 22 us)
+tran_f1 tran stop=22u errpreset=conservative maxstep=25p \
+    strobeperiod=t_strobe strobedelay=0 strobeoutput=strobeonly
+
+// Point 2: Near-bandwidth ripple (1.5 MHz, 2 us settle + 6 coherent cycles = 6 us)
+alt_f2  alter param=f_rip value=f_rip_2
+tran_f2 tran stop=6u errpreset=conservative maxstep=25p \
+    strobeperiod=t_strobe strobedelay=0 strobeoutput=strobeonly
+
+// Point 3: Out-of-band ripple (10 MHz, 2 us settle + 20 coherent cycles = 4 us)
+alt_f3  alter param=f_rip value=f_rip_3
+tran_f3 tran stop=4u errpreset=conservative maxstep=25p \
+    strobeperiod=t_strobe strobedelay=0 strobeoutput=strobeonly
+
+save VDDA VCTRL F_INST OUTP
+saveOptions options save=selected

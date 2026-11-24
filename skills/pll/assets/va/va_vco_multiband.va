@@ -1,0 +1,94 @@
+// Process-independent behavioral multi-sub-band differential LC-VCO
+//
+// Models:
+//   - Switched-capacitor coarse sub-bands: f_base(code) = f_start + code * f_step
+//     (analog integer-valued VCODE rounded cleanly to 0 .. n_codes-1)
+//   - Fine varactor tuning with smooth monotonic S-curve compression controlled by
+//     kvco [Hz/V] and kvco_nl3 [Hz/V^3] (matching cubic compression near vctrl0
+//     while remaining strictly monotonic across the full rail)
+//   - Supply pushing sensitivity: +k_vdd * (V(VDD, VSS) - vdd_nom) [Hz/V]
+//   - Exact phase accumulation via idtmod() with adaptive timestep bounding
+//   - Realistic core DC supply current draw (i_dd) and optional per-cycle jitter
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_vco_multiband(
+    input  electrical VCTRL,
+    input  electrical VCODE,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real    f_start       = 1.60e9 from (0:inf);   // code=0 center freq at vctrl0, vdd_nom [Hz]
+parameter real    f_step        = 65e6   from (0:inf);   // coarse sub-band spacing [Hz/code]
+parameter integer n_codes       = 16     from [2:256];   // number of coarse sub-bands (0..n_codes-1)
+parameter real    kvco          = 200e6;                 // fine linear varactor gain at vctrl0 [Hz/V]
+parameter real    kvco_nl3      = -500e6;                // cubic S-curve compression [Hz/V^3]
+parameter real    vctrl0        = 0.45;                  // center control voltage [V]
+parameter real    vdd_nom       = 0.9    from (0:inf);   // nominal supply voltage [V]
+parameter real    k_vdd         = 150e6;                 // supply pushing sensitivity [Hz/V]
+parameter real    i_dd          = 2.0m   from [0:inf);   // core DC supply current [A]
+parameter real    f_min         = 50e6   from (0:inf);   // lower frequency clamp [Hz]
+parameter real    f_max         = 20e9   from (0:inf);   // upper frequency clamp [Hz]
+parameter real    vcm           = 0.45;                  // output common-mode voltage [V]
+parameter real    vamp          = 0.9    from (0:inf);   // peak-to-peak single-ended swing [V]
+parameter real    jitter_rms    = 0.0    from [0:inf);   // per-cycle RMS period jitter [s]
+parameter integer seed          = 1;
+parameter integer pts_per_cycle = 16     from [8:128];   // minimum tran points per VCO cycle
+
+integer code_i, rng_seed;
+real dv, a3, f_fine, dvdd, f_nom, f_eff, phase_norm, dt_jit;
+
+analog begin
+    @(initial_step) begin
+        rng_seed = seed;
+        dt_jit   = 0.0;
+    end
+
+    // Quantize coarse sub-band code cleanly to [0, n_codes-1]
+    code_i = floor(V(VCODE, VSS) + 0.5);
+    if (code_i < 0)           code_i = 0;
+    if (code_i > n_codes - 1) code_i = n_codes - 1;
+
+    // Fine varactor tuning with smooth monotonic S-curve compression
+    // For kvco_nl3 < 0 (compressive): dv / sqrt(1 + 2*a3*dv^2) = dv - a3*dv^3 + O(dv^5)
+    dv = V(VCTRL, VSS) - vctrl0;
+    if ((kvco != 0.0) && (kvco_nl3 * kvco < 0.0)) begin
+        a3     = -kvco_nl3 / kvco;
+        f_fine = kvco * dv / sqrt(1.0 + 2.0 * a3 * dv * dv);
+    end else begin
+        f_fine = kvco * dv + kvco_nl3 * dv * dv * dv;
+    end
+
+    // Coarse bank + fine varactor + supply pushing
+    dvdd  = V(VDD, VSS) - vdd_nom;
+    f_nom = f_start + code_i * f_step + f_fine + k_vdd * dvdd;
+    if (f_nom < f_min) f_nom = f_min;
+    if (f_nom > f_max) f_nom = f_max;
+
+    // Optional per-cycle period jitter perturbation
+    f_eff = f_nom / max(1.0 + f_nom * dt_jit, 0.2);
+
+    // Normalized phase in [0, 1)
+    phase_norm = idtmod(f_eff, 0.0, 1.0, 0.0);
+
+    @(cross(phase_norm - 0.5, +1)) begin
+        if (jitter_rms > 0.0) begin
+            dt_jit = $rdist_normal(rng_seed, 0.0, jitter_rms);
+        end else begin
+            dt_jit = 0.0;
+        end
+    end
+
+    $bound_step(1.0 / (pts_per_cycle * f_eff));
+
+    // Passive DC supply current draw and differential sinusoidal outputs
+    I(VDD, VSS) <+ i_dd * tanh(V(VDD, VSS) / 0.1);
+    V(OUTP)     <+ vcm + 0.5 * vamp * sin(2.0 * `M_PI * phase_norm);
+    V(OUTN)     <+ vcm - 0.5 * vamp * sin(2.0 * `M_PI * phase_norm);
+end
+
+endmodule
