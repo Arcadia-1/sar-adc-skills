@@ -9,7 +9,7 @@ Every subdirectory under `skills/` is an **independently installable AI agent sk
 | **Data Converters** | [`sar-adc/`](sar-adc/SKILL.md) | Successive-Approximation Register ADC | `comparator`, `bootstrap`, `cdac`, `sar_logic`, `adc_top` (LDO power delivery delegates to `ldo/`) |
 | **Data Converters** | [`dac/`](dac/SKILL.md) | Digital-to-Analog Converters | `current_steering` (static DNL/INL, coherent SFDR/IMD3, major-carry glitch/settle), `r2r` |
 | **Clocking & RF** | [`pll/`](pll/SKILL.md) | Integer-N, Fractional-N ($\Delta\Sigma$), & ADPLL | `vco`, `pfd_cp`, `divider`, `tdc_dco`, `int_n_pll`, `frac_n_pll`, `adpll` |
-| **Wireline / SerDes** | [`serdes/`](serdes/SKILL.md) | High-Speed NRZ/PAM4 Serial Links (10–56 Gb/s) | `channel` (`SDD21`/`SDD11`/TDR/SBR/eye), `tx_ffe`, `ctle_vga`, `slicer_dfe`, `sslms`, `tcoil` |
+| **Wireline / SerDes** | [`serdes/`](serdes/SKILL.md) | High-Speed NRZ/PAM4 Serial Links (10–56 Gb/s) | `channel`, `tx_ffe`, `ctle_vga`, `slicer_dfe`, `sslms`, `tcoil`, `link_top` (15 `.scs` decks) |
 | **Analog Core** | [`opamp-ota/`](opamp-ota/SKILL.md) | Single-Ended & Fully Differential OpAmp/OTA | `single_ended` (`stb`, DC-servo CMRR/PSRR±/noise, slew/settle), `fully_diff` (Tian balun DM+CM `stb`) |
 | **Power & Reference** | [`ldo/`](ldo/SKILL.md) | PMOS-Pass, Capless (OCL), & NMOS-Pass LDO | DC reg/dropout, `iprobe` `stb`, PSRR/`|Zout|`/`noise`, load/line step transients |
 | **Power & Reference** | [`bandgap/`](bandgap/SKILL.md) | Kuijk/Brokaw & Banba Sub-1 V Bandgap Reference | Temp/line sweeps (`TC [ppm/C]`), dead-state startup, `iprobe` core-loop `stb`, PSRR/noise |

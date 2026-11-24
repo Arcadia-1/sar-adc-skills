@@ -3,6 +3,7 @@
 
 Usage:
   python analyze_slicer_dfe.py vtf <psf_dir>
+  python analyze_slicer_dfe.py noise_tran <psf_dir> [--vid-in 1.5e-3] [--vos 0.0]
   python analyze_slicer_dfe.py dfe_eye <psf_dir> [--ui 100e-12] [--t-skip 2e-9]
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -99,12 +101,58 @@ def analyze_dfe_eye(psf_dir: Path, *, ui: float, t_skip: float) -> dict[str, obj
     }
 
 
+def _norm_ppf(p: float) -> float:
+    """Inverse standard normal CDF Phi^-1(p) via bisection on math.erf."""
+    lo, hi = -8.0, 8.0
+    for _ in range(64):
+        mid = 0.5 * (lo + hi)
+        cdf = 0.5 * (1.0 + math.erf(mid / math.sqrt(2.0)))
+        if cdf < p:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def analyze_noise_tran(psf_dir: Path, *, vid_in: float, vos: float) -> dict[str, float]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f)
+    _, dp, dn = extract_uniform_strobe(d["time"], d["DOUTP"], d["DOUTN"])
+    vout = dp - dn
+    # Drop initial startup sample if any
+    if len(vout) > 10:
+        vout = vout[1:]
+    n_tot = len(vout)
+    n_ones = int(np.sum(vout > 0.0))
+    p_one = n_ones / max(n_tot, 1)
+    # Clamp slightly away from 0/1 to keep probit finite
+    p_clamped = min(max(p_one, 0.5 / max(n_tot, 1)), 1.0 - 0.5 / max(n_tot, 1))
+    z = _norm_ppf(p_clamped)
+    sigma_n = abs(vid_in - vos) / abs(z) if abs(z) > 1e-6 else float("nan")
+    # Q = 7.0345 for BER = 1e-12 (single-sided Gaussian tail)
+    sens_1e12 = 7.0345 * sigma_n if math.isfinite(sigma_n) else float("nan")
+    return {
+        "n_cycles": float(n_tot),
+        "n_ones": float(n_ones),
+        "p_one": float(p_one),
+        "z_probit": float(z),
+        "vid_in_mv": vid_in * 1e3,
+        "sigma_n_mvrms": sigma_n * 1e3,
+        "ber_1e12_half_eye_mv": sens_1e12 * 1e3,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes Slicer & DFE Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
 
     p_vtf = sub.add_parser("vtf")
     p_vtf.add_argument("psf_dir", type=Path)
+
+    p_nt = sub.add_parser("noise_tran")
+    p_nt.add_argument("psf_dir", type=Path)
+    p_nt.add_argument("--vid-in", type=float, default=1.5e-3)
+    p_nt.add_argument("--vos", type=float, default=0.0)
 
     p_dfe = sub.add_parser("dfe_eye")
     p_dfe.add_argument("psf_dir", type=Path)
@@ -114,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.mode == "vtf":
         res: object = analyze_vtf(args.psf_dir)
+    elif args.mode == "noise_tran":
+        res = analyze_noise_tran(args.psf_dir, vid_in=args.vid_in, vos=args.vos)
     else:
         res = analyze_dfe_eye(args.psf_dir, ui=args.ui, t_skip=args.t_skip)
     print(json.dumps(res, indent=2))

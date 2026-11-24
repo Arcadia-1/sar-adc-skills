@@ -1,0 +1,53 @@
+// =============================================================================
+// Process-Independent SerDes CTLE TB — Combined Channel + CTLE AC Flatness
+// =============================================================================
+// Drives a 1 V differential AC stimulus through `channel_diff_lossy.scs` into
+// `dut_ctle_vga` (`1 MHz..30 GHz`) to measure BOTH the unequalized channel loss
+// H_ch(f) and the equalized cascade H_tot(f) = H_ch(f) * H_ctle(f), verifying
+// DC-to-Nyquist flatness and absence of excessive over-peaking.
+//
+// DUT interface contract:
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+include "../channel/channel_diff_lossy.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    z0=50 \
+    ch_len=0.50 \
+    vboost=0.0 \
+    cload=50f \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VBST (VBOOST   VSS) vsource dc=vboost type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0      type=dc
+
+// Matched differential 50-ohm source (2 V open-circuit AC -> 1 V AC across matched 100-ohm line)
+VSRCP (SRCP VSS) vsource dc=vcm_in mag=1.0  type=dc
+VSRCN (SRCN VSS) vsource dc=vcm_in mag=-1.0 type=dc
+RSRCP (SRCP CH_INP) resistor r=z0
+RSRCN (SRCN CH_INN) resistor r=z0
+
+I_CH   (CH_INP CH_INN RX_INP RX_INN VSS) channel_diff_lossy ch_len=ch_len
+I_CTLE (RX_INP RX_INN VBOOST VOFF_CAL VDD VSS OUTP OUTN) dut_ctle_vga
+CLP    (OUTP VSS) capacitor c=cload
+CLN    (OUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dcOp dc
+ac   ac start=1M stop=30G dec=40 annotate=status
+
+save CH_INP CH_INN RX_INP RX_INN OUTP OUTN
+saveOptions options save=selected

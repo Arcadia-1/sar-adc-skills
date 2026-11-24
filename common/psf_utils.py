@@ -19,9 +19,10 @@ import numpy as np
 
 _TRAPZ = getattr(np, "trapezoid", None) or getattr(np, "trapz", None)
 
-# Matches a quoted signal name followed by either a complex pair `(re im)` or a real float.
+# Matches a quoted signal name, optional quoted type tag (non-swept dcOp PSF),
+# and either a complex pair `(re im)` or a real float.
 _VALUE_LINE_RE = re.compile(
-    r'^\s*"([^"]+)"\s+(?:\(\s*([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\s+'
+    r'^\s*"([^"]+)"\s+(?:"[^"]+"\s+)?(?:\(\s*([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\s+'
     r'([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)\s*\)|'
     r'([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?))\s*$'
 )

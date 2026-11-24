@@ -1,0 +1,58 @@
+// Process-independent High-Speed SerDes Data Slicer (CML / StrongARM) Model
+//
+// Models real high-speed slicer non-idealities for VTF, hysteresis, and
+// transient-noise sensitivity / BER verification:
+//   - Static input-referred offset `vos`
+//   - Dynamic decision hysteresis / memory `hysteresis_v` (shifts threshold by
+//     +/- 0.5*hysteresis_v opposing a bit flip from the previous decision!)
+//   - Per-cycle Gaussian input-referred RMS noise `vnoise_rms` (via $rdist_normal)
+//   - Finite clock-to-Q delay `t_ck2q` and smooth transition time `t_rf`
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_slicer_cml(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical DOUTP,
+    output electrical DOUTN
+);
+
+parameter real    vdd          = 1.0    from (0.2:5.0);
+parameter real    vth          = 0.50   from (0:inf);     // CLK threshold [V]
+parameter real    vos          = 0.0;                     // static input offset [V]
+parameter real    hysteresis_v = 0.0    from [0:inf);     // total hysteresis window V_th,up - V_th,dn [V]
+parameter real    vnoise_rms   = 0.0    from [0:inf);     // input-referred RMS noise per cycle [Vrms]
+parameter integer noise_seed   = 12345;
+parameter real    t_ck2q       = 15e-12 from [0:inf);
+parameter real    t_rf         = 10e-12 from (1e-12:inf);
+
+integer seed, prev_bit, cur_bit;
+real v_eff, v_hys_shift, v_n;
+
+analog begin
+    @(initial_step) begin
+        seed     = noise_seed;
+        prev_bit = 0;
+        cur_bit  = 0;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        // Hysteresis opposes changing state: when prev_bit==0, need > +hys/2 to flip to 1;
+        // when prev_bit==1, need < -hys/2 to flip back to 0.
+        v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);
+        v_n         = (vnoise_rms > 0.0) ? $rdist_normal(seed, 0.0, vnoise_rms) : 0.0;
+        v_eff       = V(INP, INN) + vos + v_hys_shift + v_n;
+        cur_bit     = (v_eff >= 0.0) ? 1 : 0;
+        prev_bit    = cur_bit;
+    end
+
+    V(DOUTP, VSS) <+ transition(cur_bit ? vdd : 0.0, t_ck2q, t_rf, t_rf);
+    V(DOUTN, VSS) <+ transition(cur_bit ? 0.0 : vdd, t_ck2q, t_rf, t_rf);
+    I(VDD, VSS)   <+ 1.0e-3;
+end
+
+endmodule

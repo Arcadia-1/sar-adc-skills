@@ -25,8 +25,9 @@ module va_sslms_adapt(
 
 parameter real    vdd      = 1.0  from (0.2:5.0);
 parameter real    vth      = 0.5  from (0:inf);     // logic threshold for DATA, ERR, CLK [V]
-parameter integer lag_ui   = 1    from [0:4];       // 0 = VGA gain; 1..4 = DFE tap h1..h4
-parameter real    sign_pol = 1.0;                   // +1.0 for DFE taps; -1.0 for VGA gain
+parameter integer lag_ui    = 1    from [0:4];       // 0 = VGA/CTLE; 1..4 = DFE tap h1..h4
+parameter integer edge_only = 0    from [0:1];       // 1 = transition-filtered SS-LMS (updates only when d[k] != d[k-1], for CTLE boost!)
+parameter real    sign_pol  = 1.0;                   // +1.0 for DFE taps; -1.0 for VGA gain & CTLE boost
 parameter real    w_init   = 0.0;                   // initial tap/gain weight [V]
 parameter real    w_min    = -0.5;                  // lower clamp [V]
 parameter real    w_max    = 0.5;                   // upper clamp [V]
@@ -62,7 +63,10 @@ analog begin
         d_hist[0] = d_cur;
 
         d_lag = d_hist[lag_ui];
-        corr  = d_lag * e_cur;
+        if (edge_only == 1 && d_hist[0] == d_hist[1])
+            corr = 0;
+        else
+            corr = d_lag * e_cur;
 
         // Majority-vote accumulator decimation
         acc = acc + corr;

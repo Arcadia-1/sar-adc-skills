@@ -227,6 +227,14 @@ def main() -> int:
         assert np.iscomplexobj(dc["loopGain"])
         assert abs(dc["loopGain"][0] - (100.0 - 50.0j)) < 1e-9
 
+        p_dcop = pathlib.Path(td) / "mc1-001_dcOp.dc"
+        p_dcop.write_text(
+            'HEADER\nVALUE\n"OUTP" "V" 0.752\n"OUTN" "V" 0.748\nEND\n',
+            encoding="utf-8",
+        )
+        dop = psf_mod.parse_psf_ascii(p_dcop)
+        assert abs((dop["OUTP"][0] - dop["OUTN"][0]) - 0.004) < 1e-12
+
     # Test extract_uniform_strobe drops off-grid endpoints
     t_grid = np.array([0.0, 0.1, 1.1, 2.1, 3.1, 4.1, 5.0])
     y_grid = np.array([99.0, 1.0, 2.0, 3.0, 4.0, 5.0, 99.0])

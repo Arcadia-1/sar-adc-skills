@@ -2,7 +2,7 @@
 """Analyze Spectre PSF ASCII outputs from SerDes Sign-Sign LMS adaptation TB.
 
 Usage:
-  python analyze_sslms.py <psf_dir> [--ui 100e-12] [--h0 0.25] [--h1 0.11] [--h2 0.05] [--h3 0.02] [--vref 0.40]
+  python analyze_sslms.py <psf_dir> [--mode dfe|ctle_boost] [--ui 100e-12] ...
 """
 
 from __future__ import annotations
@@ -23,6 +23,34 @@ if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
 
 from psf_utils import eye_diagram_metrics, find_single, parse_psf_ascii
+
+
+def analyze_ctle_boost(psf_dir: Path, *, ui: float) -> dict[str, object]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f)
+    t = d["time"]
+    t_end = float(t[-1])
+    vboost = d["VBOOST"]
+    done = d["DONE_BST"]
+    v_ch = d["RX_INP"] - d["RX_INN"]
+    v_eq = d["EQP"] - d["EQN"]
+
+    tail = t >= 0.85 * t_end
+    idx_done = np.where(done > 0.5)[0]
+    t_conv_ns = float(t[idx_done[0]] * 1e9) if len(idx_done) > 0 else float("nan")
+
+    eye_raw = eye_diagram_metrics(t, v_ch, ui_s=ui, t_skip=0.80 * t_end)
+    eye_eq = eye_diagram_metrics(t, v_eq, ui_s=ui, t_skip=0.80 * t_end)
+    return {
+        "vboost_init_v": float(vboost[0]),
+        "vboost_final_v": float(np.mean(vboost[tail])),
+        "done": bool(float(done[-1]) > 0.5),
+        "t_converge_ns": t_conv_ns,
+        "raw_channel_eye_height_mv": eye_raw["eye_height_mv"],
+        "raw_channel_eye_width_ui": eye_raw["eye_width_ui"],
+        "adapted_ctle_eye_height_mv": eye_eq["eye_height_mv"],
+        "adapted_ctle_eye_width_ui": eye_eq["eye_width_ui"],
+    }
 
 
 def analyze_sslms(
@@ -73,6 +101,7 @@ def analyze_sslms(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes Sign-Sign LMS Spectre outputs.")
     ap.add_argument("psf_dir", type=Path)
+    ap.add_argument("--mode", choices=("dfe", "ctle_boost"), default="dfe")
     ap.add_argument("--ui", type=float, default=100e-12)
     ap.add_argument("--h0", type=float, default=0.25)
     ap.add_argument("--h1", type=float, default=0.11)
@@ -80,20 +109,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--h3", type=float, default=0.02)
     ap.add_argument("--vref", type=float, default=0.40)
     args = ap.parse_args(argv)
-    print(
-        json.dumps(
-            analyze_sslms(
-                args.psf_dir,
-                ui=args.ui,
-                h0=args.h0,
-                h1=args.h1,
-                h2=args.h2,
-                h3=args.h3,
-                vref=args.vref,
-            ),
-            indent=2,
+    if args.mode == "ctle_boost":
+        res: object = analyze_ctle_boost(args.psf_dir, ui=args.ui)
+    else:
+        res = analyze_sslms(
+            args.psf_dir,
+            ui=args.ui,
+            h0=args.h0,
+            h1=args.h1,
+            h2=args.h2,
+            h3=args.h3,
+            vref=args.vref,
         )
-    )
+    print(json.dumps(res, indent=2))
     return 0
 
 

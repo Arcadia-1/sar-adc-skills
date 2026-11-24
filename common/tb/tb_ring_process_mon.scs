@@ -1,0 +1,51 @@
+// =============================================================================
+// Universal Process-Independent PVT Process Monitor — 5-Stage CMOS Ring Osc
+// =============================================================================
+// Measures free-running oscillation frequency `f_osc`, per-stage gate delay
+// `t_pd = 1 / (2 * N_stages * f_osc)`, and average dynamic power across PVT
+// corners using a 5-stage CMOS inverter ring.
+//
+// DUT interface contract (4-pin inverter stage):
+//   subckt dut_ring_inv IN OUT VDD VSS
+//     // instantiate your PDK inverter (or generic BSIM4 nch/pch)
+//   ends dut_ring_inv
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    c_stage=2f \
+    t_stop=5n \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+I1 (N0 N1 VDD VSS) dut_ring_inv
+I2 (N1 N2 VDD VSS) dut_ring_inv
+I3 (N2 N3 VDD VSS) dut_ring_inv
+I4 (N3 N4 VDD VSS) dut_ring_inv
+I5 (N4 N0 VDD VSS) dut_ring_inv
+
+C0 (N0 VSS) capacitor c=c_stage
+C1 (N1 VSS) capacitor c=c_stage
+C2 (N2 VSS) capacitor c=c_stage
+C3 (N3 VSS) capacitor c=c_stage
+C4 (N4 VSS) capacitor c=c_stage
+
+// Break symmetry at t=0 so oscillation starts immediately
+ic N0=0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save N0 VDD VSUP:p
+saveOptions options save=selected
