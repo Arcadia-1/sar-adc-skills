@@ -115,7 +115,7 @@
     {
       "id": 13,
       "prompt": "What behavioral Verilog-A models are bundled in pll-skill for phased verification of Integer-N, Fractional-N, and ADPLL loops?",
-      "expected_output": "Should list the 10 models in assets/va/ (va_pfd, va_cp, va_vco, va_div_int, va_mmd_mash111, va_tdc, va_dco, va_dlf_pi, va_bbpd, va_phase_err_mon) and show how to combine them with assets/tb/int_n_pll/, frac_n_pll/, and adpll/ for Phase 1 behavioral closure and Phase 3 incremental transistor replacement.",
+      "expected_output": "Should list the 12 models in assets/va/ (va_pfd, va_cp, va_vco, va_vco_multiband, va_bandcal_lockdet, va_div_int, va_mmd_mash111, va_tdc, va_dco, va_dlf_pi, va_bbpd, va_phase_err_mon) and show how to combine them with assets/tb/int_n_pll/, frac_n_pll/, and adpll/ for Phase 1 behavioral closure and Phase 3 incremental transistor replacement.",
       "files": [
         "SKILL.md",
         "references/simulation-and-verification.md",
@@ -147,6 +147,68 @@
       "files": [
         "references/pfd-cp-divider.md",
         "references/integer-n-pll.md"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "How do I verify that a multi-sub-band switched-capacitor LC-VCO has no blind frequency holes across its coarse bank and measure its fine varactor linearity error K_LIN?",
+      "expected_output": "Should point to assets/tb/vco/tb_vco_capbank_overlap.scs, assets/va/va_vco_multiband.va, and analyze_vco.py capbank: sweep coarse codes via alter across VCTRL levels, compute adjacent sub-band overlap (f_max[k] - f_min[k+1]) / f_step * 100% (targeting >= 20-25% with zero blind holes), and extract endpoint linearity error K_LIN (%) across each sub-band.",
+      "files": [
+        "references/vco-and-dco.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/vco/tb_vco_capbank_overlap.scs",
+        "assets/va/va_vco_multiband.va"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "How should I isolate and verify a charge pump's DC output compliance headroom, output resistance r_o, and UP/DN current mismatch across VCTRL before closing the PLL loop?",
+      "expected_output": "Should point to assets/tb/pfd_cp/tb_cp_compliance_mismatch.scs and analyze_pfd_cp.py compliance: sweep V_CP from 0 to VDD separately with UP active (dc_up) and DN active (dc_dn), measure |I_UP - I_DN| / (0.5*(I_UP + I_DN)) inside [v_comp_lo, v_comp_hi], extract mid-rail r_o, and verify 10%-current-drop compliance boundaries cover the full VCO tuning window.",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/pfd_cp/tb_cp_compliance_mismatch.scs"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "How do I verify the maximum toggle frequency f_max and catch cycle slips or division collapse in a high-speed TSPC or CML frequency divider?",
+      "expected_output": "Should point to assets/tb/divider/tb_div_max_toggle.scs and analyze_divider.py toggle: drive the divider into a realistic capacitive load (e.g., 50 fF) across multiple stepped input frequencies via alter, audit both average and per-cycle division ratios against N_target alongside swing, duty cycle, and 20%-80% rise/fall times to determine f_max_pass.",
+      "files": [
+        "references/pfd-cp-divider.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/divider/tb_div_max_toggle.scs"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "How do I simulate end-to-end Integer-N PLL startup including binary-search VCO auto-band calibration, open-loop VCTRL forcing, analog loop closure, and lock-detector assertion?",
+      "expected_output": "Should point to assets/tb/int_n_pll/tb_int_n_pll_bandcal_lock.scs, assets/va/va_bandcal_lockdet.va, assets/va/va_vco_multiband.va, and analyze_int_n_pll.py bandcal: force VCTRL = VDD/2 while VCFORCE is high during binary-search coarse calibration, release VCFORCE at CAL_DONE to close the CP loop, verify phase-window LOCK assertion after n_lock consecutive in-window cycles, and measure t_cal, t_lock, steady-state ppm error, and P_DD.",
+      "files": [
+        "references/simulation-and-verification.md",
+        "assets/tb/int_n_pll/tb_int_n_pll_bandcal_lock.scs",
+        "assets/va/va_bandcal_lockdet.va"
+      ]
+    },
+    {
+      "id": 21,
+      "prompt": "How can I accurately verify Integer-N PLL reference spurs directly from a transient FFT and cross-check them against VCTRL ripple?",
+      "expected_output": "Should point to assets/tb/int_n_pll/tb_int_n_pll_ref_spur.scs and analyze_int_n_pll.py spur: run tight-accuracy strobed transient (+preset=cx -preset_override, bounded maxstep) over an exact integer number of settled reference cycles, compute Kaiser-windowed FFT sidebands at f_0 +/- f_ref (and +/- 2*f_ref), and cross-check against the analytical NBFM formula 20*log10(K_VCO * V_rip,1 / (2*f_ref)) from the fundamental VCTRL ripple tone.",
+      "files": [
+        "references/integer-n-pll.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/int_n_pll/tb_int_n_pll_ref_spur.scs"
+      ]
+    },
+    {
+      "id": 22,
+      "prompt": "How do I verify closed-loop PLL supply rejection PSRR(f) and build a fast per-block phase-noise budget plus N x I_CP stability matrix?",
+      "expected_output": "Should explain that closed-loop VCO supply pushing follows the high-pass NTF 1 - H(s) (strong in-band suppression transitioning to 20*log10(K_VCO/K_VDD) out of band) verified via assets/tb/int_n_pll/tb_int_n_pll_psrr.scs, and point to assets/tb/int_n_pll/tb_int_n_pll_noise_scaling.scs for instant phase-domain noise budgeting (Ref/Div, CP, R1, VCO shares + RMS jitter) and 9-point N x I_CP stb scaling verifying constant f_u when I_CP scales with N.",
+      "files": [
+        "references/pll-fundamentals.md",
+        "references/simulation-and-verification.md",
+        "assets/tb/int_n_pll/tb_int_n_pll_psrr.scs",
+        "assets/tb/int_n_pll/tb_int_n_pll_noise_scaling.scs"
       ]
     }
   ]

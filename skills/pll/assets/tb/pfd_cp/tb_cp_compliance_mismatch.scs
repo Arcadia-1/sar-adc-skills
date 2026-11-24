@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent Charge Pump Testbench — DC Compliance & UP/DN Mismatch
+// =============================================================================
+// Isolates the charge pump (`dut_cp`) across two DC sweeps of output voltage
+// V_CP from 0 to VDD:
+//   1. `dc_up`: UP = VDD, DN = 0   -> measures sourcing current I_UP(V_CP)
+//   2. `dc_dn`: UP = 0,   DN = VDD -> measures sinking  current I_DN(V_CP)
+//
+// Extracts (via `analyze_pfd_cp.py compliance`):
+//   - I_UP(V_CP), I_DN(V_CP), and mid-rail output resistance r_o [kOhm]
+//   - Fractional mismatch |I_UP - I_DN| / (0.5*(I_UP + I_DN)) [%] inside
+//     usable compliance window [v_comp_lo, v_comp_hi]
+//   - Effective 10%-drop compliance headroom boundaries [v_comp_min, v_comp_max]
+//
+// DUT interface contract (5-pin isolated Charge Pump):
+//   subckt dut_cp UP DN IOUT VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    v_cp=0.45 \
+    v_up=vdd \
+    v_dn=0 \
+    v_step=5m \
+    temp_c=27
+
+VSUP (VDD  0) vsource dc=vdd  type=dc
+VGND (VSS  0) vsource dc=0    type=dc
+VUP  (UP   0) vsource dc=v_up type=dc
+VDN  (DN   0) vsource dc=v_dn type=dc
+
+// Force IOUT to swept DC voltage v_cp:
+//   - Sourcing UP current enters VCP:p  => I_UP = +I(VCP:p)
+//   - Sinking  DN current leaves VCP:p  => I_DN = -I(VCP:p)
+VCP  (IOUT 0) vsource dc=v_cp type=dc
+
+I0 (UP DN IOUT VDD VSS) dut_cp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-14 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Sweep 1: UP active (sourcing current vs. V_CP)
+dc_up dc param=v_cp start=0 stop=vdd step=v_step annotate=status
+
+// Switch digital inputs to DN active (sinking current vs. V_CP)
+alt_up_off alter param=v_up value=0
+alt_dn_on  alter param=v_dn value=vdd
+
+// Sweep 2: DN active
+dc_dn dc param=v_cp start=0 stop=vdd step=v_step annotate=status
+
+save VCP:p
+saveOptions options save=selected

@@ -51,3 +51,24 @@ pnoise (OUTP OUTN) pnoise sweeptype=relative relharmnum=1 \
 - **Keep `maxstep` bounded during VCO/PFD transient runs:** Coarse adaptive timesteps create numerical integration jitter that masks real circuit jitter; use `errpreset=conservative` and `maxstep <= T_vco / 20` whenever measuring phase ripple, fractional spurs, or transient jitter.
 - **Avoid `strobedelay >= strobeperiod`:** Spectre raises `ERROR (SPECTRE-16394)` if `strobedelay >= strobeperiod`; keep `strobedelay < strobeperiod` and filter out Spectre's off-grid `t=0` / `t=t_stop` endpoints using `extract_uniform_strobe` in `common/psf_utils.py`.
 - **ADE Maestro checks:** As with SAR ADCs, always inspect Maestro's generated `input.scs` to verify `pss` oscillator nodes `(OUTP OUTN)`, `autotstab=yes`, `pnoisemethod=fullspectrum`, `noiseout=[pm]`, and corner `definitionFiles` were actually written before trusting Maestro results.
+
+---
+
+## 4. Industrial Integer-N CP-PLL Signoff Checklist (7 Extended Decks)
+
+Beyond core loop stability and basic lock, tape-out-grade PLL signoff requires seven additional block and closed-loop checks — all bundled under `assets/tb/`:
+
+1. **Multi-Sub-Band VCO Cap-Bank Overlap & Linearity ([`tb_vco_capbank_overlap.scs`](../assets/tb/vco/tb_vco_capbank_overlap.scs)):**
+   - Sweeps coarse sub-band code `VCODE` via `alter` across 8 bands × 7 `VCTRL` levels. Confirms adjacent sub-band overlap $\frac{f_{\max}[k] - f_{\min}[k+1]}{f_{\text{step}}} \ge 20\%$–$25\%$ with zero blind frequency holes across PVT, and tracks varactor endpoint linearity error $K_{\text{LIN}}\,[\%]$.
+2. **Isolated Charge-Pump Compliance & Matching ([`tb_cp_compliance_mismatch.scs`](../assets/tb/pfd_cp/tb_cp_compliance_mismatch.scs)):**
+   - Runs `dc_up` and `dc_dn` sweeps of `V_CP` from `0` to `VDD`, measuring $I_{\text{UP}}(V_{\text{CP}})$, $I_{\text{DN}}(V_{\text{CP}})$, fractional mismatch inside the usable VCO tuning window $[V_{\text{comp,lo}}, V_{\text{comp,hi}}]$, mid-rail output resistance $r_o$, and 10%-current-drop compliance boundaries.
+3. **High-Speed Divider Max Toggle & Cycle-Slip Signoff ([`tb_div_max_toggle.scs`](../assets/tb/divider/tb_div_max_toggle.scs)):**
+   - Steps input clock frequency via `alter` into a realistic `50 fF` load, flagging any average or per-cycle division-ratio error (`cycle_slip`) alongside output duty cycle and 20%–80% rise/fall times to establish the slip-free ceiling $f_{\max,\text{pass}}$.
+4. **Auto Band-Calibration & Lock-Detector Closure ([`tb_int_n_pll_bandcal_lock.scs`](../assets/tb/int_n_pll/tb_int_n_pll_bandcal_lock.scs)):**
+   - Verifies end-to-end startup from `PLL_EN↑`: open-loop `VCTRL = VDD/2` forcing (`VCFORCE=1`), binary-search coarse-code convergence (`t_cal`, latched `VCODE`), smooth analog loop handoff (`CAL_DONE↑`), fine frequency settling (`±1%` / `±0.1%`), phase-window `LOCK` assertion, steady-state ppm error, and active supply power $P_{\text{DD}}$.
+5. **Direct FFT vs. NBFM Reference Spur Signoff ([`tb_int_n_pll_ref_spur.scs`](../assets/tb/int_n_pll/tb_int_n_pll_ref_spur.scs)):**
+   - Runs tight-accuracy (`+preset=cx -preset_override`, bounded `maxstep`) strobed transient over an exact integer count of $T_{\text{ref}}$ cycles after settling. Cross-checks the direct Kaiser-windowed FFT sidebands at $f_0 \pm f_{\text{ref}}$ and $\pm 2 f_{\text{ref}}$ directly against the analytical narrowband-FM prediction $20\log_{10}(K_{\text{VCO}} V_{\text{rip},1} / (2 f_{\text{ref}}))$ (matching within $< 1\text{ dB}$).
+6. **Closed-Loop Supply Rejection ([`tb_int_n_pll_psrr.scs`](../assets/tb/int_n_pll/tb_int_n_pll_psrr.scs)):**
+   - Injects a small sinusoidal ripple onto VCO supply `VDDA` at in-band ($f \ll f_u$), near-bandwidth ($f \approx f_u$), and out-of-band ($f \gg f_u$) frequencies via `alter`. Confirms strong in-band loop suppression transitioning to the open-loop pushing floor $20\log_{10}(K_{\text{VCO}} / K_{\text{VDD}})$ via both `F_INST(t)` demodulation and `OUTP(t)` FM sidebands.
+7. **Closed-Loop Phase-Noise Budget & Programmable $N \times I_{\text{CP}}$ Matrix ([`tb_int_n_pll_noise_scaling.scs`](../assets/tb/int_n_pll/tb_int_n_pll_noise_scaling.scs)):**
+   - Runs a 5-sweep Spectre phase-domain `noise` analysis (`< 1 s`) decomposing total integrated RMS jitter (`10 kHz–30 MHz`) into exact Ref/Div, CP, native $4kTR_1$, and VCO percentage shares (100% variance closure), followed by a 9-point `alter` + `stb` sweep across $N \in \{16, 32, 64\} \times I_{\text{CP}} \in \{80, 160, 320\}\;\mu\text{A}$ verifying constant $f_u$ along $I_{\text{CP}} \propto N$ and flagging any low-PM corners ($< 45^\circ$).

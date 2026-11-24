@@ -4,6 +4,7 @@
 Usage:
   python analyze_vco.py tuning <psf_dir>
   python analyze_vco.py pss_pnoise <psf_dir> [--vdd 0.9] [--f-low 10e3] [--f-high 40e6]
+  python analyze_vco.py capbank <psf_dir> [--min-overlap-pct 20.0]
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -139,6 +141,100 @@ def analyze_pss_pnoise(
     }
 
 
+def analyze_capbank(
+    psf_dir: Path, *, min_overlap_pct: float = 20.0
+) -> dict[str, object]:
+    """Analyze multi-sub-band cap-bank overlap and K_LIN from tb_vco_capbank_overlap.scs."""
+    files = sorted(
+        Path(psf_dir).glob("tran_b*.tran"),
+        key=lambda p: int(m.group(1)) if (m := re.search(r"b(\d+)", p.name)) else 0,
+    )
+    if len(files) < 2:
+        raise FileNotFoundError(
+            f"Expected >= 2 tran_b*.tran files in {psf_dir}, found {[p.name for p in files]}"
+        )
+
+    bands: list[dict[str, object]] = []
+    for p in files:
+        d = parse_psf_ascii(p)
+        _, vctrl, vcode, finst_ghz = extract_uniform_strobe(
+            d["time"], d["VCTRL"], d["VCODE"], d["F_INST"]
+        )
+        order = np.argsort(vctrl)
+        vctrl = vctrl[order]
+        f_mhz = finst_ghz[order] * 1e3  # va_phase_err_mon outputs GHz (1 V == 1 GHz)
+        if len(vctrl) < 3:
+            raise RuntimeError(f"Expected >= 3 strobed VCTRL points in {p.name}, got {len(vctrl)}")
+
+        code = int(round(float(np.median(vcode))))
+        f_min = float(f_mhz[0])
+        f_max = float(f_mhz[-1])
+        span = f_max - f_min
+        dv_tot = float(vctrl[-1] - vctrl[0])
+        kvco_avg = span / dv_tot if abs(dv_tot) > 1e-9 else 0.0
+        kvco_local = np.diff(f_mhz) / np.diff(vctrl)
+
+        f_line = f_min + kvco_avg * (vctrl - vctrl[0])
+        k_lin_pct = float(100.0 * np.max(np.abs(f_mhz - f_line)) / max(abs(span), 1e-9))
+
+        bands.append(
+            {
+                "code": code,
+                "n_pts": int(len(vctrl)),
+                "f_min_mhz": f_min,
+                "f_max_mhz": f_max,
+                "span_mhz": span,
+                "kvco_avg_mhz_per_v": float(kvco_avg),
+                "kvco_min_mhz_per_v": float(np.min(kvco_local)),
+                "kvco_max_mhz_per_v": float(np.max(kvco_local)),
+                "k_lin_pct": k_lin_pct,
+                "monotonic": bool(np.all(np.diff(f_mhz) > 0.0)),
+            }
+        )
+
+    bands.sort(key=lambda b: float(b["f_min_mhz"]))
+
+    overlaps_mhz: list[float] = []
+    overlaps_pct: list[float] = []
+    f_steps_mhz: list[float] = []
+    for k in range(len(bands) - 1):
+        b0, b1 = bands[k], bands[k + 1]
+        f_step = 0.5 * (
+            (float(b1["f_min_mhz"]) - float(b0["f_min_mhz"]))
+            + (float(b1["f_max_mhz"]) - float(b0["f_max_mhz"]))
+        )
+        ov_mhz = float(b0["f_max_mhz"]) - float(b1["f_min_mhz"])
+        ov_pct = 100.0 * ov_mhz / max(f_step, 1e-9)
+        f_steps_mhz.append(f_step)
+        overlaps_mhz.append(ov_mhz)
+        overlaps_pct.append(ov_pct)
+
+    f_tot_min = float(bands[0]["f_min_mhz"])
+    f_tot_max = float(bands[-1]["f_max_mhz"])
+    f_tot_mid = 0.5 * (f_tot_min + f_tot_max)
+    blind_holes = int(sum(1 for ov in overlaps_mhz if ov <= 0.0))
+    min_ov = float(min(overlaps_pct))
+
+    return {
+        "n_bands": int(len(bands)),
+        "f_total_min_mhz": f_tot_min,
+        "f_total_max_mhz": f_tot_max,
+        "total_tuning_range_pct": 100.0 * (f_tot_max - f_tot_min) / max(f_tot_mid, 1e-9),
+        "mean_f_step_mhz": float(np.mean(f_steps_mhz)),
+        "mean_kvco_mhz_per_v": float(np.mean([float(b["kvco_avg_mhz_per_v"]) for b in bands])),
+        "max_k_lin_pct": float(max(float(b["k_lin_pct"]) for b in bands)),
+        "min_overlap_pct": min_ov,
+        "max_overlap_pct": float(max(overlaps_pct)),
+        "mean_overlap_pct": float(np.mean(overlaps_pct)),
+        "overlaps_pct": [round(x, 3) for x in overlaps_pct],
+        "blind_hole_count": blind_holes,
+        "min_overlap_spec_pct": float(min_overlap_pct),
+        "overlap_pass": bool(blind_holes == 0 and min_ov >= min_overlap_pct),
+        "all_bands_monotonic": bool(all(bool(b["monotonic"]) for b in bands)),
+        "bands": bands,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze VCO Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -152,9 +248,15 @@ def main(argv: list[str] | None = None) -> int:
     p_p.add_argument("--f-low", type=float, default=10e3)
     p_p.add_argument("--f-high", type=float, default=40e6)
 
+    p_c = sub.add_parser("capbank", help="Extract sub-band overlap and K_LIN from tb_vco_capbank_overlap.scs")
+    p_c.add_argument("psf_dir", type=Path)
+    p_c.add_argument("--min-overlap-pct", type=float, default=20.0)
+
     args = ap.parse_args(argv)
     if args.mode == "tuning":
         res = analyze_tuning(args.psf_dir)
+    elif args.mode == "capbank":
+        res = analyze_capbank(args.psf_dir, min_overlap_pct=args.min_overlap_pct)
     else:
         res = analyze_pss_pnoise(
             args.psf_dir, vdd=args.vdd, f_low=args.f_low, f_high=args.f_high

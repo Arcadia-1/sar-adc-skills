@@ -1,0 +1,218 @@
+// Process-independent digital PLL auto-band-calibration FSM & lock detector
+//
+// Models:
+//   - On PLL_EN rising edge: asserts VCFORCE = VDD (open-loop VCTRL = VDD/2),
+//     clears CAL_DONE and LOCK, and runs an n_bits successive-approximation
+//     binary search comparing FDIV against FREF over n_count FREF cycles per step
+//   - Tracks nearest-frequency coarse code across trial steps, latches optimal
+//     VCODE, asserts CAL_DONE = VDD, and drops VCFORCE = 0 to close the analog loop
+//   - Phase-window lock detector (active after CAL_DONE): checks circular arrival
+//     time error |t_FREF - t_FDIV| < ldw and period match every FREF cycle;
+//     asserts LOCK after n_lock consecutive hits and de-asserts after n_unlock misses
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bandcal_lockdet(
+    input  electrical FREF,
+    input  electrical FDIV,
+    input  electrical PLL_EN,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical VCODE,
+    output electrical CAL_DONE,
+    output electrical VCFORCE,
+    output electrical LOCK
+);
+
+parameter integer n_bits   = 4    from [2:8];     // coarse cap-bank resolution (2^n_bits codes)
+parameter integer n_count  = 32   from [4:256];   // FREF cycles counted per binary-search step
+parameter integer n_settle = 2    from [1:32];    // FREF guard cycles after each code change
+parameter integer n_lock   = 24   from [4:256];   // consecutive in-window cycles to assert LOCK
+parameter integer n_unlock = 4    from [1:64];    // consecutive out-of-window cycles to drop LOCK
+parameter real    ldw      = 100p from (1p:inf);  // lock-detector phase-error window [s]
+parameter real    vdd_nom  = 0.9  from (0:inf);   // logic high voltage [V]
+parameter real    vth      = 0.45;                // input logic threshold [V]
+parameter real    tr       = 20p  from (1p:inf);  // output transition time [s]
+parameter real    i_dd     = 0.2m from [0:inf);   // digital FSM DC supply current [A]
+
+integer st, bit_mask, init_mask, k_idx;
+integer code_base, code_cur, best_code;
+integer ref_cnt, div_cnt, settling;
+integer cal_done, vcforce, lock_st;
+integer lock_cnt, unlock_cnt, have_ref, have_div;
+real t_ref_prev, t_ref_per, t_div_prev, t_div_per;
+real t_win_start, t_div_first, t_div_last;
+real f_ref_est, f_div_est, err_f, best_err;
+real dt_raw, dt_err;
+
+analog begin
+    @(initial_step) begin
+        init_mask = 1;
+        for (k_idx = 1; k_idx < n_bits; k_idx = k_idx + 1) begin
+            init_mask = init_mask * 2;
+        end
+        st          = 0;
+        bit_mask    = init_mask;
+        code_base   = 0;
+        code_cur    = 0;
+        best_code   = 0;
+        ref_cnt     = 0;
+        div_cnt     = 0;
+        settling    = 1;
+        cal_done    = 0;
+        vcforce     = 0;
+        lock_st     = 0;
+        lock_cnt    = 0;
+        unlock_cnt  = 0;
+        have_ref    = 0;
+        have_div    = 0;
+        t_ref_prev  = 0.0;
+        t_ref_per   = 20e-9;
+        t_div_prev  = 0.0;
+        t_div_per   = 20e-9;
+        t_win_start = 0.0;
+        t_div_first = 0.0;
+        t_div_last  = 0.0;
+        best_err    = 1e30;
+    end
+
+    // Start binary-search coarse band calibration on PLL_EN rising edge
+    @(cross(V(PLL_EN, VSS) - vth, +1)) begin
+        st         = 1;
+        bit_mask   = init_mask;
+        code_base  = 0;
+        code_cur   = bit_mask;
+        best_code  = bit_mask;
+        best_err   = 1e30;
+        ref_cnt    = 0;
+        div_cnt    = 0;
+        settling   = 1;
+        cal_done   = 0;
+        vcforce    = 1;
+        lock_st    = 0;
+        lock_cnt   = 0;
+        unlock_cnt = 0;
+    end
+
+    // Reset FSM cleanly if PLL_EN is de-asserted
+    @(cross(V(PLL_EN, VSS) - vth, -1)) begin
+        st         = 0;
+        code_cur   = 0;
+        cal_done   = 0;
+        vcforce    = 0;
+        lock_st    = 0;
+        lock_cnt   = 0;
+        unlock_cnt = 0;
+    end
+
+    // Track FDIV edges for both calibration frequency counter and lock detector
+    @(cross(V(FDIV, VSS) - vth, +1)) begin
+        if (have_div && ($abstime > t_div_prev + 1e-15)) begin
+            t_div_per = $abstime - t_div_prev;
+        end
+        t_div_prev = $abstime;
+        have_div   = 1;
+
+        if ((st == 1) && (settling == 0)) begin
+            if (div_cnt == 0) begin
+                t_div_first = $abstime;
+            end
+            t_div_last = $abstime;
+            div_cnt    = div_cnt + 1;
+        end
+    end
+
+    // Advance calibration FSM and lock detector on every FREF rising edge
+    @(cross(V(FREF, VSS) - vth, +1)) begin
+        if (have_ref && ($abstime > t_ref_prev + 1e-15)) begin
+            t_ref_per = $abstime - t_ref_prev;
+        end
+
+        if (st == 1) begin
+            ref_cnt = ref_cnt + 1;
+            if (settling == 1) begin
+                if (ref_cnt >= n_settle) begin
+                    settling    = 0;
+                    ref_cnt     = 0;
+                    div_cnt     = 0;
+                    t_win_start = $abstime;
+                end
+            end else if (ref_cnt >= n_count) begin
+                f_ref_est = ref_cnt / max($abstime - t_win_start, 1e-15);
+                if ((div_cnt >= 2) && (t_div_last > t_div_first + 1e-15)) begin
+                    f_div_est = (div_cnt - 1) / (t_div_last - t_div_first);
+                end else begin
+                    f_div_est = 0.0;
+                end
+
+                err_f = abs(f_div_est - f_ref_est);
+                if (err_f < best_err) begin
+                    best_err  = err_f;
+                    best_code = code_cur;
+                end
+
+                // Keep trial bit if VCO is still at or below target frequency
+                if (f_div_est <= f_ref_est) begin
+                    code_base = code_base + bit_mask;
+                end
+
+                bit_mask = bit_mask / 2;
+                if (bit_mask >= 1) begin
+                    code_cur = code_base + bit_mask;
+                    settling = 1;
+                    ref_cnt  = 0;
+                    div_cnt  = 0;
+                end else begin
+                    code_cur = best_code;
+                    cal_done = 1;
+                    vcforce  = 0;
+                    st       = 2;
+                    lock_cnt   = 0;
+                    unlock_cnt = 0;
+                end
+            end
+        end else if ((st == 2) && have_ref && have_div) begin
+            // Circular phase-error check (immune to FDIV crossing FREF at 0 ps)
+            dt_raw = $abstime - t_div_prev;
+            if ((dt_raw < 1.25 * t_ref_per) &&
+                (abs(t_div_per - t_ref_per) < 0.05 * t_ref_per)) begin
+                dt_err = dt_raw;
+                if (abs(t_ref_per - dt_raw) < dt_err) begin
+                    dt_err = abs(t_ref_per - dt_raw);
+                end
+            end else begin
+                dt_err = t_ref_per;
+            end
+
+            if (dt_err < ldw) begin
+                unlock_cnt = 0;
+                if (lock_cnt < n_lock) begin
+                    lock_cnt = lock_cnt + 1;
+                end
+                if (lock_cnt >= n_lock) begin
+                    lock_st = 1;
+                end
+            end else begin
+                lock_cnt = 0;
+                if (lock_st == 1) begin
+                    unlock_cnt = unlock_cnt + 1;
+                    if (unlock_cnt >= n_unlock) begin
+                        lock_st = 0;
+                    end
+                end
+            end
+        end
+
+        t_ref_prev = $abstime;
+        have_ref   = 1;
+    end
+
+    I(VDD, VSS)      <+ i_dd * tanh(V(VDD, VSS) / 0.1);
+    V(VCODE, VSS)    <+ transition(code_cur * 1.0,     0, tr, tr);
+    V(CAL_DONE, VSS) <+ transition(cal_done * vdd_nom, 0, tr, tr);
+    V(VCFORCE, VSS)  <+ transition(vcforce  * vdd_nom, 0, tr, tr);
+    V(LOCK, VSS)     <+ transition(lock_st  * vdd_nom, 0, tr, tr);
+end
+
+endmodule

@@ -1,0 +1,78 @@
+// =============================================================================
+// Process-Independent Integer-N CP-PLL — Reference Spur Signoff Testbench
+// =============================================================================
+// Closed-loop Type-II Integer-N CP-PLL with realistic CP Up/Down mismatch
+// (`mismatch = 2%`) and loop-filter leakage (`i_leak = 25 nA`) initialized near
+// lock (`ic VCTRL=vctrl_init`), simulated with tight timestep control over an
+// exact integer number of reference cycles after settling.
+//
+// Extracts (via `analyze_int_n_pll.py spur`):
+//   - Direct Kaiser-windowed FFT of OUTP(t) at f_0 +/- f_ref and +/- 2*f_ref [dBc]
+//   - Steady-state VCTRL(t) fundamental ripple V_rip,1 at f_ref [uV]
+//   - Analytical narrowband-FM spur 20*log10(K_VCO * V_rip,1 / (2*f_ref)) [dBc]
+//     cross-checked directly against the OUTP FFT spur (< 1-2 dB agreement)
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx -preset_override +mt=2 -format psfascii tb_int_n_pll_ref_spur.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../../va/va_pfd.va"
+ahdl_include "../../va/va_cp.va"
+ahdl_include "../../va/va_vco.va"
+ahdl_include "../../va/va_div_int.va"
+
+parameters \
+    vdd=0.9 \
+    f_ref=50M \
+    n_div=20 \
+    i_cp=100u \
+    cp_mis=0.02 \
+    i_leak=25n \
+    r1=13.5k \
+    c1=22p \
+    c2=1.7p \
+    kvco=200M \
+    vctrl_init=0.45 \
+    t_settle=2.0u \
+    n_ref_fft=64 \
+    t_strobe=125p \
+    temp_c=27
+
+parameters \
+    t_ref=1/f_ref \
+    f_target=n_div*f_ref \
+    t_stop=t_settle+n_ref_fft*t_ref
+
+VSUP  (VDD  0) vsource dc=vdd type=dc
+VGND  (VSS  0) vsource dc=0   type=dc
+VFREF (FREF 0) vsource type=pulse val0=0 val1=vdd \
+    period=t_ref delay=0 rise=15p fall=15p width=0.5*t_ref
+
+// PFD + CP (with mismatch & leakage) + 2nd-order passive loop filter
+I_PFD (FREF FDIV UP DN) va_pfd vdd=vdd vth=0.5*vdd td_rst=80p tr=10p
+I_CP  (UP DN VCTRL VDD VSS) va_cp \
+    vdd_nom=vdd i_cp=i_cp mismatch=cp_mis i_leak=i_leak v_comp=0.12
+R_1   (VCTRL N_C1) resistor  r=r1
+C_1   (N_C1  VSS)  capacitor c=c1
+C_2   (VCTRL VSS)  capacitor c=c2
+
+// VCO (fine timestep bounding for clean FFT floor) + Integer-N divider
+I_VCO (VCTRL OUTP OUTN) va_vco \
+    f0=f_target kvco=kvco vctrl0=0.5*vdd vcm=0.5*vdd vamp=vdd pts_per_cycle=32
+I_DIV (OUTP FDIV) va_div_int n_div=n_div vdd=vdd vth=0.5*vdd td=20p tr=10p
+
+ic VCTRL=vctrl_init
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-14 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Uniform 8 GHz strobe grid (exact integer samples per T_vco and T_ref)
+tran tran stop=t_stop errpreset=conservative maxstep=15p \
+    strobeperiod=t_strobe strobedelay=0 strobeoutput=strobeonly
+
+save OUTP VCTRL
+saveOptions options save=selected
