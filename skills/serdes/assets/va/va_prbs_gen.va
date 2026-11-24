@@ -1,0 +1,75 @@
+// Process-independent SerDes PRBS & Single-Bit-Response (SBR) NRZ Generator
+//
+// Generates differential NRZ waveforms clocked on rising edges of CLK:
+//   - mode = 0 : PRBS-7 maximal-length LFSR (x^7 + x^6 + 1, period 127 UI)
+//   - mode = 1 : PRBS-9 maximal-length LFSR (x^9 + x^5 + 1, period 511 UI)
+//   - mode = 2 : Single-Bit Isolated Pulse (`+1` at `idx == pulse_idx`, `-1` elsewhere)
+//                for exact Single-Bit Response (SBR / pulse response h(t)) extraction
+//
+// Drives OUTP / OUTN with smooth rise/fall `t_rf` through source resistance `r_src`.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_prbs_gen(
+    input  electrical CLK,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN,
+    output electrical BIT_MON
+);
+
+parameter integer mode      = 0      from [0:2];     // 0=PRBS7, 1=PRBS9, 2=SBR single pulse
+parameter integer pulse_idx = 10     from [1:10000]; // UI index of isolated pulse (mode=2)
+parameter real    vth       = 0.50   from (0:inf);   // CLK threshold [V]
+parameter real    v_swing   = 0.80   from (0.01:5.0);// differential peak-to-peak swing [Vpp_diff]
+parameter real    v_cm      = 0.50;                  // output common-mode voltage [V]
+parameter real    t_rf      = 15e-12 from (1e-12:inf);// 20-80% transition edge time [s]
+parameter real    r_src     = 50.0   from (0.01:1e6);// single-ended source impedance [ohm]
+
+integer sr[8:0];
+integer idx, cur_bit, fb, k;
+real sym, v_p_tgt, v_n_tgt, v_p_sm, v_n_sm;
+
+analog begin
+    @(initial_step) begin
+        idx = 0;
+        for (k = 0; k <= 8; k = k + 1)
+            sr[k] = 1;
+        cur_bit = (mode == 2) ? 0 : sr[0];
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        idx = idx + 1;
+        if (mode == 0) begin
+            // PRBS-7: x^7 + x^6 + 1
+            fb = sr[6] ^ sr[5];
+            for (k = 6; k >= 1; k = k - 1)
+                sr[k] = sr[k - 1];
+            sr[0] = fb;
+            cur_bit = sr[6];
+        end else if (mode == 1) begin
+            // PRBS-9: x^9 + x^5 + 1
+            fb = sr[8] ^ sr[4];
+            for (k = 8; k >= 1; k = k - 1)
+                sr[k] = sr[k - 1];
+            sr[0] = fb;
+            cur_bit = sr[8];
+        end else begin
+            cur_bit = (idx == pulse_idx) ? 1 : 0;
+        end
+    end
+
+    sym     = cur_bit ? 1.0 : -1.0;
+    v_p_tgt = v_cm + 0.25 * v_swing * sym;
+    v_n_tgt = v_cm - 0.25 * v_swing * sym;
+
+    v_p_sm = transition(v_p_tgt, 0.0, t_rf, t_rf);
+    v_n_sm = transition(v_n_tgt, 0.0, t_rf, t_rf);
+
+    I(OUTP, VSS) <+ (V(OUTP, VSS) - v_p_sm) / r_src;
+    I(OUTN, VSS) <+ (V(OUTN, VSS) - v_n_sm) / r_src;
+    V(BIT_MON, VSS) <+ transition(cur_bit ? 1.0 : 0.0, 0.0, t_rf, t_rf);
+end
+
+endmodule

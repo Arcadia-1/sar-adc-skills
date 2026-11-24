@@ -1,0 +1,35 @@
+// =============================================================================
+// Causal Passive 100-ohm Differential Lossy PCB/Backplane Channel (Spectre MTLINE)
+// =============================================================================
+// 100% self-contained, process-independent coupled stripline model with:
+//   - Differential impedance Z_diff = 2 * Z_odd = 100.0 ohm (L_odd=325 nH/m, C_odd=130 pF/m)
+//   - Frequency-dependent conductor skin effect (rskin * sqrt(f) * (1 + j))
+//   - Causal Djordjevic-Sarkar dielectric loss (gdloss with fgdloss/fgdloss1)
+//   - Small package/connector shunt pad capacitance `c_pkg` at each end
+//   - Configurable length `ch_len` (default 0.50 m -> ~ -14.5 dB @ 5 GHz, ~ -26 dB @ 10 GHz)
+//
+// Works natively in Spectre X `sp`, `ac`, `dc`, `noise`, and `tran` (TDR/SBR/Eye)!
+// To swap in a measured Touchstone channel, replace the body with:
+//   NPORT0 (INP 0 INN 0 OUTP 0 OUTN 0) nport file="your_channel.s4p" interp=rational
+// =============================================================================
+
+simulator lang=spectre
+
+model diff_fr4_mtline mtline \
+    r=[ 2.5 0.0 2.5 ] \
+    l=[ 360n 35n 360n ] \
+    c=[ 117p -13p 117p ] \
+    g=[ 1u 0.0 1u ] \
+    rskin=[ 1.8m 0.0 1.8m ] \
+    gdloss=[ 14.5p -1.6p 14.5p ] \
+    fgdloss=100G fgdloss1=1k
+
+subckt channel_diff_lossy (INP INN OUTP OUTN VSS)
+    parameters ch_len=0.50 c_pkg=80f
+    CP_TX (INP  VSS) capacitor c=c_pkg
+    CN_TX (INN  VSS) capacitor c=c_pkg
+    // Spectre mtline terminal order: (in1 out1 in2 out2 refin refout)
+    TL0   (INP OUTP INN OUTN VSS VSS) diff_fr4_mtline len=ch_len
+    CP_RX (OUTP VSS) capacitor c=c_pkg
+    CN_RX (OUTN VSS) capacitor c=c_pkg
+ends channel_diff_lossy

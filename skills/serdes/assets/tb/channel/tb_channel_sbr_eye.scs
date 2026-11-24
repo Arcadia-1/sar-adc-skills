@@ -1,0 +1,57 @@
+// =============================================================================
+// Process-Independent SerDes Channel TB — Single-Bit Response (SBR) & PRBS Eye
+// =============================================================================
+// Drives two parallel channel replicas at `bit_rate` (default 10 Gb/s, UI=100 ps):
+//   - Replica A (SBR): isolated 1-UI pulse (`va_prbs_gen mode=2`) -> exact
+//     pre-cursor h_-1, main cursor h0, post-cursors h1..h5, and PDA eye height!
+//   - Replica B (Eye): PRBS-7 stream (`va_prbs_gen mode=0`) -> folded 1-UI eye
+//     height [mV], eye width [UI / ps], and differential swing!
+//
+// DUT interface contract:
+//   subckt dut_channel INP INN OUTP OUTN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    bit_rate=10G \
+    v_swing=1.6 \
+    v_cm=0.5 \
+    z0=50 \
+    t_rf=15p \
+    n_ui_eye=180 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui_eye*ui
+
+VGND (VSS 0) vsource dc=0 type=dc
+VCLK (CLK 0) vsource type=pulse val0=0 val1=1.0 period=ui delay=0 rise=5p fall=5p width=0.5*ui
+
+// --- Replica A: Isolated 1-UI pulse for Single-Bit Response h(t) ---
+I_SBR_GEN (CLK VSS SBR_INP SBR_INN SBR_BIT) va_prbs_gen \
+    mode=2 pulse_idx=15 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CH_SBR  (SBR_INP SBR_INN SBR_OUTP SBR_OUTN VSS) dut_channel
+RSBRP     (SBR_OUTP VSS) resistor r=z0
+RSBRN     (SBR_OUTN VSS) resistor r=z0
+
+// --- Replica B: PRBS-7 stream for 1-UI folded Eye Diagram ---
+I_PRBS_GEN (CLK VSS EYE_INP EYE_INN EYE_BIT) va_prbs_gen \
+    mode=0 v_swing=v_swing v_cm=v_cm t_rf=t_rf r_src=z0
+I_CH_EYE   (EYE_INP EYE_INN EYE_OUTP EYE_OUTN VSS) dut_channel
+REYEP      (EYE_OUTP VSS) resistor r=z0
+REYEN      (EYE_OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save SBR_OUTP SBR_OUTN EYE_INP EYE_INN EYE_OUTP EYE_OUTN
+saveOptions options save=selected

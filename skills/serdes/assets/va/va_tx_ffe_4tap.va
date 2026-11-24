@@ -1,0 +1,80 @@
+// Process-independent 4-Tap SerDes TX Feed-Forward Equalizer (FFE) Model
+//
+// Implements a 4-tap TX FFE (1 pre-cursor + main + 2 post-cursors):
+//   y[k] = w_pre * d[k] + w_main * d[k-1] + w_post1 * d[k-2] + w_post2 * d[k-3]
+//
+// Features:
+//   - Peak-power constraint normalization (`norm_l1=1` enforces sum(|w_k|) = 1)
+//   - Realistic differential output termination `r_term` (default 50 ohm) and
+//     parasitic ESD/pad cap `c_pad` so `tb_tx_s11.scs` measures physical SDD11(f)!
+//   - Smooth `transition()` edges for clean Spectre X convergence
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_tx_ffe_4tap(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real    vth       = 0.50   from (0:inf);     // CLK threshold [V]
+parameter real    v_swing   = 0.80   from (0.01:5.0);  // open-circuit differential Vpp (matched load sees 0.5*v_swing if r_term=r_load)
+parameter real    v_cm      = 0.60;                    // output DC common-mode [V]
+parameter real    w_pre     = 0.0;                     // pre-cursor tap weight (typically <= 0, e.g. -0.10)
+parameter real    w_main    = 1.0;                     // main cursor tap weight (> 0)
+parameter real    w_post1   = 0.0;                     // 1st post-cursor tap weight (typically <= 0, e.g. -0.25)
+parameter real    w_post2   = 0.0;                     // 2nd post-cursor tap weight (e.g. +0.05 or 0)
+parameter integer norm_l1   = 1      from [0:1];       // 1 = normalize sum(|w_k|) = 1 (physical peak-swing limit)
+parameter real    r_term    = 50.0   from (1.0:1e6);   // single-ended TX termination [ohm]
+parameter real    c_pad     = 80e-15 from [0:inf);     // output ESD/pad capacitance [F]
+parameter real    t_rf      = 15e-12 from (1e-12:inf); // output transition time [s]
+
+real d0, d1, d2, d3, w_sum, wn_pre, wn_main, wn_p1, wn_p2;
+real y_eq, vp_tgt, vn_tgt, vp_sm, vn_sm;
+
+analog begin
+    @(initial_step) begin
+        d0 = -1.0;
+        d1 = -1.0;
+        d2 = -1.0;
+        d3 = -1.0;
+        w_sum = abs(w_pre) + abs(w_main) + abs(w_post1) + abs(w_post2);
+        if (norm_l1 == 1 && w_sum > 1e-12) begin
+            wn_pre  = w_pre   / w_sum;
+            wn_main = w_main  / w_sum;
+            wn_p1   = w_post1 / w_sum;
+            wn_p2   = w_post2 / w_sum;
+        end else begin
+            wn_pre  = w_pre;
+            wn_main = w_main;
+            wn_p1   = w_post1;
+            wn_p2   = w_post2;
+        end
+        y_eq = wn_pre * d0 + wn_main * d1 + wn_p1 * d2 + wn_p2 * d3;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        d3 = d2;
+        d2 = d1;
+        d1 = d0;
+        d0 = (V(INP, INN) >= 0.0) ? 1.0 : -1.0;
+        y_eq = wn_pre * d0 + wn_main * d1 + wn_p1 * d2 + wn_p2 * d3;
+    end
+
+    // Source voltage = 2x matched-load swing so 50-ohm R_term into 50-ohm load delivers v_swing
+    vp_tgt = v_cm + 0.5 * v_swing * y_eq;
+    vn_tgt = v_cm - 0.5 * v_swing * y_eq;
+    vp_sm  = transition(vp_tgt, 0.0, t_rf, t_rf);
+    vn_sm  = transition(vn_tgt, 0.0, t_rf, t_rf);
+
+    I(OUTP, VSS) <+ (V(OUTP, VSS) - vp_sm) / r_term + c_pad * ddt(V(OUTP, VSS));
+    I(OUTN, VSS) <+ (V(OUTN, VSS) - vn_sm) / r_term + c_pad * ddt(V(OUTN, VSS));
+    I(VDD, VSS)  <+ 10e-3;
+end
+
+endmodule

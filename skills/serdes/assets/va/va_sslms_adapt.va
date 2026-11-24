@@ -1,0 +1,101 @@
+// Process-independent Sign-Sign LMS (SS-LMS) Adaptive Equalizer Engine
+//
+// Adapts either a VGA/CTLE gain weight (`lag_ui = 0`, `sign_pol = -1.0`) or
+// DFE post-cursor tap h_m (`lag_ui = m`, `sign_pol = +1.0`) using:
+//   w[k+1] = w[k] + sign_pol * mu * step_out * (1 - frozen)
+//   where step_raw = sign(DATA[k - lag_ui]) * sign(ERR[k])
+//
+// Improvements over naive SS-LMS prototypes:
+//   - Proper digital threshold slicing (`vth`) for rail-to-rail DATA and ERR
+//   - Majority-vote accumulator decimation (`acc_th`) suppresses jitter/noise chatter
+//   - Working convergence detector (`win_len`, `conv_th`) that genuinely freezes
+//     weight updates when `DONE` asserts!
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_sslms_adapt(
+    input  electrical DATA,
+    input  electrical ERR,
+    input  electrical CLK,
+    input  electrical VSS,
+    output electrical W_OUT,
+    output electrical DONE
+);
+
+parameter real    vdd      = 1.0  from (0.2:5.0);
+parameter real    vth      = 0.5  from (0:inf);     // logic threshold for DATA, ERR, CLK [V]
+parameter integer lag_ui   = 1    from [0:4];       // 0 = VGA gain; 1..4 = DFE tap h1..h4
+parameter real    sign_pol = 1.0;                   // +1.0 for DFE taps; -1.0 for VGA gain
+parameter real    w_init   = 0.0;                   // initial tap/gain weight [V]
+parameter real    w_min    = -0.5;                  // lower clamp [V]
+parameter real    w_max    = 0.5;                   // upper clamp [V]
+parameter real    mu       = 0.004 from (0:1.0);    // adaptation step size per decimated update
+parameter integer acc_th   = 4    from [1:1024];    // majority-vote accumulator threshold
+parameter integer win_len  = 128  from [16:16384];  // convergence averaging window [UI]
+parameter real    conv_th  = 0.08 from (0:1.0);     // |mean(corr)| below which DONE asserts
+parameter integer auto_stop = 1   from [0:1];       // 1 = freeze updates after DONE; 0 = keep tracking
+parameter real    t_rf     = 10e-12 from (1e-12:inf);
+
+integer d_hist[4:0];
+integer d_cur, e_cur, d_lag, corr, acc, step_out, win_cnt, win_sum, frozen, k;
+real w_val, mean_corr;
+
+analog begin
+    @(initial_step) begin
+        for (k = 0; k <= 4; k = k + 1)
+            d_hist[k] = -1;
+        acc      = 0;
+        step_out = 0;
+        win_cnt  = 0;
+        win_sum  = 0;
+        frozen   = 0;
+        w_val    = w_init;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        d_cur = (V(DATA, VSS) >= vth) ? 1 : -1;
+        e_cur = (V(ERR,  VSS) >= vth) ? 1 : -1;
+
+        for (k = 4; k >= 1; k = k - 1)
+            d_hist[k] = d_hist[k - 1];
+        d_hist[0] = d_cur;
+
+        d_lag = d_hist[lag_ui];
+        corr  = d_lag * e_cur;
+
+        // Majority-vote accumulator decimation
+        acc = acc + corr;
+        if (acc >= acc_th) begin
+            step_out = 1;
+            acc = 0;
+        end else if (acc <= -acc_th) begin
+            step_out = -1;
+            acc = 0;
+        end else begin
+            step_out = 0;
+        end
+
+        // Convergence monitor window
+        win_sum = win_sum + corr;
+        win_cnt = win_cnt + 1;
+        if (win_cnt >= win_len) begin
+            mean_corr = abs(win_sum) / (1.0 * win_len);
+            if (auto_stop == 1 && mean_corr < conv_th)
+                frozen = 1;
+            win_sum = 0;
+            win_cnt = 0;
+        end
+
+        if (frozen == 0 && step_out != 0) begin
+            w_val = w_val + sign_pol * mu * step_out;
+            if (w_val > w_max) w_val = w_max;
+            if (w_val < w_min) w_val = w_min;
+        end
+    end
+
+    V(W_OUT, VSS) <+ transition(w_val, 0.0, t_rf, t_rf);
+    V(DONE,  VSS) <+ transition(frozen ? vdd : 0.0, 0.0, t_rf, t_rf);
+end
+
+endmodule

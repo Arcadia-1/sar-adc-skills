@@ -1,0 +1,48 @@
+// =============================================================================
+// Process-Independent SerDes CTLE / VGA TB — Differential AC Peaking & Noise
+// =============================================================================
+// Extracts differential AC transfer function H_diff(f) = (OUTP - OUTN)/(INP - INN)
+// from 1 MHz to 40 GHz (DC gain, peak gain, peaking boost, f_peak, -3 dB BW)
+// and integrated differential output RMS noise from 100 kHz to 20 GHz.
+//
+// DUT interface contract (8-pin CTLE / VGA):
+//   subckt dut_ctle_vga INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    vboost=0.0 \
+    cload=50f \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Differential 1 V AC stimulus centered at vcm_in
+VINP (INP VSS) vsource dc=vcm_in mag=0.5  type=dc
+VINN (INN VSS) vsource dc=vcm_in mag=-0.5 type=dc
+VBST (VBOOST   VSS) vsource dc=vboost type=dc
+VOFF (VOFF_CAL VSS) vsource dc=0      type=dc
+
+I0 (INP INN VBOOST VOFF_CAL VDD VSS OUTP OUTN) dut_ctle_vga
+
+CLP (OUTP VSS) capacitor c=cload
+CLN (OUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dcOp  dc
+ac    ac start=1M stop=100G dec=40 annotate=status
+noise (OUTP OUTN) noise start=100k stop=20G dec=30 annotate=status
+
+save OUTP OUTN INP INN
+saveOptions options save=selected

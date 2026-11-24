@@ -1,0 +1,61 @@
+// Process-independent SerDes Front-End / Slicer Offset Calibration FSM
+//
+// Observes sliced comparator output `DATA_IN` with shorted differential input
+// (VIP = VIN = Vcm), applies majority-vote noise filtering (`vote_th`), steps a
+// signed calibration code (`-max_code .. +max_code`), outputs correction voltage
+// `V_CORR = code * v_lsb`, and asserts `DONE` once the sign flips across zero.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_offset_cal_fsm(
+    input  electrical DATA_IN,
+    input  electrical CLK,
+    input  electrical VSS,
+    output electrical CODE_MON,
+    output electrical V_CORR,
+    output electrical DONE
+);
+
+parameter real    vdd      = 1.0   from (0.2:5.0);
+parameter real    vth      = 0.5   from (0:inf);
+parameter integer max_code = 31    from [3:1023];   // signed range [-max_code .. +max_code]
+parameter real    v_lsb    = 1.5e-3 from (1e-6:0.5);// offset DAC LSB step [V]
+parameter integer vote_th  = 4     from [1:256];    // majority vote count before stepping
+parameter real    t_rf     = 20e-12 from (1e-12:inf);
+
+integer acc, code, prev_dir, cur_dir, done_flag;
+
+analog begin
+    @(initial_step) begin
+        acc       = 0;
+        code      = 0;
+        prev_dir  = 0;
+        done_flag = 0;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        if (done_flag == 0) begin
+            acc = acc + ((V(DATA_IN, VSS) >= vth) ? 1 : -1);
+            if (acc >= vote_th || acc <= -vote_th) begin
+                cur_dir = (acc >= vote_th) ? 1 : -1;
+                acc     = 0;
+                if (prev_dir != 0 && cur_dir != prev_dir) begin
+                    // Zero-crossing bracketed -> calibration converged!
+                    done_flag = 1;
+                end else begin
+                    prev_dir = cur_dir;
+                    code = code + cur_dir;
+                    if (code >  max_code) code =  max_code;
+                    if (code < -max_code) code = -max_code;
+                end
+            end
+        end
+    end
+
+    V(CODE_MON, VSS) <+ transition(code, 0.0, t_rf, t_rf);
+    V(V_CORR,   VSS) <+ transition(code * v_lsb, 0.0, t_rf, t_rf);
+    V(DONE,     VSS) <+ transition(done_flag ? vdd : 0.0, 0.0, t_rf, t_rf);
+end
+
+endmodule

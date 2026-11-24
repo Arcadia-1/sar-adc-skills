@@ -1,0 +1,79 @@
+// Process-independent SerDes Continuous-Time Linear Equalizer (CTLE) + VGA Model
+//
+// Models the exact 1-zero / 2-pole differential CTLE + VGA transfer function
+// using passive-stable differential state equations (works cleanly in DC, AC,
+// SP, Noise, and Spectre X Transient without laplace_nd issues!):
+//
+//   H(s) = A_dc * (1 + s / w_z) / ((1 + s / w_p1) * (1 + s / w_p2))
+//
+// where:
+//   - w_p1 = 2*pi*f_p1
+//   - boost_eff = boost_ratio + k_vboost * V(VBOOST, VSS)  (>= 1.0)
+//   - w_z  = w_p1 / boost_eff   (high-frequency zero-to-pole peaking ratio!)
+//   - w_p2 = 2*pi*f_p2          (parasitic bandwidth roll-off pole)
+//   - Supports injectable DC input offset `vos`, external offset-calibration port
+//     `VOFF_CAL`, matched input termination `r_in`, and input-referred white noise
+//     `vn_in` that genuinely gets shaped/amplified by the CTLE peaking!
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_ctle_vga(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical VBOOST,
+    input  electrical VOFF_CAL,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical OUTP,
+    output electrical OUTN
+);
+
+parameter real dc_gain     = 1.0    from (0.05:100); // low-frequency CTLE+VGA gain [V/V]
+parameter real boost_ratio = 4.5    from [1.0:50.0]; // zero-to-pole ratio f_p1 / f_z (1.0 = flat VGA; 4.5 -> ~11 dB peak)
+parameter real k_vboost    = 0.0;                    // optional adaptive boost sensitivity [1/V] on VBOOST pin
+parameter real f_p1        = 6.0e9  from (1e6:1e12); // CTLE dominant peaking pole [Hz]
+parameter real f_p2        = 12.0e9 from (1e6:1e12); // secondary roll-off pole [Hz]
+parameter real vos         = 0.0;                    // injectable input-referred DC offset [V]
+parameter real k_off_cal   = 1.0;                    // offset cancellation summing gain on VOFF_CAL [V/V]
+parameter real v_cm_out    = 0.60;                   // output DC common-mode [V]
+parameter real v_clip      = 0.90   from (0.1:5.0);  // soft differential saturation limit [V]
+parameter real r_in        = 50.0   from (1.0:1e9);  // single-ended input termination [ohm]
+parameter real r_out       = 50.0   from (1.0:1e6);  // single-ended output resistance [ohm]
+parameter real vn_in       = 4.0e-9 from [0:inf);    // input-referred white noise [V/sqrt(Hz)]
+
+electrical n_noi, n_hp, n_p2;
+real v_id, b_eff, tau_p1, tau_p2, v_zero, v_diff_out;
+
+analog begin
+    // Matched differential input termination to V_cm_in (AC ground via VSS)
+    I(INP, VSS) <+ V(INP, VSS) / r_in;
+    I(INN, VSS) <+ V(INN, VSS) / r_in;
+
+    // Input-referred white noise node (1 ohm resistor -> V(n_noi) = vn_in [V/sqrt(Hz)])
+    I(n_noi, VSS) <+ V(n_noi, VSS) + white_noise(vn_in * vn_in, "ctle_vn_th");
+
+    // Effective differential input including DC offset, offset-cal correction, and noise
+    v_id = V(INP, INN) + vos - k_off_cal * V(VOFF_CAL, VSS) + V(n_noi, VSS);
+
+    // High-pass branch: V(n_hp) = (s*tau_p1 / (1 + s*tau_p1)) * v_id
+    tau_p1 = 1.0 / (2.0 * `M_PI * f_p1);
+    tau_p2 = 1.0 / (2.0 * `M_PI * f_p2);
+    I(n_hp, VSS) <+ V(n_hp, VSS) + tau_p1 * ddt(V(n_hp, VSS) - v_id);
+
+    // Combine DC + boosted HP paths -> exact (1 + s/w_z) / (1 + s/w_p1)
+    b_eff  = max(boost_ratio + k_vboost * V(VBOOST, VSS), 1.0);
+    v_zero = dc_gain * (v_id + (b_eff - 1.0) * V(n_hp, VSS));
+
+    // Secondary pole f_p2
+    I(n_p2, VSS) <+ (V(n_p2, VSS) - v_zero) + tau_p2 * ddt(V(n_p2, VSS));
+
+    // Smooth large-signal output compression
+    v_diff_out = v_clip * tanh(V(n_p2, VSS) / v_clip);
+
+    I(OUTP, VSS) <+ (V(OUTP, VSS) - (v_cm_out + 0.5 * v_diff_out)) / r_out;
+    I(OUTN, VSS) <+ (V(OUTN, VSS) - (v_cm_out - 0.5 * v_diff_out)) / r_out;
+    I(VDD, VSS)  <+ 6e-3;
+end
+
+endmodule

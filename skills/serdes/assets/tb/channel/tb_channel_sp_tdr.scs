@@ -1,0 +1,55 @@
+// =============================================================================
+// Process-Independent SerDes Channel TB — 4-Port Differential S-Params & TDR
+// =============================================================================
+// Runs both frequency-domain 4-port S-parameter extraction (`sp`, 10 MHz..20 GHz)
+// and time-domain differential TDR (`tran`) in one Spectre X run:
+//   - `sp`  : extracts mixed-mode SDD21 (insertion loss), SDD11 (return loss),
+//             SCC21, and SCD21 mode conversion
+//   - `tran`: injects a differential fast step through 50-ohm source impedance
+//             into a second replica channel to compute Z_TDR(t) = 100*(1+rho)/(1-rho)
+//
+// DUT interface contract (5-pin differential channel):
+//   subckt dut_channel INP INN OUTP OUTN VSS
+//     // instantiate channel_diff_lossy or your Touchstone nport channel
+//   ends dut_channel
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "dut_subckt.scs"
+
+parameters \
+    z0=50 \
+    v_step=0.4 \
+    t_rise=25p \
+    t_stop=10n \
+    temp_c=27
+
+VGND (VSS 0) vsource dc=0 type=dc
+
+// --- Replica 1: 4-port S-parameter extraction (Port 1/2 = INP/INN, Port 3/4 = OUTP/OUTN) ---
+P1 (SP_INP  VSS) port r=z0 num=1 type=sine
+P2 (SP_INN  VSS) port r=z0 num=2 type=sine
+P3 (SP_OUTP VSS) port r=z0 num=3 type=sine
+P4 (SP_OUTN VSS) port r=z0 num=4 type=sine
+I_SP (SP_INP SP_INN SP_OUTP SP_OUTN VSS) dut_channel
+
+// --- Replica 2: Differential TDR step response ---
+VTDRP (TDR_SRCP VSS) vsource type=pwl wave=[ 0 0  0.5n 0  (0.5n+t_rise) ( v_step)  t_stop ( v_step) ]
+VTDRN (TDR_SRCN VSS) vsource type=pwl wave=[ 0 0  0.5n 0  (0.5n+t_rise) (-v_step)  t_stop (-v_step) ]
+RSRCP (TDR_SRCP TDR_INP) resistor r=z0
+RSRCN (TDR_SRCN TDR_INN) resistor r=z0
+I_TDR (TDR_INP TDR_INN TDR_OUTP TDR_OUTN VSS) dut_channel
+RLP   (TDR_OUTP VSS) resistor r=z0
+RLN   (TDR_OUTN VSS) resistor r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+sp   sp   ports=[P1 P2 P3 P4] start=10M stop=20G dec=40 annotate=status
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save TDR_INP TDR_INN TDR_OUTP TDR_OUTN
+saveOptions options save=selected

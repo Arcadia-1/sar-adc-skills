@@ -1,0 +1,81 @@
+// Process-independent 3-Tap SerDes Decision Feedback Equalizer (DFE) & Slicers
+//
+// Models a closed-loop 3-tap DFE summer + data slicer + SS-LMS error slicer:
+//   - Equalized summer node:
+//       V(SUMP) - V(SUMN) = [V(INP) - V(INN)] - (h1*d[k-1] + h2*d[k-2] + h3*d[k-3])
+//   - Tap weights h1, h2, h3 are controlled live via pins H1, H2, H3 (in Volts
+//     per +/-1 symbol) so the exact same module works for fixed-tap DFE tests
+//     AND live Sign-Sign LMS adaptive convergence!
+//   - Data slicer outputs rail-to-rail DOUTP / DOUTN (0 / vdd)
+//   - Error slicer compares |V_sum| against target eye level V(VREF_ERR, VSS)
+//     and outputs ERRP / ERRN (sign(y_k - d_lev * d_k)) for SS-LMS adaptation!
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dfe_3tap(
+    input  electrical INP,
+    input  electrical INN,
+    input  electrical CLK,
+    input  electrical H1,
+    input  electrical H2,
+    input  electrical H3,
+    input  electrical VREF_ERR,
+    input  electrical VDD,
+    input  electrical VSS,
+    output electrical SUMP,
+    output electrical SUMN,
+    output electrical DOUTP,
+    output electrical DOUTN,
+    output electrical ERRP,
+    output electrical ERRN
+);
+
+parameter real vdd        = 1.0    from (0.2:5.0);
+parameter real vth        = 0.50   from (0:inf);     // CLK threshold [V]
+parameter real vos_data   = 0.0;                     // data slicer input offset [V]
+parameter real t_fb_delay = 15e-12 from [0:inf);     // feedback tap propagation delay (< 1 UI!)
+parameter real t_rf       = 10e-12 from (1e-12:inf); // smooth tap & slicer edge time [s]
+
+real d1, d2, d3, cur_d, cur_e, v_sum_samp, v_tgt, v_fb, v_fb_sm;
+
+analog begin
+    @(initial_step) begin
+        d1    = -1.0;
+        d2    = -1.0;
+        d3    = -1.0;
+        cur_d = -1.0;
+        cur_e = -1.0;
+        v_fb  = 0.0;
+    end
+
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        // Sample already-equalized differential summer voltage
+        v_sum_samp = V(SUMP, SUMN) + vos_data;
+        v_tgt      = V(VREF_ERR, VSS);
+
+        cur_d = (v_sum_samp >= 0.0) ? 1.0 : -1.0;
+        // Signed eye error: e_k = y_k - d_lev * d_k
+        cur_e = ((v_sum_samp - cur_d * v_tgt) >= 0.0) ? 1.0 : -1.0;
+
+        // Shift decision pipeline for next UI feedback subtraction
+        d3 = d2;
+        d2 = d1;
+        d1 = cur_d;
+        v_fb = d1 * V(H1, VSS) + d2 * V(H2, VSS) + d3 * V(H3, VSS);
+    end
+
+    v_fb_sm = transition(v_fb, t_fb_delay, t_rf, t_rf);
+
+    // Differential DFE summing junction (zero noise amplification!)
+    V(SUMP, VSS) <+ V(INP, VSS) - 0.5 * v_fb_sm;
+    V(SUMN, VSS) <+ V(INN, VSS) + 0.5 * v_fb_sm;
+
+    V(DOUTP, VSS) <+ transition((cur_d > 0.0) ? vdd : 0.0, t_fb_delay, t_rf, t_rf);
+    V(DOUTN, VSS) <+ transition((cur_d > 0.0) ? 0.0 : vdd, t_fb_delay, t_rf, t_rf);
+    V(ERRP, VSS)  <+ transition((cur_e > 0.0) ? vdd : 0.0, t_fb_delay, t_rf, t_rf);
+    V(ERRN, VSS)  <+ transition((cur_e > 0.0) ? 0.0 : vdd, t_fb_delay, t_rf, t_rf);
+    I(VDD, VSS)   <+ 2e-3;
+end
+
+endmodule

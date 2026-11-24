@@ -1,0 +1,71 @@
+// =============================================================================
+// Process-Independent SerDes Bridged T-Coil Bandwidth Extension Testbench
+// =============================================================================
+// Compares a bare ESD/RX load (R_L || C_L) side-by-side against a constant-
+// resistance bridged T-coil (`L1 = L2`, mutual coupling `k`, bridge cap `C_B`)
+// across `ac` (bandwidth boost & peaking), `sp` (input return loss `S11`), and
+// `tran` (step response overshoot & rise time).
+//
+// Textbook Butterworth constant-resistance sizing (zeta = 1/sqrt(2), 4*zeta^2 = 2):
+//   L1 = L2 = (C_L * R_L^2 / 4) * (1 + 1/(4*zeta^2)) = 0.375 * C_L * R_L^2
+//   k       = (4*zeta^2 - 1) / (4*zeta^2 + 1)        = 1/3
+//   C_B     = C_L / (16*zeta^2)                      = C_L / 8
+//   -> Constant Z_in(f) = R_L (ideal S11 -> -inf) & ~2.83x (sqrt(8)) -3 dB BW extension!
+//
+// DUT interface contract (optional custom T-coil or use built-in parameterized T-coil):
+//   subckt dut_tcoil IN MID OUT VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "dut_subckt.scs"
+
+parameters \
+    r_load=50 \
+    c_load=500f \
+    v_step=0.5 \
+    t_rise=5p \
+    t_stop=1n \
+    temp_c=27
+
+VGND (VSS 0) vsource dc=0 type=dc
+
+// --- 1. AC Bandwidth Comparison (driven by ideal 1 A current source into R_L || C_L) ---
+// Bare reference node: V_BARE(s) = R_L / (1 + s * R_L * C_L)
+I_AC_REF (VSS V_BARE) isource mag=1 type=dc
+R_REF    (V_BARE VSS) resistor  r=r_load
+C_REF    (V_BARE VSS) capacitor c=c_load
+
+// Bridged T-coil node: V_TCOIL_MID is the protected ESD/RX gate node!
+I_AC_TC  (VSS TC_IN)  isource mag=1 type=dc
+I_TC_AC  (TC_IN V_TCOIL_MID TC_OUT VSS) dut_tcoil
+C_TC_LD  (V_TCOIL_MID VSS) capacitor c=c_load
+R_TC_LD  (TC_OUT VSS)      resistor  r=r_load
+
+// --- 2. Input Return Loss S11 (1-port SP at TC_SP_IN) ---
+P1       (TC_SP_IN VSS) port r=r_load num=1 type=sine
+I_TC_SP  (TC_SP_IN TC_SP_MID TC_SP_OUT VSS) dut_tcoil
+C_SP_LD  (TC_SP_MID VSS) capacitor c=c_load
+R_SP_LD  (TC_SP_OUT VSS) resistor  r=r_load
+
+// --- 3. Step Transient Response (Bare vs. T-Coil) ---
+I_TR_REF (VSS VT_BARE) isource type=pwl wave=[ 0 0  0.1n 0  (0.1n+t_rise) (v_step/r_load)  t_stop (v_step/r_load) ]
+RT_REF   (VT_BARE VSS) resistor  r=r_load
+CT_REF   (VT_BARE VSS) capacitor c=c_load
+
+I_TR_TC  (VSS VTT_IN) isource type=pwl wave=[ 0 0  0.1n 0  (0.1n+t_rise) (v_step/r_load)  t_stop (v_step/r_load) ]
+I_TC_TR  (VTT_IN VT_TCOIL VTT_OUT VSS) dut_tcoil
+CT_TC    (VT_TCOIL VSS) capacitor c=c_load
+RT_TC    (VTT_OUT  VSS) resistor  r=r_load
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac   ac   start=10M stop=100G dec=50 annotate=status
+sp   sp   ports=[P1] start=10M stop=50G dec=40 annotate=status
+tran tran stop=t_stop errpreset=conservative maxstep=2p
+
+save V_BARE V_TCOIL_MID VT_BARE VT_TCOIL
+saveOptions options save=selected

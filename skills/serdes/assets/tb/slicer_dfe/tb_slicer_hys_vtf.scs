@@ -1,0 +1,62 @@
+// =============================================================================
+// Process-Independent SerDes Slicer TB — Sensitivity, VTF & Hysteresis Sweep
+// =============================================================================
+// Sweeps differential input voltage `INP - INN` as a slow triangle ramp
+// (-v_span -> +v_span -> -v_span) across `2*n_half` clock cycles while strobing
+// settled slicer outputs `DOUTP - DOUTN` on every cycle (`strobeoutput=strobeonly`).
+//
+// Extracts:
+//   - Rising threshold V_th,up & falling threshold V_th,dn
+//   - Effective input offset V_os = 0.5 * (V_th,up + V_th,dn)
+//   - Slicer hysteresis / decision memory Hys = V_th,up - V_th,dn
+//   - Output differential logic swing
+//
+// DUT interface contract (7-pin clocked slicer / CML or StrongARM latch):
+//   subckt dut_slicer INP INN CLK VDD VSS DOUTP DOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.5 \
+    v_span=50m \
+    f_clk=5G \
+    n_half=100 \
+    temp_c=27
+
+parameters \
+    tclk=1/f_clk \
+    t_mid=n_half*tclk \
+    t_stop=2*n_half*tclk
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd period=tclk delay=0 rise=10p fall=10p width=0.5*tclk
+
+// Triangle differential input: -v_span -> +v_span -> -v_span
+VINP (INP VSS) vsource type=pwl wave=[ \
+    0      (vcm_in - 0.5*v_span) \
+    t_mid  (vcm_in + 0.5*v_span) \
+    t_stop (vcm_in - 0.5*v_span) ]
+VINN (INN VSS) vsource type=pwl wave=[ \
+    0      (vcm_in + 0.5*v_span) \
+    t_mid  (vcm_in - 0.5*v_span) \
+    t_stop (vcm_in + 0.5*v_span) ]
+
+I0 (INP INN CLK VDD VSS DOUTP DOUTN) dut_slicer
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// Strobe well after decision settles within each clock cycle (strobedelay < strobeperiod)
+tran tran stop=t_stop errpreset=conservative \
+    strobeperiod=tclk strobedelay=0.80*tclk strobeoutput=strobeonly
+
+save INP INN DOUTP DOUTN
+saveOptions options save=selected

@@ -1,0 +1,68 @@
+// =============================================================================
+// Process-Independent SerDes 3-Tap DFE TB — Closed-Loop Post-Cursor ISI Removal
+// =============================================================================
+// Drives a PRBS-7 stream (`10 Gb/s`) through a severe post-cursor ISI channel
+// (`va_channel_isi`: h0=0.22, h1=0.14, h2=0.07, h3=0.03 -> raw PDA eye CLOSED!)
+// into the 3-tap DFE DUT (`dut_dfe_3tap`), verifying:
+//   - Before-DFE eye (`INP - INN`, closed!) vs. After-DFE eye (`SUMP - SUMN`, wide open!)
+//   - Bit-error-free sliced output `DOUTP - DOUTN` against delayed TX `BIT_MON`
+//
+// DUT interface contract (15-pin 3-tap DFE + data/error slicers):
+//   subckt dut_dfe_3tap INP INN CLK H1 H2 H3 VREF_ERR VDD VSS \
+//       SUMP SUMN DOUTP DOUTN ERRP ERRN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_channel_isi.va"
+
+parameters \
+    vdd=1.0 \
+    bit_rate=10G \
+    h0_ch=0.22 \
+    h1_ch=0.14 \
+    h2_ch=0.07 \
+    h3_ch=0.03 \
+    h1_dfe=0.14 \
+    h2_dfe=0.07 \
+    h3_dfe=0.03 \
+    vref_err=0.22 \
+    n_ui=160 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Staggered phase clocks eliminate setup/hold races between TX -> Channel -> RX
+VCLK_TX (CLK_TX 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0       rise=5p fall=5p width=0.5*ui
+VCLK_CH (CLK_CH 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.25*ui rise=5p fall=5p width=0.5*ui
+VCLK_RX (CLK_RX 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.75*ui rise=5p fall=5p width=0.5*ui
+
+I_PRBS (CLK_TX VSS TXP TXN BIT_TX) va_prbs_gen mode=0 v_swing=0.8 v_cm=0.5 t_rf=10p r_src=1
+I_CH   (TXP TXN CLK_CH VSS CH_INP CH_INN) va_channel_isi \
+    vth=0.5*vdd v_cm=0.5 h_pre=0 h0=h0_ch h1=h1_ch h2=h2_ch h3=h3_ch t_rf=15p
+
+VH1   (H1 VSS)       vsource dc=h1_dfe   type=dc
+VH2   (H2 VSS)       vsource dc=h2_dfe   type=dc
+VH3   (H3 VSS)       vsource dc=h3_dfe   type=dc
+VREF  (VREF_ERR VSS) vsource dc=vref_err type=dc
+
+I_DFE (CH_INP CH_INN CLK_RX H1 H2 H3 VREF_ERR VDD VSS \
+       SUMP SUMN DOUTP DOUTN ERRP ERRN) dut_dfe_3tap
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=5p
+
+save BIT_TX CH_INP CH_INN SUMP SUMN DOUTP DOUTN
+saveOptions options save=selected

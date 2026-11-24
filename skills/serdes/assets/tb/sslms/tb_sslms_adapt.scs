@@ -1,0 +1,86 @@
+// =============================================================================
+// Process-Independent SerDes Adaptive Equalization TB — Sign-Sign LMS (SS-LMS)
+// =============================================================================
+// Runs a live closed-loop 10 Gb/s Sign-Sign LMS adaptive receiver simultaneously
+// converging:
+//   - VGA gain `W_GAIN` (targeting `d_lev = vref_err = 0.40 V` from `h0_ch = 0.25 V`
+//     -> expected `W_GAIN -> 1.60`)
+//   - 3 DFE post-cursor taps `W_H1`, `W_H2`, `W_H3` (canceling scaled channel ISI:
+//     `h1 -> 1.60*0.11 = 0.176 V`, `h2 -> 1.60*0.05 = 0.080 V`, `h3 -> 1.60*0.02 = 0.032 V`)
+//
+// Uses PRBS-9 (`511`-bit period) for rich decorrelated patterns and verifies
+// convergence accuracy, `DONE` freeze gating, and final equalized eye opening!
+//
+// DUT interface contract (optional custom DFE/VGA or wrap behavioral models):
+//   subckt dut_sslms_dfe INP INN CLK H1 H2 H3 VREF_ERR VDD VSS \
+//       SUMP SUMN DOUTP DOUTN ERRP ERRN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+ahdl_include "../../va/va_channel_isi.va"
+ahdl_include "../../va/va_sslms_adapt.va"
+
+parameters \
+    vdd=1.0 \
+    bit_rate=10G \
+    h0_ch=0.25 \
+    h1_ch=0.11 \
+    h2_ch=0.05 \
+    h3_ch=0.02 \
+    vref_err=0.40 \
+    n_ui=1600 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VCMN (VCM 0) vsource dc=0.5 type=dc
+VREF (VREF_ERR VSS) vsource dc=vref_err type=dc
+
+// Staggered phase clocks: TX (0) -> Channel (0.25 UI) -> RX DFE (0.75 UI) -> SS-LMS (1.25 UI)
+VCLK_TX  (CLK_TX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0       rise=5p fall=5p width=0.5*ui
+VCLK_CH  (CLK_CH  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.25*ui rise=5p fall=5p width=0.5*ui
+VCLK_RX  (CLK_RX  0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.75*ui rise=5p fall=5p width=0.5*ui
+VCLK_LMS (CLK_LMS 0) vsource type=pulse val0=0 val1=vdd period=ui delay=0.25*ui rise=5p fall=5p width=0.5*ui
+
+I_PRBS (CLK_TX VSS TXP TXN BIT_TX) va_prbs_gen mode=1 v_swing=0.8 v_cm=0.5 t_rf=10p r_src=1
+I_CH   (TXP TXN CLK_CH VSS CHP CHN) va_channel_isi \
+    vth=0.5*vdd v_cm=0.5 h_pre=0 h0=h0_ch h1=h1_ch h2=h2_ch h3=h3_ch t_rf=15p
+
+// Adaptive variable-gain stage controlled live by SS-LMS `W_GAIN`
+B_VGAP (VGAP VCM) bsource v= 0.5*v(W_GAIN)*(v(CHP)-v(CHN))
+B_VGAN (VGAN VCM) bsource v=-0.5*v(W_GAIN)*(v(CHP)-v(CHN))
+
+I_DFE (VGAP VGAN CLK_RX W_H1 W_H2 W_H3 VREF_ERR VDD VSS \
+       SUMP SUMN DOUTP DOUTN ERRP ERRN) dut_sslms_dfe
+
+// 4 concurrent Sign-Sign LMS adaptive engines (VGA gain + DFE h1, h2, h3)
+I_LMS_G  (DOUTP ERRP CLK_LMS VSS W_GAIN DONE_G)  va_sslms_adapt \
+    vdd=vdd vth=0.5*vdd lag_ui=0 sign_pol=-1.0 w_init=1.0 w_min=0.4 w_max=4.0 \
+    mu=0.025 acc_th=4 win_len=128 conv_th=0.14 auto_stop=1
+I_LMS_H1 (DOUTP ERRP CLK_LMS VSS W_H1   DONE_H1) va_sslms_adapt \
+    vdd=vdd vth=0.5*vdd lag_ui=1 sign_pol=1.0  w_init=0.0 w_min=-0.4 w_max=0.4 \
+    mu=0.008 acc_th=4 win_len=128 conv_th=0.14 auto_stop=1
+I_LMS_H2 (DOUTP ERRP CLK_LMS VSS W_H2   DONE_H2) va_sslms_adapt \
+    vdd=vdd vth=0.5*vdd lag_ui=2 sign_pol=1.0  w_init=0.0 w_min=-0.4 w_max=0.4 \
+    mu=0.006 acc_th=4 win_len=128 conv_th=0.14 auto_stop=1
+I_LMS_H3 (DOUTP ERRP CLK_LMS VSS W_H3   DONE_H3) va_sslms_adapt \
+    vdd=vdd vth=0.5*vdd lag_ui=3 sign_pol=1.0  w_init=0.0 w_min=-0.4 w_max=0.4 \
+    mu=0.005 acc_th=4 win_len=128 conv_th=0.14 auto_stop=1
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=moderate maxstep=10p
+
+save W_GAIN W_H1 W_H2 W_H3 DONE_G DONE_H1 DONE_H2 DONE_H3 SUMP SUMN CHP CHN
+saveOptions options save=selected
