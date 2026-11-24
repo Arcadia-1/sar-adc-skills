@@ -1,0 +1,78 @@
+// =============================================================================
+// Process-Independent SerDes Slicer TB — Input Kickback & Interleaved Coupling
+// =============================================================================
+// Quantifies clock-to-input kickback noise of a high-speed CML/StrongARM data
+// slicer driven through realistic finite CTLE/VGA output impedance (`r_src`,
+// `c_src`) with P/N mismatch (`dr_src` or slicer parasitic `c_kb_p != c_kb_n`):
+//   - Replica A (Standalone slicer `I_SINGLE` on `CLK_EVEN`): measures peak
+//     common-mode kickback `[mV]`, peak differential kickback `[mV]`, and
+//     settled residual one half-rate UI (`0.5*tclk`) later.
+//   - Replica B (Half-rate interleaved pair `I_EVEN` + `I_ODD` sharing the same
+//     `(INT_INP, INT_INN)` node with `0.5*tclk` clock stagger): measures
+//     Odd -> Even neighbor differential & CM residual right before `CLK_EVEN`
+//     samples, catching interleaved eye closure & decision corruption!
+//
+// Compatible with both `va_slicer_cml.va` (`c_kb_p/n > 0`) and transistor-level
+// StrongARM / CML comparators.
+//
+// DUT interface contract (7-pin clocked slicer):
+//   subckt dut_slicer INP INN CLK VDD VSS DOUTP DOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=1.0 \
+    vcm_in=0.60 \
+    v_in_dc=10m \
+    f_clk=5G \
+    r_src=500 \
+    dr_src=25 \
+    c_src=50f \
+    n_cyc=8 \
+    temp_c=27
+
+parameters \
+    tclk=1/f_clk \
+    t_stop=n_cyc*tclk
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+
+// Constant small differential DC input (+v_in_dc) before source impedance
+VINP_S (VINP_SRC VSS) vsource dc=(vcm_in + 0.5*v_in_dc) type=dc
+VINN_S (VINN_SRC VSS) vsource dc=(vcm_in - 0.5*v_in_dc) type=dc
+
+// Half-rate 5 GHz staggered clocks (1st quiet cycle 0..tclk gives exact DC baseline)
+VCLK_E (CLK_EVEN 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=tclk       rise=5p fall=5p width=(0.5*tclk - 5p)
+VCLK_O (CLK_ODD  0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=(1.5*tclk) rise=5p fall=5p width=(0.5*tclk - 5p)
+
+// --- Replica A: Standalone Single Slicer ---
+RS_P (VINP_SRC S_INP) resistor  r=(r_src + 0.5*dr_src)
+RS_N (VINN_SRC S_INN) resistor  r=(r_src - 0.5*dr_src)
+CS_P (S_INP VSS)      capacitor c=c_src
+CS_N (S_INN VSS)      capacitor c=c_src
+I_SINGLE (S_INP S_INN CLK_EVEN VDD VSS S_OUTP S_OUTN) dut_slicer
+
+// --- Replica B: Half-Rate Interleaved Even + Odd Pair Sharing Input Node ---
+RI_P (VINP_SRC INT_INP) resistor  r=(r_src + 0.5*dr_src)
+RI_N (VINN_SRC INT_INN) resistor  r=(r_src - 0.5*dr_src)
+CI_P (INT_INP VSS)      capacitor c=c_src
+CI_N (INT_INN VSS)      capacitor c=c_src
+I_EVEN (INT_INP INT_INN CLK_EVEN VDD VSS E_OUTP E_OUTN) dut_slicer
+I_ODD  (INT_INP INT_INN CLK_ODD  VDD VSS O_OUTP O_OUTN) dut_slicer
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=0.5p
+
+save CLK_EVEN CLK_ODD S_INP S_INN S_OUTP S_OUTN INT_INP INT_INN E_OUTP E_OUTN O_OUTP O_OUTN
+saveOptions options save=selected

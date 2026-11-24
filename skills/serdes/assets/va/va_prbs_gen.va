@@ -5,6 +5,9 @@
 //   - mode = 1 : PRBS-9 maximal-length LFSR (x^9 + x^5 + 1, period 511 UI)
 //   - mode = 2 : Single-Bit Isolated Pulse (`+1` at `idx == pulse_idx`, `-1` elsewhere)
 //                for exact Single-Bit Response (SBR / pulse response h(t)) extraction
+//   - mode = 3 : Long Consecutive-Identical-Digits (CID) stress burst:
+//                DC-balanced `1010` preamble -> `n_cid` consecutive `1`s -> `1010` postamble
+//                for AC-coupling baseline wander (BLW) verification
 //
 // Drives OUTP / OUTN with smooth rise/fall `t_rf` through source resistance `r_src`.
 
@@ -19,8 +22,10 @@ module va_prbs_gen(
     output electrical BIT_MON
 );
 
-parameter integer mode      = 0      from [0:2];     // 0=PRBS7, 1=PRBS9, 2=SBR single pulse
+parameter integer mode      = 0      from [0:3];     // 0=PRBS7, 1=PRBS9, 2=SBR single pulse, 3=CID stress burst
 parameter integer pulse_idx = 10     from [1:10000]; // UI index of isolated pulse (mode=2)
+parameter integer cid_start = 40     from [2:10000]; // UI index where CID run starts (mode=3)
+parameter integer n_cid     = 64     from [1:10000]; // number of consecutive '1' bits in CID burst (mode=3)
 parameter real    vth       = 0.50   from (0:inf);   // CLK threshold [V]
 parameter real    v_swing   = 0.80   from (0.01:5.0);// differential peak-to-peak swing [Vpp_diff]
 parameter real    v_cm      = 0.50;                  // output common-mode voltage [V]
@@ -36,7 +41,13 @@ analog begin
         idx = 0;
         for (k = 0; k <= 8; k = k + 1)
             sr[k] = 1;
-        cur_bit = (mode == 2) ? 0 : sr[0];
+        if (mode == 2)
+            cur_bit = 0;
+        else if (mode == 3)
+            // Balanced zero differential DC at t=0 so AC-coupling caps start uncharged
+            cur_bit = -1;
+        else
+            cur_bit = sr[0];
     end
 
     @(cross(V(CLK, VSS) - vth, +1)) begin
@@ -55,12 +66,20 @@ analog begin
                 sr[k] = sr[k - 1];
             sr[0] = fb;
             cur_bit = sr[8];
-        end else begin
+        end else if (mode == 2) begin
             cur_bit = (idx == pulse_idx) ? 1 : 0;
+        end else begin
+            // mode == 3: alternating 1010 preamble ending on 0 -> n_cid 1s -> 1010 postamble starting on 0
+            if (idx < cid_start)
+                cur_bit = ((cid_start - idx) % 2 == 0) ? 1 : 0;
+            else if (idx < cid_start + n_cid)
+                cur_bit = 1;
+            else
+                cur_bit = ((idx - (cid_start + n_cid)) % 2 == 0) ? 0 : 1;
         end
     end
 
-    sym     = cur_bit ? 1.0 : -1.0;
+    sym     = (cur_bit < 0) ? 0.0 : (cur_bit ? 1.0 : -1.0);
     v_p_tgt = v_cm + 0.25 * v_swing * sym;
     v_n_tgt = v_cm - 0.25 * v_swing * sym;
 
@@ -69,7 +88,7 @@ analog begin
 
     I(OUTP, VSS) <+ (V(OUTP, VSS) - v_p_sm) / r_src;
     I(OUTN, VSS) <+ (V(OUTN, VSS) - v_n_sm) / r_src;
-    V(BIT_MON, VSS) <+ transition(cur_bit ? 1.0 : 0.0, 0.0, t_rf, t_rf);
+    V(BIT_MON, VSS) <+ transition((cur_bit > 0) ? 1.0 : 0.0, 0.0, t_rf, t_rf);
 end
 
 endmodule

@@ -33,9 +33,11 @@ parameter integer norm_l1   = 1      from [0:1];       // 1 = normalize sum(|w_k
 parameter real    r_term    = 50.0   from (1.0:1e6);   // single-ended TX termination [ohm]
 parameter real    c_pad     = 80e-15 from [0:inf);     // output ESD/pad capacitance [F]
 parameter real    t_rf      = 15e-12 from (1e-12:inf); // output transition time [s]
+parameter real    t_skew_pn = 0.0    from (-50e-12:50e-12); // optional intra-pair P-minus-N timing skew [s] (0 = ideal)
+parameter real    v_clip_tx = 10.0   from (0.05:100.0);// optional soft tanh output saturation limit [V] (large default = linear)
 
 real d0, d1, d2, d3, w_sum, wn_pre, wn_main, wn_p1, wn_p2;
-real y_eq, vp_tgt, vn_tgt, vp_sm, vn_sm;
+real y_eq, vp_ac, vn_ac, vp_sm, vn_sm, vp_out, vn_out, td_p, td_n;
 
 analog begin
     @(initial_step) begin
@@ -56,6 +58,8 @@ analog begin
             wn_p2   = w_post2;
         end
         y_eq = wn_pre * d0 + wn_main * d1 + wn_p1 * d2 + wn_p2 * d3;
+        td_p = (t_skew_pn > 0.0) ? t_skew_pn : 0.0;
+        td_n = (t_skew_pn < 0.0) ? (-t_skew_pn) : 0.0;
     end
 
     @(cross(V(CLK, VSS) - vth, +1)) begin
@@ -67,13 +71,21 @@ analog begin
     end
 
     // Source voltage = 2x matched-load swing so 50-ohm R_term into 50-ohm load delivers v_swing
-    vp_tgt = v_cm + 0.5 * v_swing * y_eq;
-    vn_tgt = v_cm - 0.5 * v_swing * y_eq;
-    vp_sm  = transition(vp_tgt, 0.0, t_rf, t_rf);
-    vn_sm  = transition(vn_tgt, 0.0, t_rf, t_rf);
+    vp_ac =  0.5 * v_swing * y_eq;
+    vn_ac = -0.5 * v_swing * y_eq;
+    vp_sm = transition(vp_ac, td_p, t_rf, t_rf);
+    vn_sm = transition(vn_ac, td_n, t_rf, t_rf);
 
-    I(OUTP, VSS) <+ (V(OUTP, VSS) - vp_sm) / r_term + c_pad * ddt(V(OUTP, VSS));
-    I(OUTN, VSS) <+ (V(OUTN, VSS) - vn_sm) / r_term + c_pad * ddt(V(OUTN, VSS));
+    if (v_clip_tx < 9.5) begin
+        vp_out = v_cm + 0.5 * v_clip_tx * tanh(vp_sm / (0.5 * v_clip_tx));
+        vn_out = v_cm + 0.5 * v_clip_tx * tanh(vn_sm / (0.5 * v_clip_tx));
+    end else begin
+        vp_out = v_cm + vp_sm;
+        vn_out = v_cm + vn_sm;
+    end
+
+    I(OUTP, VSS) <+ (V(OUTP, VSS) - vp_out) / r_term + c_pad * ddt(V(OUTP, VSS));
+    I(OUTN, VSS) <+ (V(OUTN, VSS) - vn_out) / r_term + c_pad * ddt(V(OUTN, VSS));
     I(VDD, VSS)  <+ 10e-3;
 end
 

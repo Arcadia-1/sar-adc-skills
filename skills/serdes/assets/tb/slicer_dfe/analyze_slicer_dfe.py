@@ -6,6 +6,7 @@ Usage:
   python analyze_slicer_dfe.py noise_tran <psf_dir> [--vid-in 1.5e-3] [--vos 0.0]
   python analyze_slicer_dfe.py dfe_eye <psf_dir> [--ui 100e-12] [--t-skip 2e-9]
   python analyze_slicer_dfe.py clk2q_sh <psf_dir> [--vdd 1.0] [--tclk 400e-12]
+  python analyze_slicer_dfe.py kickback <psf_dir> [--f-clk 5e9] [--vdd 1.0] [--v-in-dc 10e-3]
 """
 
 from __future__ import annotations
@@ -279,6 +280,104 @@ def analyze_clk2q_sh(psf_dir: Path, *, vdd: float, tclk: float) -> dict[str, obj
     }
 
 
+def analyze_kickback(
+    psf_dir: Path, *, f_clk: float, vdd: float, v_in_dc: float
+) -> dict[str, object]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f)
+    t = d["time"]
+    tclk = 1.0 / f_clk
+    clk_e = d["CLK_EVEN"]
+    clk_o = d["CLK_ODD"]
+
+    s_inp, s_inn = d["S_INP"], d["S_INN"]
+    i_inp, i_inn = d["INT_INP"], d["INT_INN"]
+    s_out = d["S_OUTP"] - d["S_OUTN"]
+    e_out = d["E_OUTP"] - d["E_OUTN"]
+    o_out = d["O_OUTP"] - d["O_OUTN"]
+
+    # Quiet DC baseline in 1st cycle before CLK_EVEN fires at t = tclk
+    m_base = (t >= 0.25 * tclk) & (t <= 0.85 * tclk)
+    if not np.any(m_base):
+        raise RuntimeError("Missing quiet baseline window before first clock edge")
+
+    s_cm = 0.5 * (s_inp + s_inn)
+    s_diff = s_inp - s_inn
+    i_cm = 0.5 * (i_inp + i_inn)
+    i_diff = i_inp - i_inn
+
+    s_cm_base = float(np.median(s_cm[m_base]))
+    s_diff_base = float(np.median(s_diff[m_base]))
+    i_cm_base = float(np.median(i_cm[m_base]))
+    i_diff_base = float(np.median(i_diff[m_base]))
+
+    # Periodic steady-state measurement window (cycles >= 3)
+    m_ss = t >= 3.0 * tclk
+    s_cm_dev = s_cm - s_cm_base
+    s_diff_dev = s_diff - s_diff_base
+    i_cm_dev = i_cm - i_cm_base
+    i_diff_dev = i_diff - i_diff_base
+
+    e_edges = [x for x in crossings(t, clk_e, 0.5 * vdd, direction="rising") if x >= 3.0 * tclk]
+    o_edges = [x for x in crossings(t, clk_o, 0.5 * vdd, direction="rising") if x >= 3.0 * tclk]
+
+    # Single-slicer residual one half-rate UI (0.5*tclk) after CLK_EVEN fires
+    s_next_cm: list[float] = []
+    s_next_diff: list[float] = []
+    for te in e_edges:
+        t_chk = te + 0.5 * tclk - 3.0e-12
+        if t_chk < float(t[-1]):
+            s_next_cm.append(abs(float(np.interp(t_chk, t, s_cm_dev))) * 1e3)
+            s_next_diff.append(abs(float(np.interp(t_chk, t, s_diff_dev))) * 1e3)
+
+    # Interleaved Odd -> Even residual right before CLK_EVEN rising edge starts
+    # (CLK_ODD evaluated 0.5*tclk earlier; edge ramp is 5 ps -> check at te - 3 ps)
+    nb_cm: list[float] = []
+    nb_diff: list[float] = []
+    even_ok_list: list[bool] = []
+    odd_ok_list: list[bool] = []
+    for te in e_edges:
+        if te >= 3.5 * tclk:
+            t_pre = te - 3.0e-12
+            nb_cm.append(abs(float(np.interp(t_pre, t, i_cm_dev))) * 1e3)
+            nb_diff.append(abs(float(np.interp(t_pre, t, i_diff_dev))) * 1e3)
+        t_eval = te + 0.35 * tclk
+        if t_eval < float(t[-1]):
+            even_ok_list.append(float(np.interp(t_eval, t, e_out)) > 0.3 * vdd)
+    for to in o_edges:
+        t_eval = to + 0.35 * tclk
+        if t_eval < float(t[-1]):
+            odd_ok_list.append(float(np.interp(t_eval, t, o_out)) > 0.3 * vdd)
+
+    single_ok_list = [
+        float(np.interp(te + 0.35 * tclk, t, s_out)) > 0.3 * vdd
+        for te in e_edges
+        if te + 0.35 * tclk < float(t[-1])
+    ]
+
+    nb_diff_max = max(nb_diff) if nb_diff else 0.0
+    nb_cm_max = max(nb_cm) if nb_cm else 0.0
+    return {
+        "v_in_dc_mv": float(s_diff_base * 1e3),
+        "single_slicer": {
+            "cm_kickback_peak_mv": float(np.max(np.abs(s_cm_dev[m_ss])) * 1e3),
+            "diff_kickback_peak_mv": float(np.max(np.abs(s_diff_dev[m_ss])) * 1e3),
+            "next_ui_cm_residual_mv": max(s_next_cm) if s_next_cm else 0.0,
+            "next_ui_diff_residual_mv": max(s_next_diff) if s_next_diff else 0.0,
+            "decision_ok": bool(single_ok_list and all(single_ok_list)),
+        },
+        "interleaved_pair": {
+            "cm_kickback_peak_mv": float(np.max(np.abs(i_cm_dev[m_ss])) * 1e3),
+            "diff_kickback_peak_mv": float(np.max(np.abs(i_diff_dev[m_ss])) * 1e3),
+            "neighbor_cm_residual_mv": nb_cm_max,
+            "neighbor_diff_residual_mv": nb_diff_max,
+            "neighbor_corrupt_pct_of_vin": float(100.0 * nb_diff_max / max(abs(v_in_dc) * 1e3, 1e-6)),
+            "even_decision_ok": bool(even_ok_list and all(even_ok_list)),
+            "odd_decision_ok": bool(odd_ok_list and all(odd_ok_list)),
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes Slicer & DFE Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -301,6 +400,12 @@ def main(argv: list[str] | None = None) -> int:
     p_c2q.add_argument("--vdd", type=float, default=1.0)
     p_c2q.add_argument("--tclk", type=float, default=400e-12)
 
+    p_kb = sub.add_parser("kickback")
+    p_kb.add_argument("psf_dir", type=Path)
+    p_kb.add_argument("--f-clk", type=float, default=5e9)
+    p_kb.add_argument("--vdd", type=float, default=1.0)
+    p_kb.add_argument("--v-in-dc", type=float, default=10e-3)
+
     args = ap.parse_args(argv)
     if args.mode == "vtf":
         res: object = analyze_vtf(args.psf_dir)
@@ -308,8 +413,10 @@ def main(argv: list[str] | None = None) -> int:
         res = analyze_noise_tran(args.psf_dir, vid_in=args.vid_in, vos=args.vos)
     elif args.mode == "dfe_eye":
         res = analyze_dfe_eye(args.psf_dir, ui=args.ui, t_skip=args.t_skip)
-    else:
+    elif args.mode == "clk2q_sh":
         res = analyze_clk2q_sh(args.psf_dir, vdd=args.vdd, tclk=args.tclk)
+    else:
+        res = analyze_kickback(args.psf_dir, f_clk=args.f_clk, vdd=args.vdd, v_in_dc=args.v_in_dc)
     print(json.dumps(res, indent=2))
     return 0
 

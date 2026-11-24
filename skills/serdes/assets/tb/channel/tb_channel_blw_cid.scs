@@ -1,0 +1,68 @@
+// =============================================================================
+// Process-Independent SerDes Channel TB — AC-Coupled Baseline Wander (BLW / CID)
+// =============================================================================
+// Drives a 10 Gb/s Consecutive-Identical-Digits (CID) stress burst (`va_prbs_gen`
+// `mode=3`: DC-balanced `1010` preamble -> `n_cid` consecutive `1`s -> `1010`
+// postamble) through `dut_channel`, series AC-coupling capacitors (`c_ac`),
+// and matched `50 ohm` RX bias resistors:
+//
+//   TX (r_src=z0) -> dut_channel -> C_ac (series P/N) -> RX (r_rx=z0 to VCM_RX)
+//
+// Note: Default `c_ac = 200 pF` (`tau_ac = 2*z0*c_ac = 20 ns`) is scaled for
+// fast 20 ns Spectre X signoff while matching the exact analytical RC droop:
+//   V_droop = V_0 * (1 - exp(-T_cid / (2 * z0 * c_ac)))
+//
+// Extracts:
+//   - Peak baseline wander `blw_peak_mv` & `blw_pct` vs. analytical RC prediction
+//   - Pre-CID vs. immediate Post-CID differential eye height & DC baseline shift
+//
+// DUT interface contract:
+//   subckt dut_channel INP INN OUTP OUTN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "dut_subckt.scs"
+ahdl_include "../../va/va_prbs_gen.va"
+
+parameters \
+    bit_rate=10G \
+    v_swing=1.6 \
+    v_cm_tx=0.5 \
+    v_cm_rx=0.6 \
+    z0=50 \
+    c_ac=200p \
+    cid_start=40 \
+    n_cid=64 \
+    t_rf=12p \
+    n_ui=200 \
+    temp_c=27
+
+parameters \
+    ui=1/bit_rate \
+    t_stop=n_ui*ui
+
+VGND  (VSS    0) vsource dc=0       type=dc
+VCMRX (VCM_RX 0) vsource dc=v_cm_rx type=dc
+VCLK  (CLK    0) vsource type=pulse val0=0 val1=1.0 period=ui delay=0 rise=4p fall=4p width=(0.5*ui - 4p)
+
+// CID stress burst: alternating 1010 preamble -> n_cid consecutive 1s -> 1010 postamble
+I_CID (CLK VSS TXP TXN BIT_MON) va_prbs_gen \
+    mode=3 cid_start=cid_start n_cid=n_cid v_swing=v_swing v_cm=v_cm_tx t_rf=t_rf r_src=z0
+
+// Differential channel DUT -> series AC-coupling capacitors -> RX 50-ohm bias
+I_CH (TXP TXN CH_OUTP CH_OUTN VSS) dut_channel
+CACP (CH_OUTP RXP) capacitor c=c_ac
+CACN (CH_OUTN RXN) capacitor c=c_ac
+RRXP (RXP VCM_RX)  resistor  r=z0
+RRXN (RXN VCM_RX)  resistor  r=z0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=2p
+
+save BIT_MON TXP TXN CH_OUTP CH_OUTN RXP RXN
+saveOptions options save=selected

@@ -34,9 +34,11 @@ parameter real    tau_regen    = 0.0    from [0:inf);     // optional latch rege
 parameter real    tau_in       = 0.0    from [0:inf);     // optional input pre-amp RC tau [s] (setup time)
 parameter real    t_int        = 0.0    from [0:inf);     // optional post-CLK integration aperture [s] (hold time)
 parameter real    t_rf         = 10e-12 from (1e-12:inf);
+parameter real    c_kb_p       = 0.0    from [0:inf);     // optional CLK-to-INP kickback capacitance [F] (0 = off)
+parameter real    c_kb_n       = 0.0    from [0:inf);     // optional CLK-to-INN kickback capacitance [F] (0 = off)
 
-electrical n_in;
-integer seed, prev_bit, cur_bit, pend_bit;
+electrical n_in, n_kb;
+integer seed, prev_bit, cur_bit, pend_bit, clk_hi;
 real v_eff, v_hys_shift, v_n, v_in_src, t_samp, t_fire, t_reg, v_abs;
 
 analog begin
@@ -45,8 +47,26 @@ analog begin
         prev_bit = 0;
         cur_bit  = 0;
         pend_bit = 0;
+        clk_hi   = (V(CLK, VSS) >= vth) ? 1 : 0;
         t_samp   = -1.0;
         t_fire   = -1.0;
+    end
+
+    @(cross(V(CLK, VSS) - vth, -1)) begin
+        clk_hi = 0;
+    end
+
+    // Optional parasitic internal clocked-node kickback into INP/INN
+    // (fast 4 ps evaluate discharge on CLK rising vs. slower 25 ps reset precharge,
+    // matching real StrongARM/CML asymmetric kickback; default 0 preserves existing TBs)
+    if (c_kb_p > 0.0 || c_kb_n > 0.0) begin
+        V(n_kb, VSS) <+ transition(clk_hi ? 0.0 : vdd, 0.0, 25e-12, 4e-12);
+        if (c_kb_p > 0.0)
+            I(INP, n_kb) <+ c_kb_p * ddt(V(INP, n_kb));
+        if (c_kb_n > 0.0)
+            I(INN, n_kb) <+ c_kb_n * ddt(V(INN, n_kb));
+    end else begin
+        V(n_kb, VSS) <+ 0.0;
     end
 
     // Optional pre-amp input RC pole (models finite setup aperture when tau_in > 0)
@@ -56,6 +76,7 @@ analog begin
         V(n_in, VSS) <+ V(INP, INN);
 
     @(cross(V(CLK, VSS) - vth, +1)) begin
+        clk_hi = 1;
         if (tau_regen <= 0.0 && t_int <= 0.0) begin
             // Original exact fast path (100% backward-compatible)
             v_hys_shift = (prev_bit == 0) ? (-0.5 * hysteresis_v) : (0.5 * hysteresis_v);

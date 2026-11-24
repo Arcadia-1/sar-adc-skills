@@ -40,8 +40,10 @@ parameter real v_cm_out    = 0.60;                   // output DC common-mode [V
 parameter real v_clip      = 0.90   from (0.05:20.0);// soft tanh output differential saturation limit [V]
 parameter real v_clip_in   = 10.0   from (0.05:100.0);// optional soft tanh input-pair compression limit [V] (large default preserves linear AC/eye)
 parameter real r_in        = 50.0   from (1.0:1e9);  // single-ended input termination [ohm]
-parameter real r_out       = 50.0   from (1.0:1e6);  // single-ended output resistance [ohm]
-parameter real vn_in       = 4.0e-9 from [0:inf);    // input-referred white noise [V/sqrt(Hz)]
+parameter real r_out        = 50.0   from (1.0:1e6);  // single-ended output resistance [ohm]
+parameter real vn_in        = 4.0e-9 from [0:inf);    // input-referred white noise [V/sqrt(Hz)]
+parameter real psrr_v_per_v = 0.0;                    // optional input-referred supply-to-diff coupling [V/V] (0 = ideal PSRR)
+parameter real vdd_nom      = 1.0    from (0.2:5.0);  // nominal supply voltage [V] for PSRR ripple calculation
 
 electrical n_noi, n_hp, n_p2;
 real v_id, v_id_nl, b_eff, tau_p1, tau_p2, v_zero, v_diff_out;
@@ -54,8 +56,8 @@ analog begin
     // Input-referred white noise node (1 ohm resistor -> V(n_noi) = vn_in [V/sqrt(Hz)])
     I(n_noi, VSS) <+ V(n_noi, VSS) + white_noise(vn_in * vn_in, "ctle_vn_th");
 
-    // Effective differential input including DC offset, offset-cal correction, noise, and optional input tanh compression
-    v_id    = V(INP, INN) + vos - k_off_cal * V(VOFF_CAL, VSS) + V(n_noi, VSS);
+    // Effective differential input including DC offset, offset-cal correction, noise, optional supply coupling, and input tanh compression
+    v_id    = V(INP, INN) + vos - k_off_cal * V(VOFF_CAL, VSS) + V(n_noi, VSS) + psrr_v_per_v * (V(VDD, VSS) - vdd_nom);
     v_id_nl = v_clip_in * tanh(v_id / v_clip_in);
 
     // High-pass branch: V(n_hp) = (s*tau_p1 / (1 + s*tau_p1)) * v_id_nl

@@ -5,6 +5,8 @@ Usage:
   python analyze_cdr.py bbpd <psf_dir> [--ui 100e-12] [--vdd 1.0]
   python analyze_cdr.py pi <psf_dir> [--f-clk 10e9] [--t-dwell 400e-12] [--n-codes 64]
   python analyze_cdr.py jtol <psf_dir> [--f-sj 20e6] [--n-codes 64] [--t-lock 40e-9]
+  python analyze_cdr.py ppm_wrap <psf_dir> [--ppm-offset 1000] [--n-codes 64] [--t-lock 80e-9]
+  python analyze_cdr.py jtol_mask <psf_dir> [--freqs 5e6,20e6,60e6,150e6] [--n-codes 64] [--t-lock 40e-9]
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -163,10 +166,9 @@ def analyze_pi(psf_dir: Path, *, f_clk: float, t_dwell: float, n_codes: int) -> 
     }
 
 
-def analyze_jtol(
-    psf_dir: Path, *, f_sj: float, n_codes: int, t_lock: float, vdd: float
+def _eval_jtol_file(
+    f: Path, *, f_sj: float, n_codes: int, t_lock: float, vdd: float
 ) -> dict[str, object]:
-    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
     d = parse_psf_ascii(f)
     t = d["time"]
     sj_ui = d["SJ_CODE"] / float(n_codes)
@@ -239,6 +241,223 @@ def analyze_jtol(
     }
 
 
+def analyze_jtol(
+    psf_dir: Path, *, f_sj: float, n_codes: int, t_lock: float, vdd: float
+) -> dict[str, object]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    return _eval_jtol_file(f, f_sj=f_sj, n_codes=n_codes, t_lock=t_lock, vdd=vdd)
+
+
+def analyze_ppm_wrap(
+    psf_dir: Path,
+    *,
+    ppm_offset: float,
+    n_codes: int,
+    t_lock: float,
+    bit_rate: float,
+    vdd: float,
+) -> dict[str, object]:
+    f = find_single(psf_dir, ["*.tran", "tran.tran*"])
+    d = parse_psf_ascii(f)
+    t = d["time"]
+    rx_vcode = d["RX_VCODE"]
+    freq_mon = d["FREQ_MON"]
+    tx_clk = d["TX_CLKP"]
+    rx_clk = d["RX_CLKP"]
+    tx_bit = d["TX_BIT"]
+    rx_dout = d["RX_DOUT"]
+
+    t_ui_tx = 1.0 / (bit_rate * (1.0 + ppm_offset * 1e-6))
+    m = t >= t_lock
+    if not np.any(m):
+        raise RuntimeError(f"No samples at or after t_lock={t_lock}")
+
+    # 1. Frequency accumulator convergence -> exact recovered ppm
+    freq_mon_mean = float(np.mean(freq_mon[m]))
+    freq_mon_std = float(np.std(freq_mon[m]))
+    denom = 1.0 + freq_mon_mean / float(n_codes)
+    recovered_ppm = ((1.0 / denom) - 1.0) * 1e6 if abs(denom) > 1e-9 else float("nan")
+    ppm_err_pct = (
+        abs(recovered_ppm - ppm_offset) / max(abs(ppm_offset), 1e-9) * 100.0
+        if math.isfinite(recovered_ppm)
+        else float("nan")
+    )
+
+    # 2. Debounced 2*pi (n_codes) PI wraparound detection (handles both unwrapped and modulo VCODE)
+    wrap_times: list[float] = []
+    if float(np.max(np.abs(np.diff(rx_vcode)))) > 0.5 * n_codes:
+        # Modulo-wrapped VCODE jumping ~n_codes
+        j_idx = np.where(np.abs(np.diff(rx_vcode)) > 0.5 * n_codes)[0]
+        for idx in j_idx:
+            t_w = float(t[idx + 1])
+            if not wrap_times or (t_w - wrap_times[-1]) > 10.0 * t_ui_tx:
+                wrap_times.append(t_w)
+    else:
+        # Unwrapped VCODE crossing integer multiples k * n_codes (debounced by +/-0.20 UI)
+        v_ui = rx_vcode / float(n_codes)
+        k_lo = int(math.floor(float(np.min(v_ui))))
+        k_hi = int(math.ceil(float(np.max(v_ui))))
+        for k in range(k_lo, k_hi + 1):
+            # Find confirmed crossing where v_ui transitions from >= k+0.2 to <= k-0.2 (or vice versa)
+            state = 0  # +1 above k+0.2, -1 below k-0.2
+            last_cross_t: float | None = None
+            for i in range(len(v_ui) - 1):
+                a, b = float(v_ui[i]), float(v_ui[i + 1])
+                if (a - k) * (b - k) <= 0.0 and a != b:
+                    last_cross_t = float(t[i] + (k - a) / (b - a) * (t[i + 1] - t[i]))
+                if b >= k + 0.20:
+                    if state == -1 and last_cross_t is not None:
+                        wrap_times.append(last_cross_t)
+                    state = 1
+                elif b <= k - 0.20:
+                    if state == 1 and last_cross_t is not None:
+                        wrap_times.append(last_cross_t)
+                    state = -1
+        wrap_times.sort()
+
+    wrap_times_post = [tw for tw in wrap_times if tw >= t_lock]
+    total_phase_travel_ui = abs(float(rx_vcode[-1] - rx_vcode[0])) / float(n_codes)
+
+    # 3. Clock-edge phase error & max phase glitch across 2*pi wrap boundaries
+    tx_edges = np.asarray(
+        [te for te in crossings(t, tx_clk, 0.5 * vdd, direction="rising") if te >= t_lock - 2.0 * t_ui_tx],
+        dtype=float,
+    )
+    rx_edges = np.asarray(
+        [re for re in crossings(t, rx_clk, 0.5 * vdd, direction="rising") if re >= t_lock],
+        dtype=float,
+    )
+    if len(tx_edges) < 20 or len(rx_edges) < 20:
+        raise RuntimeError("Insufficient clock edges after t_lock for ppm_wrap analysis")
+
+    # Compute signed phase offset of each RX edge relative to nearest TX edge (mod 1 UI)
+    idx_near = np.searchsorted(tx_edges, rx_edges)
+    idx_lo = np.clip(idx_near - 1, 0, len(tx_edges) - 1)
+    idx_hi = np.clip(idx_near, 0, len(tx_edges) - 1)
+    dt_lo = rx_edges - tx_edges[idx_lo]
+    dt_hi = rx_edges - tx_edges[idx_hi]
+    dt_near = np.where(np.abs(dt_lo) <= np.abs(dt_hi), dt_lo, dt_hi)
+    phi_ui = dt_near / t_ui_tx
+    ang = 2.0 * math.pi * phi_ui
+    phi_mean = math.atan2(float(np.mean(np.sin(ang))), float(np.mean(np.cos(ang)))) / (2.0 * math.pi)
+    phase_err_ui = ((phi_ui - phi_mean + 0.5) % 1.0) - 0.5
+    phase_err_mui = phase_err_ui * 1e3
+
+    # Measure peak phase error & cycle-to-cycle phase jump within +/-2 ns (+/-20 UI) of each post-lock wrap
+    wrap_window_errs: list[float] = []
+    wrap_cycle_jumps: list[float] = []
+    d_err = np.abs(np.diff(phase_err_mui))
+    for tw in wrap_times_post:
+        mw = np.abs(rx_edges - tw) <= 2.0e-9
+        if np.any(mw):
+            wrap_window_errs.append(float(np.max(np.abs(phase_err_mui[mw]))))
+        mw_d = np.abs(rx_edges[1:] - tw) <= 2.0e-9
+        if np.any(mw_d):
+            wrap_cycle_jumps.append(float(np.max(d_err[mw_d])))
+
+    max_wrap_phase_err_mui = max(wrap_window_errs) if wrap_window_errs else float(np.max(np.abs(phase_err_mui)))
+    max_wrap_glitch_mui = max(wrap_cycle_jumps) if wrap_cycle_jumps else float(np.max(d_err))
+
+    # 4. Latency-aligned post-lock bit error check
+    tx_post = tx_edges[tx_edges >= t_lock]
+    t_tx_s = np.asarray([te + 0.45 * t_ui_tx for te in tx_post if te + 0.45 * t_ui_tx < float(t[-1])], dtype=float)
+    t_rx_s = np.asarray([re + 0.45 * t_ui_tx for re in rx_edges if re + 0.45 * t_ui_tx < float(t[-1])], dtype=float)
+    tx_b = (np.interp(t_tx_s, t, tx_bit) >= 0.5).astype(int)
+    rx_b = (np.interp(t_rx_s, t, rx_dout) >= 0.5 * vdd).astype(int)
+
+    n_min = min(len(tx_b), len(rx_b))
+    best_err = n_min
+    best_lag = 0
+    for lag in range(-20, 21):
+        if lag >= 0:
+            a, b = tx_b[: n_min - lag], rx_b[lag:n_min]
+        else:
+            a, b = tx_b[-lag:n_min], rx_b[: n_min + lag]
+        if len(a) < 50:
+            continue
+        errs = int(np.sum(a != b))
+        if errs < best_err:
+            best_err = errs
+            best_lag = lag
+
+    bits_checked = max(n_min - abs(best_lag), 1)
+    ppm_lock_pass = bool(
+        best_err == 0
+        and len(wrap_times) >= 2
+        and math.isfinite(ppm_err_pct)
+        and ppm_err_pct < 5.0
+        and max_wrap_phase_err_mui < 200.0
+    )
+    return {
+        "target_ppm": float(ppm_offset),
+        "freq_mon_mean_codes_per_ui": freq_mon_mean,
+        "freq_mon_std_codes_per_ui": freq_mon_std,
+        "recovered_ppm": float(recovered_ppm),
+        "ppm_err_pct": float(ppm_err_pct),
+        "total_phase_travel_ui": float(total_phase_travel_ui),
+        "n_wraps": int(len(wrap_times)),
+        "n_wraps_post_lock": int(len(wrap_times_post)),
+        "wrap_times_ns": [tw * 1e9 for tw in wrap_times],
+        "track_err_rms_mui": float(np.sqrt(np.mean(phase_err_mui**2))),
+        "track_err_peak_mui": float(np.max(np.abs(phase_err_mui))),
+        "max_wrap_phase_err_mui": float(max_wrap_phase_err_mui),
+        "max_wrap_glitch_mui": float(max_wrap_glitch_mui),
+        "bit_lag_ui": int(best_lag),
+        "bits_checked": int(bits_checked),
+        "bit_errors": int(best_err),
+        "ppm_lock_pass": ppm_lock_pass,
+    }
+
+
+def analyze_jtol_mask(
+    psf_dir: Path, *, freqs_hz: list[float], n_codes: int, t_lock: float, vdd: float
+) -> dict[str, object]:
+    files = sorted(
+        psf_dir.glob("tran_f*.tran"),
+        key=lambda p: int(m.group(1)) if (m := re.search(r"tran_f(\d+)", p.name)) else 0,
+    )
+    if not files:
+        raise FileNotFoundError(f"No tran_f*.tran files found in {psf_dir}")
+
+    points: list[dict[str, object]] = []
+    for idx, pf in enumerate(files):
+        if idx < len(freqs_hz):
+            f_sj = freqs_hz[idx]
+        else:
+            # Fallback: estimate f_sj from SJ_CODE zero crossings
+            d = parse_psf_ascii(pf)
+            zc = crossings(d["time"], d["SJ_CODE"], 0.0, direction="rising")
+            f_sj = 1.0 / float(np.median(np.diff(zc))) if len(zc) >= 2 else 20e6
+        pt = _eval_jtol_file(pf, f_sj=f_sj, n_codes=n_codes, t_lock=t_lock, vdd=vdd)
+        pt["point_idx"] = idx
+        points.append(pt)
+
+    # Estimate -3 dB JTF corner frequency via log-frequency interpolation
+    jtf_bw_3db_mhz: float | None = None
+    for i in range(len(points) - 1):
+        g0 = float(points[i]["jtf_gain_db"])
+        g1 = float(points[i + 1]["jtf_gain_db"])
+        f0 = float(points[i]["f_sj_mhz"])
+        f1 = float(points[i + 1]["f_sj_mhz"])
+        if g0 >= -3.0 > g1 and g1 != g0:
+            frac = (-3.0 - g0) / (g1 - g0)
+            jtf_bw_3db_mhz = float(10.0 ** (math.log10(f0) + frac * (math.log10(f1) - math.log10(f0))))
+            break
+
+    jtf_gains = [float(p["jtf_gain_db"]) for p in points]
+    total_errs = sum(int(p["bit_errors"]) for p in points)
+    all_pass = all(bool(p["jtol_pass"]) for p in points)
+    return {
+        "n_points": len(points),
+        "jtf_peaking_db": max(jtf_gains),
+        "jtf_min_db": min(jtf_gains),
+        "jtf_bw_3db_mhz": jtf_bw_3db_mhz,
+        "total_bit_errors": int(total_errs),
+        "jtol_all_pass": bool(all_pass),
+        "points": points,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze SerDes CDR Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -261,14 +480,47 @@ def main(argv: list[str] | None = None) -> int:
     p_jt.add_argument("--t-lock", type=float, default=40e-9)
     p_jt.add_argument("--vdd", type=float, default=1.0)
 
+    p_pw = sub.add_parser("ppm_wrap")
+    p_pw.add_argument("psf_dir", type=Path)
+    p_pw.add_argument("--ppm-offset", type=float, default=1000.0)
+    p_pw.add_argument("--n-codes", type=int, default=64)
+    p_pw.add_argument("--t-lock", type=float, default=80e-9)
+    p_pw.add_argument("--bit-rate", type=float, default=10e9)
+    p_pw.add_argument("--vdd", type=float, default=1.0)
+
+    p_jm = sub.add_parser("jtol_mask")
+    p_jm.add_argument("psf_dir", type=Path)
+    p_jm.add_argument("--freqs", type=str, default="5e6,20e6,60e6,150e6")
+    p_jm.add_argument("--n-codes", type=int, default=64)
+    p_jm.add_argument("--t-lock", type=float, default=40e-9)
+    p_jm.add_argument("--vdd", type=float, default=1.0)
+
     args = ap.parse_args(argv)
     if args.mode == "bbpd":
         res: object = analyze_bbpd(args.psf_dir, ui=args.ui, vdd=args.vdd)
     elif args.mode == "pi":
         res = analyze_pi(args.psf_dir, f_clk=args.f_clk, t_dwell=args.t_dwell, n_codes=args.n_codes)
-    else:
+    elif args.mode == "jtol":
         res = analyze_jtol(
             args.psf_dir, f_sj=args.f_sj, n_codes=args.n_codes, t_lock=args.t_lock, vdd=args.vdd
+        )
+    elif args.mode == "ppm_wrap":
+        res = analyze_ppm_wrap(
+            args.psf_dir,
+            ppm_offset=args.ppm_offset,
+            n_codes=args.n_codes,
+            t_lock=args.t_lock,
+            bit_rate=args.bit_rate,
+            vdd=args.vdd,
+        )
+    else:
+        freqs_hz = [float(x.strip()) for x in args.freqs.split(",") if x.strip()]
+        res = analyze_jtol_mask(
+            args.psf_dir,
+            freqs_hz=freqs_hz,
+            n_codes=args.n_codes,
+            t_lock=args.t_lock,
+            vdd=args.vdd,
         )
     print(json.dumps(res, indent=2))
     return 0
