@@ -1,0 +1,772 @@
+// =============================================================================
+// Minimal Open-Source SkyWater 130 nm (sky130) BSIM4.5 Model Subset (TT Corner)
+// =============================================================================
+// Upstream: google/skywater-pdk-libs-sky130_fd_pr (silicon-calibrated TT corner)
+// License:  Apache License, Version 2.0
+//           Copyright 2020 The SkyWater PDK Authors
+//           https://www.apache.org/licenses/LICENSE-2.0
+//
+// Included silicon-calibrated 1.8 V planar CMOS BSIM4.5 devices (TT, 5 L-bins
+// covering L = 0.14 um .. 100 um for W = 0.36 um .. 1000 um, extracted from
+// official W=[3..5 um] TT bins with mc_mm_switch=0, mc_pr_switch=0):
+//   - `sky130_fd_pr__nfet_01v8`  (alias: `sky130_nch`)  1.8 V NMOS (L_min = 0.15 um)
+//   - `sky130_fd_pr__pfet_01v8`  (alias: `sky130_pch`)  1.8 V PMOS (L_min = 0.15 um)
+//
+// Usage in Spectre (`simulator lang=spectre`):
+//   include "models_sky130_minimal.scs"
+//   M1 (d g s b) sky130_fd_pr__nfet_01v8 w=2u l=0.15u
+//   M2 (d g s b) sky130_fd_pr__pfet_01v8 w=4u l=0.15u
+//
+// Note: Minimal self-contained TT subset for SAR ADC, OpAmp, LDO, Bandgap, and
+// mixed-signal verification. Use the full SkyWater PDK for PVT/Monte Carlo signoff.
+// =============================================================================
+
+simulator lang=spice
+
+.model sky130_fd_pr__nfet_01v8__model.0 nmos
++ lmin = 1.400e-07 lmax = 1.800e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 version=4.5 binunit=2.0 mobmod=0.0 capmod=2.0
++ igcmod=0.0 igbmod=0.0 geomod=0.0 diomod=1.0 rdsmod=0.0
++ rbodymod=1.0 rgatemod=0.0 permod=1.0 acnqsmod=0.0 trnqsmod=0.0
++ fnoimod=1.0 tnoimod=1.0 tempmod=0.0 toxe=4.148e-09 toxm=4.148e-9
++ dtox=0.0 epsrox=3.9 xj=1.5e-7 ngate=1.0e+23 ndep=1.7e+17
++ nsd=1.0e+20 rsh=1.0 rshg=0.1 wint=2.1859e-8 lint=1.1932e-8
++ vth0=0.530486 lvth0=-1.768760094e-08 wvth0=5.131328281e-07 pvth0=-4.629932617e-14 k1=7.069074261e-01
++ lk1=2.355990885e-08 wk1=5.917473316e-07 pk1=-6.964973445e-14 k2=-1.005113253e-01 lk2=-8.095509190e-10
++ wk2=-9.690911799e-08 pk2=3.603698539e-15 k3=2.0 k3b=0.54 w0=0.0
++ dvt0=0.0 dvt1=0.53 dvt2=-0.032 dvt0w=-3.58 dvt1w=1670600.0
++ dvt2w=0.068 dsub=3.289742177e-01 ldsub=-4.280339138e-09 wdsub=3.833604585e-07 pdsub=1.264430231e-14
++ minv=0.0 voffl=5.8197729e-9 lpe0=1.0325e-7 lpeb=-7.082e-8 vbm=-3.0
++ dvtp0=0.0 dvtp1=0.0 phin=0.0 cdsc=0.0 cdscb=0.0
++ cdscd=3.060418107e-02 lcdscd=-3.162591669e-09 wcdscd=-8.440829895e-08 pcdscd=9.349512825e-15 cit=0.0
++ voff=0.0971051 lvoff=-2.977131047e-08 wvoff=-8.252317455e-07 pvoff=8.801238925e-14 nfactor=9.877720445e+00
++ lnfactor=-8.071854536e-07 wnfactor=-3.245888202e-05 pnfactor=4.013653515e-12 eta0=4.763329940e-01 leta0=-5.998911901e-08
++ weta0=-1.406122568e-06 peta0=1.773447504e-13 etab=1.500326779e-01 letab=-2.136701594e-08 wetab=-5.947852485e-07
++ petab=6.316692461e-14 u0=1.635267749e-01 lu0=-2.112277071e-08 wu0=-3.762372093e-07 pu0=5.874097009e-14
++ ua=1.697280683e-08 lua=-2.664638150e-15 wua=-5.375949692e-14 pua=7.889818645e-21 ub=-1.396242758e-17
++ lub=2.241569298e-24 wub=5.054657819e-23 pub=-7.082217490e-30 uc=5.266491414e-10 luc=-6.454192351e-17
++ wuc=-1.380318047e-15 puc=1.908041267e-22 ud=0.0 up=0.0 lp=1.0
++ eu=1.67 vtl=0.0 xn=3.0 vsat=-9.405219098e+04 lvsat=3.209038892e-02
++ wvsat=5.492619481e-01 pvsat=-6.717735582e-8 a0=1.5 ags=1.25 a1=0.0
++ a2=0.42385546 b0=0.0 b1=0.0 keta=5.519339594e-01 lketa=-9.150073022e-08
++ wketa=-2.641277947e-06 pketa=4.047175174e-13 dwg=0.0 dwb=0.0 pclm=2.605040018e+00
++ lpclm=-3.134900019e-07 wpclm=-5.756253401e-06 ppclm=7.409392726e-13 pdiblc1=7.311991496e-01 lpdiblc1=-5.129780627e-08
++ wpdiblc1=-1.106320543e-06 ppdiblc1=1.516507813e-13 pdiblc2=1.462683294e-02 lpdiblc2=-6.282636394e-10 wpdiblc2=-1.839020505e-08
++ ppdiblc2=1.857324488e-15 pdiblcb=-8.436781848e-01 lpdiblcb=1.144799357e-07 wpdiblcb=2.188779206e-06 ppdiblcb=-3.384349734e-13
++ drout=4.635200135e+00 ldrout=-5.291977980e-07 wdrout=-1.221498318e-05 pdrout=1.564457925e-12 pscbe1=8.624336049e+08
++ lpscbe1=-8.703504333e+00 wpscbe1=-2.099365967e+02 ppscbe1=2.573001320e-5 pscbe2=1.0e-12 pvag=0.0
++ delta=0.01 fprout=0.0 pdits=0.0 pditsl=0.0 pditsd=0.0
++ lambda=0.0 lc=5.0e-9 rdsw=65.968 rsw=0.0 rdw=0.0
++ rdswmin=0.0 rdwmin=0.0 rswmin=0.0 prwb=0.0 prwg=0.021507
++ wr=1.0 alpha0=2.188879730e-05 lalpha0=-2.757181256e-12 walpha0=-6.462076899e-11 palpha0=8.151005317e-18
++ alpha1=-1.453892472e+00 lalpha1=2.906037808e-07 walpha1=6.810955844e-06 palpha1=-8.591067263e-13 beta0=6.931149233e+01
++ lbeta0=-6.994429437e-06 wbeta0=-1.579296821e-04 pbeta0=1.992061838e-11 agidl=0.0 bgidl=2300000000.0
++ cgidl=0.5 egidl=0.8 toxref=4.148e-9 dlcig=0.0 aigbacc=1.0
++ bigbacc=0.0 cigbacc=0.0 nigbacc=0.0 aigbinv=0.35 bigbinv=0.03
++ cigbinv=0.006 eigbinv=1.1 nigbinv=0.0 aigc=0.43 bigc=0.054
++ cigc=0.075 aigsd=0.43 bigsd=0.054 cigsd=0.075 nigc=0.0
++ poxedge=1.0 pigcd=1.0 ntox=1.0 vfbsdoff=0.0 dlc=9.87908e-9
++ dwc=0.0 xpart=0.0 cgso=2.449068e-10 cgdo=2.449068e-10 cgbo=1.0e-13
++ cgdl=0.0 cgsl=0.0 clc=1.0e-7 cle=0.6 cf=1.4067e-12
++ ckappas=0.6 vfbcv=-1.0 acde=0.4 moin=6.9 noff=3.4037
++ voffcv=-0.17287 xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0 rbpd=50.0
++ rbps=50.0 rbdb=50.0 rbsb=50.0 gbmin=1.0e-12 ef=0.84
++ noia=2.5e+42 noib=0.0 noic=0.0 em=41000000.0 ntnoi=1.0
++ lintnoi=-1.0e-7 af=1.0 kf=0.0 tnoia=15000000.0 tnoib=9900000.0
++ rnoia=0.94 rnoib=0.26 xl=0.0 xw=0.0 dmcg=0.0
++ dmdg=0.0 dmcgt=0.0 xgw=0.0 xgl=0.0 ngcon=1.0
++ jss=0.00275 jsws=6.0e-10 ijthsfwd=0.1 ijthsrev=0.1 bvs=11.7
++ xjbvs=1.0 pbs=0.729 cjs=0.001339749237 mjs=0.44 pbsws=0.2
++ cjsws=3.67354204e-11 mjsws=0.0009 pbswgs=0.95578 cjswgs=2.38232788e-10 mjswgs=0.8
++ tnom=30.0 kt1=-6.425863786e-01 lkt1=5.268627187e-08 wkt1=1.157755826e-06 pkt1=-1.557554772e-13
++ kt2=-1.167450682e-01 lkt2=1.098827508e-08 wkt2=2.597570561e-07 pkt2=-3.248443984e-14 at=-2.489356391e+05
++ lat=3.846099742e-02 wat=1.146221855e+00 pat=-1.428126109e-7 ute=-2.170141203e+01 lute=2.983260683e-06
++ wute=6.025603010e-05 pute=-8.819359858e-12 ua1=-2.584295612e-08 lua1=3.831119038e-15 wua1=7.632856654e-14
++ pua1=-1.132586825e-20 ub1=1.540697490e-17 lub1=-2.266378703e-24 wub1=-4.345504462e-23 pub1=6.700054566e-30
++ uc1=-4.011452666e-10 luc1=6.695947268e-17 wuc1=1.621022593e-15 puc1=-1.979510838e-22 kt1l=0.0
++ prt=0.0 tvoff=0.0 njs=1.2928 tpb=0.0012287 tcj=0.000792
++ tpbsw=0.0 tcjsw=1.0e-5 tpbswg=0.0 tcjswg=0.0 xtis=2.0
++ tvfbsdoff=0.0 ll=0.0 wl=0.0 lln=1.0 wln=1.0
++ lw=0.0 ww=0.0 lwn=1.0 wwn=1.0 lwl=0.0
++ wwl=0.0 llc=0.0 wlc=0.0 lwc=0.0 wwc=0.0
++ lwlc=0.0 wwlc=0.0 saref=1.04e-6 sbref=1.04e-6 kvth0=9.8e-9
++ lkvth0=0.0 wkvth0=2.0e-7 pkvth0=0.0 llodvth=0.0 wlodvth=1.0
++ wlod=0.0 stk2=0.0 lodk2=1.0 lodeta0=1.0 ku0=-2.7e-8
++ lku0=0.0 wku0=0.0 pku0=0.0 tku0=0.0 llodku0=0.0
++ wlodku0=1.0 kvsat=0.2 steta0=0.0
+
+.model sky130_fd_pr__nfet_01v8__model.1 nmos
++ lmin = 1.800e-07 lmax = 2.500e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 version=4.5 binunit=2.0 mobmod=0.0 capmod=2.0
++ igcmod=0.0 igbmod=0.0 geomod=0.0 diomod=1.0 rdsmod=0.0
++ rbodymod=1.0 rgatemod=0.0 permod=1.0 acnqsmod=0.0 trnqsmod=0.0
++ fnoimod=1.0 tnoimod=1.0 tempmod=0.0 toxe=4.148e-09 toxm=4.148e-9
++ dtox=0.0 epsrox=3.9 xj=1.5e-7 ngate=1.0e+23 ndep=1.7e+17
++ nsd=1.0e+20 rsh=1.0 rshg=0.1 wint=2.1859e-8 lint=1.1932e-8
++ vth0=0.783231 lvth0=-5.715019890e-08 wvth0=-4.870291161e-07 pvth0=1.098619591e-13 k1=4.931050082e-01
++ lk1=5.694216317e-08 wk1=-2.708135376e-10 pk1=2.278561067e-14 k2=-3.118944394e-02 lk2=-1.163319218e-08
++ wk2=8.499234707e-08 pk2=-2.479766861e-14 k3=2.0 k3b=0.54 w0=0.0
++ dvt0=0.0 dvt1=0.53 dvt2=-0.032 dvt0w=-3.58 dvt1w=1670600.0
++ dvt2w=0.068 dsub=8.949779736e-01 ldsub=-9.265390157e-08 wdsub=-1.931363806e-07 pdsub=1.026562128e-13
++ minv=0.0 voffl=5.8197729e-9 lpe0=1.0325e-7 lpeb=-7.082e-8 vbm=-3.0
++ dvtp0=0.0 dvtp1=0.0 phin=0.0 cdsc=0.0 cdscb=0.0
++ cdscd=-5.638404937e-03 lcdscd=2.496180739e-09 wcdscd=5.470944770e-08 pcdscd=-1.237177566e-14 cit=0.0
++ voff=-0.244674 lvoff=2.359271923e-08 wvoff=5.384288674e-07 pvoff=-1.249041242e-13 nfactor=-1.540586399e+00
++ lnfactor=9.756233037e-07 wnfactor=1.747296423e-05 pnfactor=-3.782505231e-12 eta0=1.377471867e+00 leta0=-2.006893380e-07
++ weta0=6.028800406e-07 peta0=-1.363328809e-13 etab=-3.521303131e-02 letab=7.556508117e-09 wetab=4.354878357e-07
++ petab=-9.769579367e-14 u0=-4.339233702e-03 lu0=5.087156403e-09 wu0=-1.524974200e-08 pu0=2.377830894e-15
++ ua=-6.749666627e-09 lua=1.039293966e-15 wua=7.792177348e-15 pua=-1.720613569e-21 ub=7.661363531e-18
++ lub=-1.134682951e-24 wub=-1.347426977e-23 pub=2.913741628e-30 uc=-2.264736401e-10 luc=5.304765511e-17
++ wuc=9.862569928e-16 puc=-1.787034337e-22 ud=0.0 up=0.0 lp=1.0
++ eu=1.67 vtl=0.0 xn=3.0 vsat=1.109476091e+05 lvsat=8.254013386e-05
++ wvsat=1.084669381e-01 pvsat=1.646613870e-9 a0=1.5 ags=-2.725045681e+00 lags=6.206477325e-07
++ wags=-5.916754457e-12 pags=9.238183736e-19 a1=0.0 a2=0.42385546 b0=0.0
++ b1=0.0 keta=7.781446191e-03 lketa=-6.538933426e-09 wketa=-6.967213643e-08 pketa=3.197272573e-15
++ dwg=0.0 dwb=0.0 pclm=5.388206768e-01 lpclm=9.121221069e-09 wpclm=-2.077578437e-07
++ ppclm=-1.253806297e-13 pdiblc1=2.359042693e+00 lpdiblc1=-3.054627857e-07 wpdiblc1=-7.843734467e-06 ppdiblc1=1.203603642e-12
++ pdiblc2=-1.570608770e-02 lpdiblc2=4.107797258e-09 wpdiblc2=1.565499552e-08 ppdiblc2=-3.458356948e-15 pdiblcb=1.120676856e+00
++ lpdiblcb=-1.922266030e-07 wpdiblcb=-4.780721519e-06 ppdiblcb=7.497549918e-13 drout=4.516027116e-01 ldrout=1.240123692e-07
++ wdrout=4.896295556e-06 pdrout=-1.107228692e-12 pscbe1=7.850767286e+08 lpscbe1=3.374688911e+00 wpscbe1=1.006949609e+02
++ ppscbe1=-2.277075567e-5 pscbe2=1.0e-12 pvag=0.0 delta=0.01 fprout=0.0
++ pdits=0.0 pditsl=0.0 pditsd=0.0 lambda=0.0 lc=5.0e-9
++ rdsw=65.968 rsw=0.0 rdw=0.0 rdswmin=0.0 rdwmin=0.0
++ rswmin=0.0 prwb=0.0 prwg=0.021507 wr=1.0 alpha0=1.083252961e-05
++ lalpha0=-1.030899845e-12 walpha0=-7.058061165e-13 palpha0=-1.828421326e-18 alpha1=1.837382488e+00 lalpha1=-2.232827263e-07
++ walpha1=-2.918981076e-06 palpha1=6.600867046e-13 beta0=9.327764020e+00 lbeta0=2.371189967e-06 wbeta0=6.112838551e-05
++ pbeta0=-1.428223206e-11 agidl=0.0 bgidl=2300000000.0 cgidl=0.5 egidl=0.8
++ toxref=4.148e-9 dlcig=0.0 aigbacc=1.0 bigbacc=0.0 cigbacc=0.0
++ nigbacc=0.0 aigbinv=0.35 bigbinv=0.03 cigbinv=0.006 eigbinv=1.1
++ nigbinv=0.0 aigc=0.43 bigc=0.054 cigc=0.075 aigsd=0.43
++ bigsd=0.054 cigsd=0.075 nigc=0.0 poxedge=1.0 pigcd=1.0
++ ntox=1.0 vfbsdoff=0.0 dlc=9.87908e-9 dwc=0.0 xpart=0.0
++ cgso=2.449068e-10 cgdo=2.449068e-10 cgbo=1.0e-13 cgdl=0.0 cgsl=0.0
++ clc=1.0e-7 cle=0.6 cf=1.4067e-12 ckappas=0.6 vfbcv=-1.0
++ acde=0.4 moin=6.9 noff=3.4037 voffcv=-0.17287 xrcrg1=12.0
++ xrcrg2=1.0 rbpb=50.0 rbpd=50.0 rbps=50.0 rbdb=50.0
++ rbsb=50.0 gbmin=1.0e-12 ef=0.84 noia=2.5e+42 noib=0.0
++ noic=0.0 em=41000000.0 ntnoi=1.0 lintnoi=-1.0e-7 af=1.0
++ kf=0.0 tnoia=15000000.0 tnoib=9900000.0 rnoia=0.94 rnoib=0.26
++ xl=0.0 xw=0.0 dmcg=0.0 dmdg=0.0 dmcgt=0.0
++ xgw=0.0 xgl=0.0 ngcon=1.0 jss=0.00275 jsws=6.0e-10
++ ijthsfwd=0.1 ijthsrev=0.1 bvs=11.7 xjbvs=1.0 pbs=0.729
++ cjs=0.001339749237 mjs=0.44 pbsws=0.2 cjsws=3.67354204e-11 mjsws=0.0009
++ pbswgs=0.95578 cjswgs=2.38232788e-10 mjswgs=0.8 tnom=30.0 kt1=-3.331906060e-01
++ lkt1=4.378453513e-09 wkt1=2.874000947e-07 pkt1=-1.986161466e-14 kt2=-2.650655854e-02 lkt2=-3.101204857e-09
++ wkt2=1.053719629e-07 pkt2=-8.379368922e-15 at=1.150888746e+05 lat=-1.837633407e-02 wat=-6.228187239e-01
++ pat=1.333983090e-7 ute=1.987849026e+00 lute=-7.154857818e-07 wute=1.418809837e-07 pute=5.666229281e-13
++ ua1=5.008738400e-09 lua1=-9.859411372e-16 wua1=8.159284493e-15 pua1=-6.821892292e-22 ub1=-2.016597456e-18
++ lub1=4.540681903e-25 wub1=-1.249786236e-23 pub1=1.866523956e-30 uc1=3.321514218e-10 luc1=-4.753453906e-17
++ wuc1=-1.467657294e-15 puc1=2.843030389e-22 kt1l=0.0 prt=0.0 tvoff=0.0
++ njs=1.2928 tpb=0.0012287 tcj=0.000792 tpbsw=0.0 tcjsw=1.0e-5
++ tpbswg=0.0 tcjswg=0.0 xtis=2.0 tvfbsdoff=0.0 ll=0.0
++ wl=0.0 lln=1.0 wln=1.0 lw=0.0 ww=0.0
++ lwn=1.0 wwn=1.0 lwl=0.0 wwl=0.0 llc=0.0
++ wlc=0.0 lwc=0.0 wwc=0.0 lwlc=0.0 wwlc=0.0
++ saref=1.1e-6 sbref=1.1e-6 kvth0=9.8e-9 lkvth0=0.0 wkvth0=2.0e-7
++ pkvth0=0.0 llodvth=0.0 wlodvth=1.0 wlod=0.0 stk2=0.0
++ lodk2=1.0 lodeta0=1.0 ku0=-2.7e-8 lku0=0.0 wku0=0.0
++ pku0=0.0 tku0=0.0 llodku0=0.0 wlodku0=1.0 kvsat=0.2
++ steta0=0.0
+
+.model sky130_fd_pr__nfet_01v8__model.2 nmos
++ lmin = 2.500e-07 lmax = 5.000e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 version=4.5 binunit=2.0 mobmod=0.0 capmod=2.0
++ igcmod=0.0 igbmod=0.0 geomod=0.0 diomod=1.0 rdsmod=0.0
++ rbodymod=1.0 rgatemod=0.0 permod=1.0 acnqsmod=0.0 trnqsmod=0.0
++ fnoimod=1.0 tnoimod=1.0 tempmod=0.0 toxe=4.148e-09 toxm=4.148e-9
++ dtox=0.0 epsrox=3.9 xj=1.5e-7 ngate=1.0e+23 ndep=1.7e+17
++ nsd=1.0e+20 rsh=1.0 rshg=0.1 wint=2.1859e-8 lint=1.1932e-8
++ vth0=0.646243 lvth0=-2.617232026e-08 wvth0=-9.127629017e-08 pvth0=2.036799811e-14 k1=-4.462581406e-02
++ lk1=1.785424604e-07 wk1=1.298853683e-06 pk1=-2.709932064e-13 k2=1.575393653e-01 lk2=-5.431157018e-08
++ wk2=-4.530767430e-07 pk2=9.687912315e-14 k3=2.0 k3b=0.54 w0=0.0
++ dvt0=0.0 dvt1=0.53 dvt2=-0.032 dvt0w=-3.58 dvt1w=1670600.0
++ dvt2w=0.068 dsub=3.153734590e-01 ldsub=3.841554494e-08 wdsub=-6.085653180e-07 pdsub=1.965996510e-13
++ minv=0.0 voffl=5.8197729e-9 lpe0=1.0325e-7 lpeb=-7.082e-8 vbm=-3.0
++ dvtp0=0.0 dvtp1=0.0 phin=0.0 cdsc=0.0 cdscb=0.0
++ cdscd=0.0054 cit=0.0 voff=-0.140014 lvoff=-7.472967018e-11 wvoff=1.676737799e-08
++ pvoff=-6.937681634e-15 nfactor=2.495136391e+00 lnfactor=6.300109494e-08 wnfactor=3.109409937e-07 pnfactor=9.844605514e-14
++ eta0=0.49 etab=1.910278903e-03 letab=-8.384087608e-10 wetab=-7.494999385e-09 petab=2.478572728e-15
++ u0=3.357104954e-02 lu0=-3.485723408e-09 wu0=-1.613181330e-08 pu0=2.577298969e-15 ua=-8.915624399e-10
++ lua=-2.854342821e-16 wua=-7.509814663e-16 pua=2.113021923e-22 ub=1.924065949e-18 lub=1.627265745e-25
++ wub=1.618320143e-25 pub=-1.698718852e-31 uc=1.640827545e-10 luc=-3.527120574e-17 wuc=-2.572489332e-16
++ puc=1.024980224e-22 ud=0.0 up=0.0 lp=1.0 eu=1.67
++ vtl=0.0 xn=3.0 vsat=1.165365894e+05 lvsat=-1.181329507e-03 wvsat=-3.530647615e-02
++ pvsat=3.415895867e-8 a0=1.5 ags=2.547688899e+00 lags=-5.717073745e-07 wags=-9.153052131e-07
++ pags=2.069830455e-13 a1=0.0 a2=0.42385546 b0=0.0 b1=0.0
++ keta=1.560495070e-02 lketa=-8.308109442e-09 wketa=-1.396456155e-07 pketa=1.902079523e-14 dwg=0.0
++ dwb=0.0 pclm=3.506056264e-01 lpclm=5.168341970e-08 wpclm=3.563941332e-07 ppclm=-2.529557012e-13
++ pdiblc1=1.826620147e+00 lpdiblc1=-1.850628808e-07 wpdiblc1=-3.000380505e-06 ppdiblc1=1.083469502e-13 pdiblc2=8.864730888e-03
++ lpdiblc2=-1.448549374e-09 wpdiblc2=-2.695224928e-08 ppdiblc2=6.176674961e-15 pdiblcb=-2.924087145e-01 lpdiblcb=1.273229157e-07
++ wpdiblcb=1.325352999e-06 ppdiblcb=-6.310482753e-13 drout=6.095479465e-01 ldrout=8.829526556e-08 wdrout=1.154286377e-06
++ pdrout=-2.610257043e-13 pscbe1=800000000.0 pscbe2=1.0e-12 pvag=0.0 delta=0.01
++ fprout=0.0 pdits=0.0 pditsl=0.0 pditsd=0.0 lambda=0.0
++ lc=5.0e-9 rdsw=65.968 rsw=0.0 rdw=0.0 rdswmin=0.0
++ rdwmin=0.0 rswmin=0.0 prwb=0.0 prwg=0.021507 wr=1.0
++ alpha0=-1.465450645e-05 lalpha0=4.732636541e-12 walpha0=5.274076208e-11 palpha0=-1.391461447e-17 alpha1=0.85
++ beta0=-3.230690459e+00 lbeta0=5.211108629e-06 wbeta0=5.985155848e-05 pbeta0=-1.399349550e-11 agidl=0.0
++ bgidl=2300000000.0 cgidl=0.5 egidl=0.8 toxref=4.148e-9 dlcig=0.0
++ aigbacc=1.0 bigbacc=0.0 cigbacc=0.0 nigbacc=0.0 aigbinv=0.35
++ bigbinv=0.03 cigbinv=0.006 eigbinv=1.1 nigbinv=0.0 aigc=0.43
++ bigc=0.054 cigc=0.075 aigsd=0.43 bigsd=0.054 cigsd=0.075
++ nigc=0.0 poxedge=1.0 pigcd=1.0 ntox=1.0 vfbsdoff=0.0
++ dlc=9.87908e-9 dwc=0.0 xpart=0.0 cgso=2.449068e-10 cgdo=2.449068e-10
++ cgbo=1.0e-13 cgdl=0.0 cgsl=0.0 clc=1.0e-7 cle=0.6
++ cf=1.4067e-12 ckappas=0.6 vfbcv=-1.0 acde=0.4 moin=6.9
++ noff=3.4037 voffcv=-0.17287 xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0
++ rbpd=50.0 rbps=50.0 rbdb=50.0 rbsb=50.0 gbmin=1.0e-12
++ ef=0.84 noia=2.5e+42 noib=0.0 noic=0.0 em=41000000.0
++ ntnoi=1.0 lintnoi=-1.0e-7 af=1.0 kf=0.0 tnoia=15000000.0
++ tnoib=9900000.0 rnoia=0.94 rnoib=0.26 xl=0.0 xw=0.0
++ dmcg=0.0 dmdg=0.0 dmcgt=0.0 xgw=0.0 xgl=0.0
++ ngcon=1.0 jss=0.00275 jsws=6.0e-10 ijthsfwd=0.1 ijthsrev=0.1
++ bvs=11.7 xjbvs=1.0 pbs=0.729 cjs=0.001339749237 mjs=0.44
++ pbsws=0.2 cjsws=3.67354204e-11 mjsws=0.0009 pbswgs=0.95578 cjswgs=2.38232788e-10
++ mjswgs=0.8 tnom=30.0 kt1=-2.446665968e-01 lkt1=-1.564001184e-08 wkt1=-1.899183510e-07
++ pkt1=8.807726938e-14 kt2=-3.116452394e-02 lkt2=-2.047871194e-09 wkt2=-7.000030631e-08 pkt2=3.127861454e-14
++ at=9.235246539e+04 lat=-1.323481343e-02 wat=-7.136271010e-02 pat=8.694251837e-9 ute=-2.354879333e+00
++ lute=2.665614384e-07 wute=6.567354300e-07 pute=4.501958030e-13 ua1=1.356030169e-09 lua1=-1.599323086e-16
++ wua1=-4.530399546e-15 pua1=2.187405161e-21 ub1=-3.727401675e-18 lub1=8.409426132e-25 wub1=1.162068866e-23
++ pub1=-3.587548696e-30 uc1=-3.170077008e-10 luc1=9.926370828e-17 wuc1=1.094375105e-15 puc1=-2.950647196e-22
++ kt1l=0.0 prt=0.0 tvoff=0.0 njs=1.2928 tpb=0.0012287
++ tcj=0.000792 tpbsw=0.0 tcjsw=1.0e-5 tpbswg=0.0 tcjswg=0.0
++ xtis=2.0 tvfbsdoff=0.0 ll=0.0 wl=0.0 lln=1.0
++ wln=1.0 lw=0.0 ww=0.0 lwn=1.0 wwn=1.0
++ lwl=0.0 wwl=0.0 llc=0.0 wlc=0.0 lwc=0.0
++ wwc=0.0 lwlc=0.0 wwlc=0.0 saref=1.25e-6 sbref=1.24e-6
++ kvth0=9.8e-9 lkvth0=0.0 wkvth0=2.0e-7 pkvth0=0.0 llodvth=0.0
++ wlodvth=1.0 wlod=0.0 stk2=0.0 lodk2=1.0 lodeta0=1.0
++ ku0=-2.7e-8 lku0=0.0 wku0=0.0 pku0=0.0 tku0=0.0
++ llodku0=0.0 wlodku0=1.0 kvsat=0.2 steta0=0.0
+
+.model sky130_fd_pr__nfet_01v8__model.3 nmos
++ lmin = 5.000e-07 lmax = 1.000e-06 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 version=4.5 binunit=2.0 mobmod=0.0 capmod=2.0
++ igcmod=0.0 igbmod=0.0 geomod=0.0 diomod=1.0 rdsmod=0.0
++ rbodymod=1.0 rgatemod=0.0 permod=1.0 acnqsmod=0.0 trnqsmod=0.0
++ fnoimod=1.0 tnoimod=1.0 tempmod=0.0 toxe=4.148e-09 toxm=4.148e-9
++ dtox=0.0 epsrox=3.9 xj=1.5e-7 ngate=1.0e+23 ndep=1.7e+17
++ nsd=1.0e+20 rsh=1.0 rshg=0.1 wint=2.1859e-8 lint=1.1932e-8
++ vth0=0.484167 lvth0=5.099813825e-08 wvth0=2.621288451e-07 pvth0=-1.479009094e-13 k1=9.874452943e-01
++ lk1=-3.128637488e-07 wk1=-1.620513872e-06 pk1=1.119022784e-12 k2=-1.851773823e-01 lk2=1.088682111e-07
++ wk2=5.454289133e-07 pk2=-3.785453660e-13 k3=2.0 k3b=0.54 w0=0.0
++ dvt0=0.0 dvt1=0.53 dvt2=-0.032 dvt0w=-3.58 dvt1w=1670600.0
++ dvt2w=0.068 dsub=1.876654397e+00 ldsub=-7.049665158e-07 wdsub=-4.975986760e-06 pdsub=2.276086227e-12
++ minv=0.0 voffl=5.8197729e-9 lpe0=1.0325e-7 lpeb=-7.082e-8 vbm=-3.0
++ dvtp0=0.0 dvtp1=0.0 phin=0.0 cdsc=0.0 cdscb=0.0
++ cdscd=0.0054 cit=0.0 voff=-0.0775813 lvoff=-2.980105363e-08 wvoff=-1.502043658e-07
++ pvoff=7.256357659e-14 nfactor=3.264479119e+00 lnfactor=-3.033106744e-07 wnfactor=-3.970746006e-06 pnfactor=2.137111376e-12
++ eta0=-4.715281226e-01 leta0=4.578181542e-07 weta0=2.913868551e-08 peta0=-1.387397716e-14 etab=2.412787209e-01
++ letab=-1.148103413e-07 wetab=-1.198495941e-06 petab=5.695569972e-13 u0=2.766326795e-02 lu0=-6.728159131e-10
++ wu0=-1.219950617e-10 pu0=-5.045551847e-15 ua=-1.172891700e-09 lua=-1.514832936e-16 wua=-5.881447193e-16
++ pua=1.337697550e-22 ub=2.093119325e-18 lub=8.223417673e-26 wub=6.059720805e-25 pub=-3.813429598e-31
++ uc=-5.719003815e-11 luc=7.008473667e-17 wuc=3.877976020e-16 puc=-2.046318547e-22 ud=0.0
++ up=0.0 lp=1.0 eu=1.67 vtl=0.0 xn=3.0
++ vsat=7.902380491e+04 lvsat=1.667985763e-02 wvsat=-1.531642220e-01 pvsat=9.027527433e-8 a0=2.583189677e+00
++ la0=-5.157455999e-07 wa0=-6.396882493e-06 pa0=3.045786043e-12 ags=1.407338691e+00 lags=-2.874558805e-08
++ wags=-7.365573499e-07 pags=1.218747529e-13 a1=0.0 a2=0.42385546 b0=0.0
++ b1=0.0 keta=-1.738030033e-01 lketa=8.187583615e-08 wketa=3.177783144e-07 pketa=-1.987752051e-13
++ dwg=0.0 dwb=0.0 pclm=-1.385751826e+00 lpclm=8.784257117e-07 wpclm=8.102702856e-06
++ ppclm=-3.941252151e-12 pdiblc1=-2.765528811e-01 lpdiblc1=8.163335119e-07 wpdiblc1=2.991574971e-06 ppdiblc1=-2.744638762e-12
++ pdiblc2=9.419806541e-03 lpdiblc2=-1.712840875e-09 wpdiblc2=-1.199593703e-08 ppdiblc2=-9.445637253e-16 pdiblcb=2.389127038e-02
++ lpdiblcb=-2.327889391e-08 wpdiblcb=-1.355955459e-09 ppdiblcb=6.456192082e-16 drout=-2.494552533e-01 ldrout=4.972976131e-07
++ wdrout=-5.771431887e-07 pdrout=5.633702437e-13 pscbe1=1.291806799e+09 lpscbe1=-2.341669223e+02 wpscbe1=-3.648774159e+03
++ ppscbe1=1.737312733e-3 pscbe2=1.0e-12 pvag=0.0 delta=0.01 fprout=0.0
++ pdits=0.0 pditsl=0.0 pditsd=0.0 lambda=0.0 lc=5.0e-9
++ rdsw=65.968 rsw=0.0 rdw=0.0 rdswmin=0.0 rdwmin=0.0
++ rswmin=0.0 prwb=0.0 prwg=0.021507 wr=1.0 alpha0=2.289806226e-05
++ lalpha0=-1.314749331e-11 walpha0=-7.647496508e-11 palpha0=4.760964499e-17 alpha1=3.767451235e-01 lalpha1=2.253336839e-07
++ walpha1=2.674568986e-06 palpha1=-1.273458578e-12 beta0=3.253329128e+01 lbeta0=-1.181741058e-05 wbeta0=-6.304794120e-05
++ pbeta0=4.452338067e-11 agidl=0.0 bgidl=2300000000.0 cgidl=0.5 egidl=0.8
++ toxref=4.148e-9 dlcig=0.0 aigbacc=1.0 bigbacc=0.0 cigbacc=0.0
++ nigbacc=0.0 aigbinv=0.35 bigbinv=0.03 cigbinv=0.006 eigbinv=1.1
++ nigbinv=0.0 aigc=0.43 bigc=0.054 cigc=0.075 aigsd=0.43
++ bigsd=0.054 cigsd=0.075 nigc=0.0 poxedge=1.0 pigcd=1.0
++ ntox=1.0 vfbsdoff=0.0 dlc=9.87908e-9 dwc=0.0 xpart=0.0
++ cgso=2.449068e-10 cgdo=2.449068e-10 cgbo=1.0e-13 cgdl=0.0 cgsl=0.0
++ clc=1.0e-7 cle=0.6 cf=1.4067e-12 ckappas=0.6 vfbcv=-1.0
++ acde=0.4 moin=6.9 noff=3.4037 voffcv=-0.17287 xrcrg1=12.0
++ xrcrg2=1.0 rbpb=50.0 rbpd=50.0 rbps=50.0 rbdb=50.0
++ rbsb=50.0 gbmin=1.0e-12 ef=0.84 noia=2.5e+42 noib=0.0
++ noic=0.0 em=41000000.0 ntnoi=1.0 lintnoi=-1.0e-7 af=1.0
++ kf=0.0 tnoia=15000000.0 tnoib=9900000.0 rnoia=0.94 rnoib=0.26
++ xl=0.0 xw=0.0 dmcg=0.0 dmdg=0.0 dmcgt=0.0
++ xgw=0.0 xgl=0.0 ngcon=1.0 jss=0.00275 jsws=6.0e-10
++ ijthsfwd=0.1 ijthsrev=0.1 bvs=11.7 xjbvs=1.0 pbs=0.729
++ cjs=0.001339749237 mjs=0.44 pbsws=0.2 cjsws=3.67354204e-11 mjsws=0.0009
++ pbswgs=0.95578 cjswgs=2.38232788e-10 mjswgs=0.8 tnom=30.0 kt1=-3.236107223e-01
++ lkt1=2.194812831e-08 wkt1=2.712027395e-07 pkt1=-1.314790822e-13 kt2=9.325787446e-03 lkt2=-2.132676610e-08
++ wkt2=-1.304250988e-07 pkt2=6.004903355e-14 at=4.960931399e+04 lat=7.116739710e-03 wat=1.009528817e-01
++ pat=-7.335140480e-8 ute=1.007947713e+00 lute=-1.334601580e-06 wute=-6.225017667e-06 pute=3.726846196e-12
++ ua1=5.416821995e-09 lua1=-2.093421486e-15 wua1=-9.514190675e-15 pua1=4.560367534e-21 ub1=-1.388221491e-18
++ lub1=-2.728252830e-25 wub1=-2.629157462e-24 pub1=3.197316037e-30 uc1=3.920554572e-10 luc1=-2.383467875e-16
++ wuc1=-1.393195215e-15 puc1=8.893570623e-22 kt1l=0.0 prt=0.0 tvoff=0.0
++ njs=1.2928 tpb=0.0012287 tcj=0.000792 tpbsw=0.0 tcjsw=1.0e-5
++ tpbswg=0.0 tcjswg=0.0 xtis=2.0 tvfbsdoff=0.0 ll=0.0
++ wl=0.0 lln=1.0 wln=1.0 lw=0.0 ww=0.0
++ lwn=1.0 wwn=1.0 lwl=0.0 wwl=0.0 llc=0.0
++ wlc=0.0 lwc=0.0 wwc=0.0 lwlc=0.0 wwlc=0.0
++ saref=1.75e-6 sbref=1.74e-6 kvth0=9.8e-9 lkvth0=0.0 wkvth0=2.0e-7
++ pkvth0=0.0 llodvth=0.0 wlodvth=1.0 wlod=0.0 stk2=0.0
++ lodk2=1.0 lodeta0=1.0 ku0=-2.7e-8 lku0=0.0 wku0=0.0
++ pku0=0.0 tku0=0.0 llodku0=0.0 wlodku0=1.0 kvsat=0.2
++ steta0=0.0
+
+.model sky130_fd_pr__nfet_01v8__model.4 nmos
++ lmin = 1.000e-06 lmax = 1.000e-04 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 version=4.5 binunit=2.0 mobmod=0.0 capmod=2.0
++ igcmod=0.0 igbmod=0.0 geomod=0.0 diomod=1.0 rdsmod=0.0
++ rbodymod=1.0 rgatemod=0.0 permod=1.0 acnqsmod=0.0 trnqsmod=0.0
++ fnoimod=1.0 tnoimod=1.0 tempmod=0.0 toxe=4.148e-09 toxm=4.148e-9
++ dtox=0.0 epsrox=3.9 xj=1.5e-7 ngate=1.0e+23 ndep=1.7e+17
++ nsd=1.0e+20 rsh=1.0 rshg=0.1 wint=2.1859e-8 lint=1.1932e-8
++ vth0=0.523355 lvth0=1.274532987e-08 wvth0=-8.821092714e-08 pvth0=1.940783545e-13 k1=4.322980265e-01
++ lk1=2.290354845e-07 wk1=5.852102679e-07 pk1=-1.034063955e-12 k2=4.167122191e-03 lk2=-7.595777611e-08
++ wk2=-1.882744749e-07 pk2=3.376489246e-13 k3=2.0 k3b=0.54 w0=0.0
++ dvt0=0.0 dvt1=0.53 dvt2=-0.032 dvt0w=-3.58 dvt1w=1670600.0
++ dvt2w=0.068 dsub=-1.489410334e+00 ldsub=2.580770446e-06 wdsub=6.924354866e-06 pdsub=-9.340265647e-12
++ minv=0.0 voffl=5.8197729e-9 lpe0=1.0325e-7 lpeb=-7.082e-8 vbm=-3.0
++ dvtp0=0.0 dvtp1=0.0 phin=0.0 cdsc=0.0 cdscb=0.0
++ cdscd=0.0054 cit=0.0 voff=-0.0850712 lvoff=-2.248992790e-08 wvoff=4.792095379e-08
++ pvoff=-1.208336804e-13 nfactor=2.535915471e+00 lnfactor=4.078665306e-07 wnfactor=2.176960983e-06 pnfactor=-3.863886733e-12
++ eta0=-2.287746183e-01 leta0=2.208577195e-07 weta0=1.136378997e-06 peta0=-1.094691106e-12 etab=8.131145842e-02
++ letab=4.133946247e-08 wetab=-4.058369249e-07 petab=-2.041860044e-13 u0=3.381781693e-02 lu0=-6.680492730e-09
++ wu0=-7.739682665e-10 pu0=-4.409137331e-15 ua=-3.458116995e-10 lua=-9.588258568e-16 wua=6.502986599e-16
++ pua=-1.075119411e-21 ub=1.130976655e-18 lub=1.021416273e-24 wub=-6.856039699e-25 pub=8.794109197e-31
++ uc=1.502659292e-10 luc=-1.324205014e-16 wuc=-2.857632557e-16 puc=4.528551467e-22 ud=0.0
++ up=0.0 lp=1.0 eu=1.67 vtl=0.0 xn=3.0
++ vsat=6.427304155e+04 lvsat=3.107860877e-02 wvsat=5.923383665e-02 pvsat=-1.170541170e-7 a0=-6.103081915e-01
++ la0=2.601542635e-06 wa0=8.041458131e-06 pa0=-1.104799802e-11 ags=-4.217974222e-01 lags=1.756740021e-06
++ wags=1.688826944e-06 pags=-2.245630170e-12 a1=0.0 a2=0.42385546 b0=-6.155439406e-24
++ lb0=6.008546000e-30 wb0=3.050809353e-29 pb0=-2.978004839e-35 b1=0.0 keta=9.343023049e-02
++ lketa=-1.789801438e-07 wketa=-1.258512634e-07 pketa=2.342675965e-13 dwg=0.0 dwb=0.0
++ pclm=1.227253434e+00 lpclm=-1.672222791e-06 wpclm=-3.249432765e-06 ppclm=7.139976106e-12 pdiblc1=2.243127512e-01
++ lpdiblc1=3.274205370e-07 wpdiblc1=-1.755452639e-07 ppdiblc1=3.469013155e-13 pdiblc2=3.212200966e-03 lpdiblc2=4.346626400e-09
++ wpdiblc2=9.366012297e-09 ppdiblc2=-2.179673150e-14 pdiblcb=-4.944563519e-02 lpdiblcb=4.830789974e-08 wpdiblcb=6.779777293e-10
++ ppdiblcb=-1.339776198e-15 drout=8.528408000e-01 ldrout=-5.786932471e-7 pscbe1=5.784538022e+08 lpscbe1=4.621626191e+02
++ wpscbe1=1.703665918e+03 ppscbe1=-3.487396714e-3 pscbe2=1.0e-12 pvag=0.0 delta=0.01
++ fprout=0.0 pdits=0.0 pditsl=0.0 pditsd=0.0 lambda=0.0
++ lc=5.0e-9 rdsw=65.968 rsw=0.0 rdw=0.0 rdswmin=0.0
++ rdwmin=0.0 rswmin=0.0 prwb=0.0 prwg=0.021507 wr=1.0
++ alpha0=-9.144845511e-06 lalpha0=1.813074251e-11 walpha0=2.704032152e-11 palpha0=-5.343535280e-17 alpha1=1.086627438e+00
++ lalpha1=-4.676079994e-07 walpha1=-1.337284493e-06 palpha1=2.642656028e-12 beta0=7.449738725e+00 lbeta0=1.266754807e-05
++ wbeta0=1.701998445e-05 pbeta0=-3.363380400e-11 agidl=0.0 bgidl=2300000000.0 cgidl=0.5
++ egidl=0.8 toxref=4.148e-9 dlcig=0.0 aigbacc=1.0 bigbacc=0.0
++ cigbacc=0.0 nigbacc=0.0 aigbinv=0.35 bigbinv=0.03 cigbinv=0.006
++ eigbinv=1.1 nigbinv=0.0 aigc=0.43 bigc=0.054 cigc=0.075
++ aigsd=0.43 bigsd=0.054 cigsd=0.075 nigc=0.0 poxedge=1.0
++ pigcd=1.0 ntox=1.0 vfbsdoff=0.0 dlc=9.87908e-9 dwc=0.0
++ xpart=0.0 cgso=2.449068e-10 cgdo=2.449068e-10 cgbo=1.0e-13 cgdl=0.0
++ cgsl=0.0 clc=1.0e-7 cle=0.6 cf=1.4067e-12 ckappas=0.6
++ vfbcv=-1.0 acde=0.4 moin=6.9 noff=3.4037 voffcv=-0.17287
++ xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0 rbpd=50.0 rbps=50.0
++ rbdb=50.0 rbsb=50.0 gbmin=1.0e-12 ef=0.84 noia=2.5e+42
++ noib=0.0 noic=0.0 em=41000000.0 ntnoi=1.0 lintnoi=-1.0e-7
++ af=1.0 kf=0.0 tnoia=15000000.0 tnoib=9900000.0 rnoia=0.94
++ rnoib=0.26 xl=0.0 xw=0.0 dmcg=0.0 dmdg=0.0
++ dmcgt=0.0 xgw=0.0 xgl=0.0 ngcon=1.0 jss=0.00275
++ jsws=6.0e-10 ijthsfwd=0.1 ijthsrev=0.1 bvs=11.7 xjbvs=1.0
++ pbs=0.729 cjs=0.001339749237 mjs=0.44 pbsws=0.2 cjsws=3.67354204e-11
++ mjsws=0.0009 pbswgs=0.95578 cjswgs=2.38232788e-10 mjswgs=0.8 tnom=30.0
++ kt1=-3.679801847e-01 lkt1=6.525875782e-08 wkt1=-5.825906639e-08 pkt1=1.901204472e-13 kt2=-7.282323658e-02
++ lkt2=5.886185362e-08 wkt2=7.557408473e-08 pkt2=-1.410341855e-13 at=1.771510203e+05 lat=-1.173813113e-01
++ wat=-4.068308861e-02 pat=6.490456476e-8 ute=-3.275796075e+00 lute=2.846914947e-06 wute=3.807485547e-06
++ pute=-6.066241361e-12 ua1=-2.531529433e-09 lua1=5.665250484e-15 wua1=5.963864993e-15 pua1=-1.054831981e-20
++ ub1=5.443922638e-19 lub1=-2.159319143e-24 wub1=1.901090271e-25 pub1=4.453285231e-31 uc1=-1.039974794e-10
++ luc1=2.458683418e-16 wuc1=6.134067940e-16 puc1=-1.069359396e-21 kt1l=0.0 prt=0.0
++ tvoff=0.0 njs=1.2928 tpb=0.0012287 tcj=0.000792 tpbsw=0.0
++ tcjsw=1.0e-5 tpbswg=0.0 tcjswg=0.0 xtis=2.0 tvfbsdoff=0.0
++ ll=0.0 wl=0.0 lln=1.0 wln=1.0 lw=0.0
++ ww=0.0 lwn=1.0 wwn=1.0 lwl=0.0 wwl=0.0
++ llc=0.0 wlc=0.0 lwc=0.0 wwc=0.0 lwlc=0.0
++ wwlc=0.0 saref=2.75e-6 sbref=2.74e-6 kvth0=9.8e-9 lkvth0=0.0
++ wkvth0=2.0e-7 pkvth0=0.0 llodvth=0.0 wlodvth=1.0 wlod=0.0
++ stk2=0.0 lodk2=1.0 lodeta0=1.0 ku0=-2.7e-8 lku0=0.0
++ wku0=0.0 pku0=0.0 tku0=0.0 llodku0=0.0 wlodku0=1.0
++ kvsat=0.2 steta0=0.0
+
+.subckt sky130_fd_pr__nfet_01v8 d g s b w=1u l=0.15u nf=1 mult=1 ad=0 as=0 pd=0 ps=0
+m0 d g s b sky130_fd_pr__nfet_01v8__model l='l' w='w' nf='nf' m='mult' ad='ad' as='as' pd='pd' ps='ps'
+.ends sky130_fd_pr__nfet_01v8
+
+
+.model sky130_fd_pr__pfet_01v8__model.0 pmos
++ lmin = 1.400e-07 lmax = 1.800e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 tnom=30.0 version=4.5 toxm=4.23e-9 xj=1.5e-7
++ lln=1.0 lwn=1.0 wln=1.0 wwn=1.0 lint=-1.3994e-8
++ ll=0.0 lw=0.0 lwl=0.0 wint=7.3039e-9 wl=0.0
++ ww=0.0 wwl=0.0 xl=0.0 xw=0.0 mobmod=0.0
++ binunit=2.0 dwg=-5.722e-9 dwb=-1.7864e-8 igcmod=0.0 igbmod=0.0
++ rgatemod=0.0 rbodymod=1.0 trnqsmod=0.0 acnqsmod=0.0 fnoimod=1.0
++ tnoimod=1.0 permod=1.0 geomod=0.0 rdsmod=0.0 tempmod=0.0
++ lintnoi=-2.0e-7 vfbsdoff=0.0 lambda=0.0 vtl=0.0 lc=5.0e-9
++ xn=3.0 rnoia=0.69 rnoib=0.34 tnoia=25.0e+6 tnoib=.0e-6
++ epsrox=3.9 toxe=4.23e-09 dtox=0.0 ndep=1.7000000000000000e+17 nsd=1.0e+20
++ rshg=0.1 rsh=1.0 vth0=-0.956084 lvth0=-1.66349369733752e-08 wvth0=4.7324202869037e-07
++ pvth0=-8.20737445628477e-14 k1=-0.296887372665633 lk1=2.7621518563888e-07 wk1=-9.60911243582975e-07 pk1=2.03909319793214e-13
++ k2=0.396688359746296 lk2=-1.2038795075378e-07 wk2=2.88320620421442e-07 pk2=-6.41797269892537e-14 k3=-15.845
++ dvt0=4.4955 dvt1=0.294 dvt2=0.015 dvt0w=-4.9772 dvt1w=1147200.0
++ dvt2w=-0.00896 w0=0.0 k3b=2.0 phin=0.0 lpe0=0.0
++ lpeb=0.0 vbm=-3.0 dvtp0=0.0 dvtp1=0.0 vsat=117334.701457108
++ lvsat=-0.0065017816434535 wvsat=0.67469115086003 pvsat=-1.33529042937535e-7 ua=-6.94613071502795e-10 lua=-3.36010798906481e-16
++ wua=-3.3286045191125e-16 pua=1.12681630449556e-22 ub=1.25646898917168e-19 lub=3.96533115028679e-25 wub=1.41533392922136e-24
++ pub=-2.84423812890165e-31 uc=8.64214249584742e-13 luc=-1.44341581852367e-19 wuc=-8.46516288181396e-19 puc=2.2705511301971e-25
++ rdsw=547.88 prwb=-0.32348 prwg=0.1376 wr=1.0 u0=0.00672419203851266
++ lu0=-6.47924474782915e-10 wu0=-1.14880518159054e-09 pu0=2.02023158125985e-16 a0=-6.86077712125912 la0=1.41963160721016e-06
++ wa0=2.38691477909821e-05 pa0=-4.38944990359861e-12 keta=-0.825048860183211 lketa=1.38696220464132e-07 wketa=2.70535575118545e-06
++ pketa=-4.49612953621469e-13 a1=0.0 a2=2.76344646704595 la2=-3.88672872741253e-07 wa2=-1.20470608071911e-05
++ pa2=2.36727559418725e-12 ags=1.25 b0=0.0 b1=3.64184504751168e-23 lb1=-6.48204716316509e-30
++ wb1=-1.087233579845e-28 pb1=1.93514530409452e-35 eu=1.67 rdswmin=0.0 rdw=0.0
++ rdwmin=0.0 rsw=0.0 rswmin=0.0 voff=0.0793321 lvoff=-8.45985144668743e-08
++ wvoff=-4.61255705293041e-07 pvoff=8.34720203032029e-14 nfactor=3.6133 lnfactor=-2.66275678348123e-07 wnfactor=-1.62562403529487e-05
++ pnfactor=3.22669367927243e-12 up=0.0 ud=0.0 lp=1.0 tvfbsdoff=0.0
++ tvoff=0.0 cit=1.0e-5 cdsc=0.00013 cdscb=0.00078 cdscd=0.0
++ eta0=0.121958650053124 leta0=2.06210434206614e-08 weta0=-2.45540914533672e-06 peta0=4.86422636408465e-13 etab=-0.0623581802556036
++ letab=8.381048484088e-09 wetab=-1.18951036445288e-06 petab=2.12450978296104e-13 dsub=0.883879723873455 ldsub=-1.11043104292788e-07
++ wdsub=-1.62024519304165e-06 pdsub=2.88384201419098e-13 voffl=0.0 minv=0.0 pclm=1.60732549945199
++ lpclm=-1.99551022581445e-07 wpclm=4.05967044305216e-07 ppclm=-9.49923908953373e-14 pdiblc1=1.30985000315984 lpdiblc1=-2.29666791516893e-07
++ wpdiblc1=-5.13666234491565e-07 ppdiblc1=9.14263515710638e-14 pdiblc2=0.0132604600262662 lpdiblc2=-1.8210324975994e-09 wpdiblc2=3.61396983861358e-08
++ ppdiblc2=-7.81358081530755e-15 pdiblcb=-0.185381051168264 lpdiblcb=-2.66724979194323e-10 wpdiblcb=5.50292831522065e-07 ppdiblcb=1.32972863082054e-15
++ drout=-0.53193990621094 ldrout=2.72666920026673e-07 wdrout=4.57344144687087e-06 pdrout=-8.14017696245653e-13 pscbe1=800000000.0
++ pscbe2=1.06672940621216e-08 lpscbe2=-3.06063523993387e-16 wpscbe2=-5.00054311792556e-15 ppscbe2=1.21466056508415e-21 pvag=0.0
++ delta=0.01 alpha0=1.0e-10 alpha1=1.0e-10 beta0=11.0593811976463 lbeta0=-5.14226522724595e-07
++ wbeta0=1.38251838362102e-05 pbeta0=-2.87941127901845e-12 fprout=0.0 pdits=0.0 pditsl=0.0
++ pditsd=0.0 agidl=-1.04627209499632e-09 lagidl=1.75830739140593e-16 wagidl=4.55487295090224e-15 pagidl=-6.35372566149298e-22
++ bgidl=2609694922.03997 lbgidl=-286.50637978405 wbgidl=-4805.57066463772 pbgidl=0.000855333911457538 cgidl=300.0
++ egidl=0.1 aigbacc=0.43 bigbacc=0.054 cigbacc=0.075 nigbacc=1.0
++ aigbinv=0.35 bigbinv=0.03 cigbinv=0.006 eigbinv=1.1 nigbinv=3.0
++ aigc=0.43 bigc=0.054 cigc=0.075 nigc=1.0 aigsd=0.43
++ bigsd=0.054 cigsd=0.075 dlcig=0.0 poxedge=1.0 pigcd=1.0
++ ntox=1.0 toxref=4.23e-9 kt1=0.466367410217014 lkt1=-2.05822122622813e-07 wkt1=-1.4594772734401e-06
++ pkt1=2.57120383069437e-13 kt2=-0.0587089930734905 lkt2=-1.12579202208356e-08 wkt2=-1.88829062720548e-07 pkt2=3.36093072155047e-14
++ at=-12370.3889396135 lat=0.00896532478658391 wat=0.777862234600464 pat=-1.38450143412067e-7 ute=-0.3
++ ua1=1.3462e-10 ub1=3.927e-19 uc1=2.92562488016356e-11 luc1=1.55361296829446e-18 wuc1=-7.47708916101277e-16
++ puc1=1.33083214559034e-22 kt1l=0.0 prt=0.0 xrcrg1=12.0 xrcrg2=1.0
++ rbpb=50.0 rbpd=50.0 rbps=50.0 rbdb=50.0 rbsb=50.0
++ gbmin=1.0e-12 noia=1.5e+42 noib=0.0 noic=0.0 em=41000000.0
++ af=1.0 ef=1.0 kf=0.0 ntnoi=1.0 dmcg=0.0
++ dmcgt=0.0 dmdg=0.0 xgw=0.0 xgl=0.0 ngcon=1.0
++ diomod=1.0 njs=1.3632 jss=2.1483e-5 jsws=8.04e-10 xtis=5.2
++ bvs=12.69 xjbvs=1.0 ijthsrev=0.1 ijthsfwd=0.1 tpb=0.0020386
++ tpbsw=0.001246 tpbswg=0.0 tcj=0.0012407 tcjsw=0.00037357 tcjswg=2.0e-12
++ cgdo=5.248925e-11 cgso=5.248925e-11 cgbo=0.0 capmod=2.0 xpart=0.0
++ cgsl=9.54827175e-12 cgdl=9.54827175e-12 cf=1.2e-11 clc=1.0e-7 cle=0.6
++ dlc=-3.0e-9 dwc=0.0 vfbcv=-0.14469 acde=0.8 moin=18.13
++ noff=3.9 voffcv=-0.10701 ngate=1.0e+23 lwc=0.0 llc=0.0
++ lwlc=0.0 wlc=0.0 wwc=0.0 wwlc=0.0 ckappas=0.6
++ cjs=0.0007380194454 mjs=0.34629 pbs=0.6587 cjsws=9.888892e-11 mjsws=0.29781
++ pbsws=0.7418 cjswgs=2.39155046e-10 mjswgs=0.9274 pbswgs=1.4338 saref=1.04e-6
++ sbref=1.04e-6 wlod=0 kvth0=3.29e-08 lkvth0=0 wkvth0=2e-07
++ pkvth0=0.0 llodvth=0.0 wlodvth=1.0 stk2=0.0 lodk2=1.0
++ lodeta0=1.0 ku0=4.5e-08 lku0=0 wku0=2.5e-07 pku0=0.0
++ llodku0=0.0 wlodku0=1.0 kvsat=0.5 steta0=0.0 tku0=0.0
+
+.model sky130_fd_pr__pfet_01v8__model.1 pmos
++ lmin = 1.800e-07 lmax = 2.500e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 tnom=30.0 version=4.5 toxm=4.23e-9 xj=1.5e-7
++ lln=1.0 lwn=1.0 wln=1.0 wwn=1.0 lint=-1.3994e-8
++ ll=0.0 lw=0.0 lwl=0.0 wint=7.3039e-9 wl=0.0
++ ww=0.0 wwl=0.0 xl=0.0 xw=0.0 mobmod=0.0
++ binunit=2.0 dwg=-5.722e-9 dwb=-1.7864e-8 igcmod=0.0 igbmod=0.0
++ rgatemod=0.0 rbodymod=1.0 trnqsmod=0.0 acnqsmod=0.0 fnoimod=1.0
++ tnoimod=1.0 permod=1.0 geomod=0.0 rdsmod=0.0 tempmod=0.0
++ lintnoi=-2.0e-7 vfbsdoff=0.0 lambda=0.0 vtl=0.0 lc=5.0e-9
++ xn=3.0 rnoia=0.69 rnoib=0.34 tnoia=25.0e+6 tnoib=.0e-6
++ epsrox=3.9 toxe=4.23e-09 dtox=0.0 ndep=1.7000000000000000e+17 nsd=1.0e+20
++ rshg=0.1 rsh=1.0 vth0=-0.948984 lvth0=-1.81116507600524e-08 wvth0=1.49776424636347e-07
++ pvth0=-1.47967805068629e-14 k1=0.517108815050108 lk1=1.06913746548259e-07 wk1=-1.61031557114145e-06 pk1=3.38977627073446e-13
++ k2=0.00989741452749859 lk2=-3.99400756396127e-08 wk2=5.75945091001007e-07 pk2=-1.24002165376156e-13 k3=-15.845
++ dvt0=4.4955 dvt1=0.294 dvt2=0.015 dvt0w=-4.9772 dvt1w=1147200.0
++ dvt2w=-0.00896 w0=0.0 k3b=2.0 phin=0.0 lpe0=0.0
++ lpeb=0.0 vbm=-3.0 dvtp0=0.0 dvtp1=0.0 vsat=-219798.887001583
++ lvsat=0.0636179591528926 wvsat=1.38912002514202 pvsat=-2.82121675641698e-7 ua=-1.7683141663095e-09 lua=-1.12693855599822e-16
++ wua=1.89914290081789e-15 pua=-3.51548282877873e-22 ub=1.86129873909603e-18 lub=3.55383600935579e-26 wub=-2.31052546704758e-24
++ pub=4.90510231221019e-31 uc=3.88090964234418e-11 luc=-8.03642173542856e-18 wuc=-1.94373221697998e-16 puc=4.04782875177967e-23
++ rdsw=547.88 prwb=-0.32348 prwg=0.1376 wr=1.0 u0=0.0064253656834486
++ lu0=-5.85772178845851e-10 wu0=5.90297964291503e-10 pu0=-1.59689426979723e-16 a0=3.75554605911061 la0=-7.88436218428578e-07
++ wa0=-1.31755424740778e-05 pa0=3.31540113525067e-12 keta=-0.073204668515808 lketa=-1.76783492723879e-08 wketa=-9.07309443855457e-07
++ pketa=3.01778054964699e-13 a1=0.0 a2=0.518565270761412 la2=7.82354775115763e-08 wa2=1.97669269969749e-06
++ pa2=-5.49496850203505e-13 ags=13.3256920067458 lags=-2.51159902909904e-06 wags=-4.01456604140722e-05 pags=8.34981561820205e-12
++ b0=0.0 b1=-1.56079073464786e-23 lb1=4.3388109474329e-30 wb1=4.65957248504999e-29 pb1=-1.29530523597408e-35
++ eu=1.67 rdswmin=0.0 rdw=0.0 rdwmin=0.0 rsw=0.0
++ rswmin=0.0 voff=0.09576 lvoff=-8.80153232392507e-08 wvoff=-7.04408829512716e-07 pvoff=1.34044952303405e-13
++ nfactor=2.17113 lnfactor=3.36789637092887e-08 wnfactor=-3.36656007854864e-06 pnfactor=5.45794858360495e-13 up=0.0
++ ud=0.0 lp=1.0 tvfbsdoff=0.0 tvoff=0.0 cit=1.0e-5
++ cdsc=0.00013 cdscb=0.00078 cdscd=0.0 eta0=1.77650939199273 leta0=-3.23505656293872e-07
++ weta0=-3.44566560734673e-06 peta0=6.92384097429002e-13 etab=0.0518455394210459 letab=-1.53719547640189e-08 wetab=5.39656322024998e-07
++ petab=-1.47194942491057e-13 dsub=0.153984768260277 ldsub=4.07662877352853e-08 wdsub=3.08029943039803e-06 pdsub=-6.89272673720874e-13
++ voffl=0.0 minv=0.0 pclm=-0.109830324704986 lpclm=1.57596782973317e-07 wpclm=4.7980458816572e-06
++ ppclm=-1.0084920841185e-12 pdiblc1=0.737367328973287 lpdiblc1=-1.10597265078181e-07 wpdiblc1=7.85299790728681e-07 ppdiblc1=-1.78742994082445e-13
++ pdiblc2=0.00594861771443089 lpdiblc2=-3.00257038845393e-10 wpdiblc2=3.86282018634308e-08 ppdiblc2=-8.33115967654318e-15 pdiblcb=1.04668204256623
++ lpdiblcb=-2.56521063718845e-07 wpdiblcb=-4.60211118668005e-06 ppdiblcb=1.07296793556864e-12 drout=1.61785633007545 ldrout=-1.7446489956606e-07
++ wdrout=-6.75387216753285e-06 pdrout=1.54192760778695e-12 pscbe1=800000000.0 pscbe2=5.38579888049033e-08 lpscbe2=-9.28920974215507e-15
++ wpscbe2=-1.3546397775048e-13 ppscbe2=2.83494894074398e-20 pvag=0.0 delta=0.01 alpha0=8.33600699498292e-08
++ lalpha0=-1.73170954287251e-14 walpha0=-2.48563963399674e-13 palpha0=5.16983216195715e-20 alpha1=-8.89913719209714e-10 lalpha1=2.0589017463099e-16
++ walpha1=2.95528069600167e-15 palpha1=-6.14662921399995e-22 beta0=76.1650183581019 lbeta0=-1.40554177844534e-05 wbeta0=-0.000197711604134559
++ pbeta0=4.11177021774459e-11 fprout=0.0 pdits=0.0 pditsl=0.0 pditsd=0.0
++ agidl=-1.36057186032936e-08 lagidl=2.78804489950832e-15 wagidl=6.83283826202546e-14 pagidl=-1.38994972952586e-20 bgidl=7882249052.55016
++ lbgidl=-1383.13436828061 wbgidl=-20546.2126399406 pbgidl=0.00412919855461685 cgidl=-865.198479271098 lcgidl=0.000242347301306637
++ wcgidl=0.000642421725213504 pcgidl=-1.33616009783706e-10 egidl=-7.40399902364405 legidl=1.56074174892968e-06 wegidl=3.74103782012826e-05
++ pegidl=-7.78090974132838e-12 aigbacc=0.43 bigbacc=0.054 cigbacc=0.075 nigbacc=1.0
++ aigbinv=0.35 bigbinv=0.03 cigbinv=0.006 eigbinv=1.1 nigbinv=3.0
++ aigc=0.43 bigc=0.054 cigc=0.075 nigc=1.0 aigsd=0.43
++ bigsd=0.054 cigsd=0.075 dlcig=0.0 poxedge=1.0 pigcd=1.0
++ ntox=1.0 toxref=4.23e-9 kt1=-0.901477142942004 lkt1=7.86731302996253e-08 wkt1=1.66251434730135e-06
++ pkt1=-3.92216410145337e-13 kt2=-0.475065770562859 lkt2=7.53392932156233e-08 wkt2=1.77861728979107e-06 pkt2=-3.75595924750681e-13
++ at=169427.559955075 lat=-0.0288464670081245 wat=-0.445404220299908 pat=1.15974600009751e-7 ute=-0.3
++ ua1=6.88193517716455e-11 lua1=1.36857452237189e-17 wua1=9.94451954204561e-16 pua1=-2.06834073051098e-22 ub1=5.48215445287846e-19
++ lub1=-3.23453464345286e-26 wub1=-4.64274597341862e-25 pub1=9.65635449519396e-32 uc1=3.6725972864055e-11 wuc1=-1.07848854179271e-16
++ kt1l=0.0 prt=0.0 xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0
++ rbpd=50.0 rbps=50.0 rbdb=50.0 rbsb=50.0 gbmin=1.0e-12
++ noia=1.5e+42 noib=0.0 noic=0.0 em=41000000.0 af=1.0
++ ef=1.0 kf=0.0 ntnoi=1.0 dmcg=0.0 dmcgt=0.0
++ dmdg=0.0 xgw=0.0 xgl=0.0 ngcon=1.0 diomod=1.0
++ njs=1.3632 jss=2.1483e-5 jsws=8.04e-10 xtis=5.2 bvs=12.69
++ xjbvs=1.0 ijthsrev=0.1 ijthsfwd=0.1 tpb=0.0020386 tpbsw=0.001246
++ tpbswg=0.0 tcj=0.0012407 tcjsw=0.00037357 tcjswg=2.0e-12 cgdo=5.248925e-11
++ cgso=5.248925e-11 cgbo=0.0 capmod=2.0 xpart=0.0 cgsl=9.54827175e-12
++ cgdl=9.54827175e-12 cf=1.2e-11 clc=1.0e-7 cle=0.6 dlc=-3.0e-9
++ dwc=0.0 vfbcv=-0.14469 acde=0.8 moin=18.13 noff=3.9
++ voffcv=-0.10701 ngate=1.0e+23 lwc=0.0 llc=0.0 lwlc=0.0
++ wlc=0.0 wwc=0.0 wwlc=0.0 ckappas=0.6 cjs=0.0007380194454
++ mjs=0.34629 pbs=0.6587 cjsws=9.888892e-11 mjsws=0.29781 pbsws=0.7418
++ cjswgs=2.39155046e-10 mjswgs=0.9274 pbswgs=1.4338 saref=1.1e-6 sbref=1.1e-6
++ wlod=0 kvth0=3.29e-08 lkvth0=0 wkvth0=2e-07 pkvth0=0.0
++ llodvth=0.0 wlodvth=1.0 stk2=0.0 lodk2=1.0 lodeta0=1.0
++ ku0=4.5e-08 lku0=0 wku0=2.5e-07 pku0=0.0 llodku0=0.0
++ wlodku0=1.0 kvsat=0.5 steta0=0.0 tku0=0.0
+
+.model sky130_fd_pr__pfet_01v8__model.2 pmos
++ lmin = 2.500e-07 lmax = 5.000e-07 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 tnom=30.0 version=4.5 toxm=4.23e-9 xj=1.5e-7
++ lln=1.0 lwn=1.0 wln=1.0 wwn=1.0 lint=-1.3994e-8
++ ll=0.0 lw=0.0 lwl=0.0 wint=7.3039e-9 wl=0.0
++ ww=0.0 wwl=0.0 xl=0.0 xw=0.0 mobmod=0.0
++ binunit=2.0 dwg=-5.722e-9 dwb=-1.7864e-8 igcmod=0.0 igbmod=0.0
++ rgatemod=0.0 rbodymod=1.0 trnqsmod=0.0 acnqsmod=0.0 fnoimod=1.0
++ tnoimod=1.0 permod=1.0 geomod=0.0 rdsmod=0.0 tempmod=0.0
++ lintnoi=-2.0e-7 vfbsdoff=0.0 lambda=0.0 vtl=0.0 lc=5.0e-9
++ xn=3.0 rnoia=0.69 rnoib=0.34 tnoia=25.0e+6 tnoib=.0e-6
++ epsrox=3.9 toxe=4.23e-09 dtox=0.0 ndep=1.7000000000000000e+17 nsd=1.0e+20
++ rshg=0.1 rsh=1.0 vth0=-1.00334 lvth0=-3.00228122482068e-09 wvth0=1.18129959895948e-08
++ pvth0=2.35553970957932e-14 k1=0.111235728789203 lk1=2.19741594051755e-07 wk1=-4.91382524751791e-08 pk1=-9.50109333879541e-14
++ k2=0.127938719360873 lk2=-7.27541418876327e-08 wk2=2.34374096309928e-08 pk2=2.95883399525312e-14 k3=-15.845
++ dvt0=4.4955 dvt1=0.294 dvt2=0.015 dvt0w=-4.9772 dvt1w=1147200.0
++ dvt2w=-0.00896 w0=0.0 k3b=2.0 phin=0.0 lpe0=0.0
++ lpeb=0.0 vbm=-3.0 dvtp0=0.0 dvtp1=0.0 vsat=135082.171207116
++ lvsat=-0.0350347164564272 wvsat=-0.282665037304663 pvsat=1.82614510297732e-7 ua=-9.35894198245189e-10 lua=-3.44096617682085e-16
++ wua=1.66949866501979e-15 pua=-2.87709941056827e-22 ub=1.02366082295916e-18 lub=2.68391649124614e-25 wub=-9.77010244914083e-25
++ pub=1.19809001650575e-31 uc=-5.10855973052019e-11 luc=1.69532243848097e-17 wuc=1.28744603233091e-16 puc=-4.93445903991469e-23
++ rdsw=547.88 prwb=-0.32348 prwg=0.1376 wr=1.0 u0=0.00873554569171037
++ lu0=-1.22797449898252e-09 wu0=4.12146199148251e-09 pu0=-1.1413106525705e-15 a0=0.559400242467097 la0=1.0005396484852e-07
++ wa0=3.00430417121536e-06 pa0=-1.18240207398109e-12 keta=0.117680960981484 lketa=-7.07422636450811e-08 wketa=-1.7359409610752e-07
++ pketa=9.78139928749459e-14 a1=0.0 a2=0.683469578591175 la2=3.23940587865962e-08 wa2=6.07605471783016e-07
++ pa2=-1.68907029890017e-13 ags=-3.26526362487771 lags=2.10048754502471e-06 wags=1.30664148922167e-05 pags=-6.44250277204261e-12
++ b0=0.0 b1=0.0 eu=1.67 rdswmin=0.0 rdw=0.0
++ rdwmin=0.0 rsw=0.0 rswmin=0.0 voff=-0.20534 lvoff=-4.31321553844871e-09
++ wvoff=-2.00855033485626e-08 pvoff=-5.61887204903156e-14 nfactor=1.38501 lnfactor=2.52210268836702e-07 wnfactor=-6.03956829010318e-07
++ pnfactor=-2.22175693772163e-13 up=0.0 ud=0.0 lp=1.0 tvfbsdoff=0.0
++ tvoff=0.0 cit=1.0e-5 cdsc=0.00013 cdscb=0.00078 cdscd=0.0
++ eta0=0.353485933730394 leta0=7.20777888215568e-08 weta0=1.0618783737044e-06 peta0=-5.60659038775439e-13 etab=0.00514231527341621
++ letab=-2.38901888966769e-09 wetab=-1.81233701833225e-08 petab=7.86111858654968e-15 dsub=0.290725058975033 ldsub=2.75412780007136e-09
++ wdsub=-7.09758990772381e-07 pdsub=3.64318086663445e-13 voffl=0.0 minv=0.0 pclm=0.812502089886035
++ lpclm=-9.88005602940122e-08 wpclm=-1.31719740270458e-06 ppclm=6.91472166014662e-13 pdiblc1=-0.87109547305574 lpdiblc1=3.36536092332264e-07
++ wpdiblc1=2.50769738067592e-06 ppdiblc1=-6.57548855316698e-13 pdiblc2=-0.00500165762792038 lpdiblc2=2.74378810302415e-09 wpdiblc2=-7.15407780804622e-09
++ ppdiblc2=4.39576468477137e-15 pdiblcb=-0.612965135720228 lpdiblcb=2.04840936078652e-07 wpdiblcb=8.25454995976688e-07 ppdiblcb=-4.3583033241574e-13
++ drout=1.01083301632419 ldrout=-5.71970262297527e-09 wdrout=1.34227123328469e-06 pdrout=-7.0870310391952e-13 pscbe1=800000000.0
++ pscbe2=-4.68577695333453e-08 lpscbe2=1.8708562486778e-14 wpscbe2=1.68043499057875e-13 ppscbe2=-5.6021947055561e-20 pvag=0.0
++ delta=0.01 alpha0=-2.32128195859522e-08 lalpha0=1.23088889875477e-14 walpha0=6.95979097519089e-14 palpha0=-3.67468611740909e-20
++ alpha1=3.7717584137872e-10 lalpha1=-1.46345518137868e-16 walpha1=-8.27478594880468e-16 palpha1=4.36898768353749e-22 beta0=-8.50151007830923
++ lbeta0=9.48086112252763e-06 wbeta0=5.49406538008938e-05 pbeta0=-2.91165937015148e-11 fprout=0.0 pdits=0.0
++ pditsl=0.0 pditsd=0.0 agidl=3.84884162798079e-09 lagidl=-2.06411339006318e-15 wagidl=-1.86894458111708e-14
++ pagidl=1.02904147947365e-20 bgidl=34752386.8210707 lbgidl=798.375534832095 wbgidl=2881.642695453 pbgidl=-0.00238346409435857
++ cgidl=626.255574195907 lcgidl=-0.000172259028108549 wcgidl=-0.000179878083059782 pcgidl=9.49734693185679e-11 egidl=2.20111972662033
++ legidl=-1.10936600221882e-06 wegidl=-1.04749058963591e-05 pegidl=5.53062461440687e-12 aigbacc=0.43 bigbacc=0.054
++ cigbacc=0.075 nigbacc=1.0 aigbinv=0.35 bigbinv=0.03 cigbinv=0.006
++ eigbinv=1.1 nigbinv=3.0 aigc=0.43 bigc=0.054 cigc=0.075
++ nigc=1.0 aigsd=0.43 bigsd=0.054 cigsd=0.075 dlcig=0.0
++ poxedge=1.0 pigcd=1.0 ntox=1.0 toxref=4.23e-9 kt1=-0.386136323069855
++ lkt1=-6.45854335349934e-08 wkt1=-2.79770512929085e-07 pkt1=1.47715473580402e-13 kt2=0.11033875387042 lkt2=-8.73961397225351e-08
++ wkt2=-4.75353353615034e-07 pkt2=2.50980866468495e-13 at=67228.2041039711 lat=-0.000436272473787899 wat=0.0785190978600638
++ pat=-2.9669795358903e-8 ute=-0.33723371376 lute=1.03505256207149e-8 ua1=4.57804105070251e-10 lua1=-9.44473483762536e-17
++ wua1=1.46985262371035e-15 pua1=-3.38989754365674e-22 ub1=5.581698006954e-19 lub1=-3.51125377855634e-26 wub1=-3.38510828351616e-25
++ pub1=6.16027263378787e-32 uc1=1.05251536618683e-11 luc1=7.28351332837748e-18 wuc1=1.19922749102349e-16 puc1=-6.33177724530512e-23
++ kt1l=0.0 prt=0.0 xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0
++ rbpd=50.0 rbps=50.0 rbdb=50.0 rbsb=50.0 gbmin=1.0e-12
++ noia=1.5e+42 noib=0.0 noic=0.0 em=41000000.0 af=1.0
++ ef=1.0 kf=0.0 ntnoi=1.0 dmcg=0.0 dmcgt=0.0
++ dmdg=0.0 xgw=0.0 xgl=0.0 ngcon=1.0 diomod=1.0
++ njs=1.3632 jss=2.1483e-5 jsws=8.04e-10 xtis=5.2 bvs=12.69
++ xjbvs=1.0 ijthsrev=0.1 ijthsfwd=0.1 tpb=0.0020386 tpbsw=0.001246
++ tpbswg=0.0 tcj=0.0012407 tcjsw=0.00037357 tcjswg=2.0e-12 cgdo=5.248925e-11
++ cgso=5.248925e-11 cgbo=0.0 capmod=2.0 xpart=0.0 cgsl=9.54827175e-12
++ cgdl=9.54827175e-12 cf=1.2e-11 clc=1.0e-7 cle=0.6 dlc=-3.0e-9
++ dwc=0.0 vfbcv=-0.14469 acde=0.8 moin=18.13 noff=3.9
++ voffcv=-0.10701 ngate=1.0e+23 lwc=0.0 llc=0.0 lwlc=0.0
++ wlc=0.0 wwc=0.0 wwlc=0.0 ckappas=0.6 cjs=0.0007380194454
++ mjs=0.34629 pbs=0.6587 cjsws=9.888892e-11 mjsws=0.29781 pbsws=0.7418
++ cjswgs=2.39155046e-10 mjswgs=0.9274 pbswgs=1.4338 saref=1.24e-6 sbref=1.24e-6
++ wlod=0 kvth0=3.29e-08 lkvth0=0 wkvth0=2e-07 pkvth0=0.0
++ llodvth=0.0 wlodvth=1.0 stk2=0.0 lodk2=1.0 lodeta0=1.0
++ ku0=4.5e-08 lku0=0 wku0=2.5e-07 pku0=0.0 llodku0=0.0
++ wlodku0=1.0 kvsat=0.5 steta0=0.0 tku0=0.0
+
+.model sky130_fd_pr__pfet_01v8__model.3 pmos
++ lmin = 5.000e-07 lmax = 1.000e-06 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 tnom=30.0 version=4.5 toxm=4.23e-9 xj=1.5e-7
++ lln=1.0 lwn=1.0 wln=1.0 wwn=1.0 lint=-1.3994e-8
++ ll=0.0 lw=0.0 lwl=0.0 wint=7.3039e-9 wl=0.0
++ ww=0.0 wwl=0.0 xl=0.0 xw=0.0 mobmod=0.0
++ binunit=2.0 dwg=-5.722e-9 dwb=-1.7864e-8 igcmod=0.0 igbmod=0.0
++ rgatemod=0.0 rbodymod=1.0 trnqsmod=0.0 acnqsmod=0.0 fnoimod=1.0
++ tnoimod=1.0 permod=1.0 geomod=0.0 rdsmod=0.0 tempmod=0.0
++ lintnoi=-2.0e-7 vfbsdoff=0.0 lambda=0.0 vtl=0.0 lc=5.0e-9
++ xn=3.0 rnoia=0.69 rnoib=0.34 tnoia=25.0e+6 tnoib=.0e-6
++ epsrox=3.9 toxe=4.23e-09 dtox=0.0 ndep=1.7000000000000000e+17 nsd=1.0e+20
++ rshg=0.1 rsh=1.0 vth0=-1.09317 lvth0=4.4426516742476e-08 wvth0=1.60259317962494e-07
++ pvth0=-5.48224795500348e-14 k1=0.607856353255918 lk1=-4.2468136219177e-08 wk1=-2.84503246138047e-07 pk1=2.92589588861162e-14
++ k2=-0.0503231996028657 lk2=2.13660121821936e-08 wk2=1.07215571730609e-07 pk2=-1.46455242981209e-14 k3=-15.845
++ dvt0=4.4955 dvt1=0.294 dvt2=0.015 dvt0w=-4.9772 dvt1w=1147200.0
++ dvt2w=-0.00896 w0=0.0 k3b=2.0 phin=0.0 lpe0=0.0
++ lpeb=0.0 vbm=-3.0 dvtp0=0.0 dvtp1=0.0 vsat=-171066.750165778
++ lvsat=0.126608240241404 wvsat=0.710907771934883 pvsat=-3.41980010107038e-7 ua=3.94608610900403e-11 lua=-8.59072384750374e-16
++ wua=-4.63051749550091e-15 pua=3.03862299150418e-21 ub=6.11580293647775e-19 lub=4.85965223634673e-25 wub=2.54781093588378e-24
++ pub=-1.74125428395653e-30 uc=-4.25031695544227e-11 luc=1.24218055215313e-17 wuc=-3.52826814783031e-17 puc=3.72598476010526e-23
++ rdsw=547.88 prwb=-0.32348 prwg=0.1376 wr=1.0 u0=0.0134626109766174
++ lu0=-3.72380824463002e-09 wu0=-2.16824934201287e-08 pu0=1.24828681572953e-14 a0=-0.457754550615158 la0=6.37099489738434e-07
++ wa0=4.65288287459422e-06 pa0=-2.05283184642069e-12 keta=-0.226023486691235 lketa=1.10729560272743e-07 wketa=6.65289102850801e-07
++ pketa=-3.4510626957666e-13 a1=0.0 a2=0.858265210704412 la2=-5.98959374216073e-08 wa2=-3.03802735891509e-07
++ pa2=3.1230556686364e-13 ags=3.24121964282511 lags=-1.33485754252317e-06 wags=-8.90585793571434e-06 pags=5.15859361383107e-12
++ b0=0.0 b1=0.0 eu=1.67 rdswmin=0.0 rdw=0.0
++ rdwmin=0.0 rsw=0.0 rswmin=0.0 voff=-0.18782 lvoff=-1.35636648408379e-08
++ wvoff=-1.76261707236047e-07 pvoff=2.62704410478296e-14 nfactor=2.93721 lnfactor=-5.67331992593843e-07 wnfactor=-5.27738863376058e-06
++ pnfactor=2.24534021795432e-12 up=0.0 ud=0.0 lp=1.0 tvfbsdoff=0.0
++ tvoff=0.0 cit=1.0e-5 cdsc=0.00013 cdscb=0.00078 cdscd=0.0
++ eta0=0.49 etab=69.8838533918854 letab=-3.68975099228079e-05 wetab=-0.000348411066080627 petab=1.83955154154389e-10
++ dsub=0.222046819523638 ldsub=3.9015414091535e-08 wdsub=2.08522867129654e-08 pdsub=-2.14359005134877e-14 voffl=0.0
++ minv=0.0 pclm=-0.428421300191785 lpclm=5.56392098586396e-07 wpclm=3.16398490696842e-06 ppclm=-1.67453831930497e-12
++ pdiblc1=1.04647985794606 lpdiblc1=-6.75920671532716e-07 wpdiblc1=-1.41190780375686e-06 ppdiblc1=1.4119556468016e-12 pdiblc2=0.000678123889252548
++ lpdiblc2=-2.55068380664949e-10 wpdiblc2=-1.23699490211332e-09 ppdiblc2=1.27161591543367e-15 pdiblcb=0.236071081599945 lpdiblcb=-2.43439998231792e-07
++ wpdiblcb=-2.21436919645206e-10 ppdiblcb=1.16916036329595e-16 drout=0.774314128894433 ldrout=1.19159431713286e-07 wdrout=-8.02950094109737e-07
++ pdrout=4.23948014288812e-13 pscbe1=800000000.0 pscbe2=2.64032820157266e-08 lpscbe2=-1.99723935985134e-14 wpscbe2=-6.29950868783798e-14
++ ppscbe2=6.59636538557501e-20 pvag=0.0 delta=0.01 alpha0=1.0e-10 alpha1=1.0e-10
++ beta0=8.54089891363691 lbeta0=4.82673683687974e-07 wbeta0=-6.01300567961907e-07 pbeta0=2.08891701788605e-13 fprout=0.0
++ pdits=0.0 pditsl=0.0 pditsd=0.0 agidl=2.69539993177706e-10 lagidl=-1.74285078506764e-16
++ wagidl=-8.4522335957619e-16 pagidl=8.68879470964008e-22 bgidl=753521141.376451 lbgidl=418.874257651909 wbgidl=1953.73370342503
++ pbgidl=-0.00189353928147571 cgidl=300.0 egidl=0.1 aigbacc=0.43 bigbacc=0.054
++ cigbacc=0.075 nigbacc=1.0 aigbinv=0.35 bigbinv=0.03 cigbinv=0.006
++ eigbinv=1.1 nigbinv=3.0 aigc=0.43 bigc=0.054 cigc=0.075
++ nigc=1.0 aigsd=0.43 bigsd=0.054 cigsd=0.075 dlcig=0.0
++ poxedge=1.0 pigcd=1.0 ntox=1.0 toxref=4.23e-9 kt1=-0.512587569822165
++ lkt1=2.17930733526492e-09 wkt1=3.73660276552699e-07 pkt1=-1.97288142096507e-13 kt2=-0.0321981266248769 lkt2=-1.21383772635845e-08
++ wkt2=-3.79872803471408e-08 pkt2=2.00568281759261e-14 at=-138709.587173076 lat=0.108296410066998 wat=0.578888246083538
++ pat=-2.93858701191119e-7 ute=0.354388745501949 lute=-3.54817833400083e-07 wute=-2.5538624874394e-06 pute=1.34840874701815e-12
++ ua1=8.69330327009257e-09 lua1=-4.44269208151806e-15 wua1=-2.61585802879867e-14 pua1=1.42484912818154e-20 ub1=-8.43319901854543e-18
++ lub1=4.71222230234777e-24 wub1=2.70064719205692e-23 pub1=-1.43762200252993e-29 uc1=-3.72913201647328e-10 luc1=2.0973436367137e-16
++ wuc1=1.616408837004e-15 puc1=-8.53444469032066e-22 kt1l=0.0 prt=0.0 xrcrg1=12.0
++ xrcrg2=1.0 rbpb=50.0 rbpd=50.0 rbps=50.0 rbdb=50.0
++ rbsb=50.0 gbmin=1.0e-12 noia=1.5e+42 noib=0.0 noic=0.0
++ em=41000000.0 af=1.0 ef=1.0 kf=0.0 ntnoi=1.0
++ dmcg=0.0 dmcgt=0.0 dmdg=0.0 xgw=0.0 xgl=0.0
++ ngcon=1.0 diomod=1.0 njs=1.3632 jss=2.1483e-5 jsws=8.04e-10
++ xtis=5.2 bvs=12.69 xjbvs=1.0 ijthsrev=0.1 ijthsfwd=0.1
++ tpb=0.0020386 tpbsw=0.001246 tpbswg=0.0 tcj=0.0012407 tcjsw=0.00037357
++ tcjswg=2.0e-12 cgdo=5.248925e-11 cgso=5.248925e-11 cgbo=0.0 capmod=2.0
++ xpart=0.0 cgsl=9.54827175e-12 cgdl=9.54827175e-12 cf=1.2e-11 clc=1.0e-7
++ cle=0.6 dlc=-3.0e-9 dwc=0.0 vfbcv=-0.14469 acde=0.8
++ moin=18.13 noff=3.9 voffcv=-0.10701 ngate=1.0e+23 lwc=0.0
++ llc=0.0 lwlc=0.0 wlc=0.0 wwc=0.0 wwlc=0.0
++ ckappas=0.6 cjs=0.0007380194454 mjs=0.34629 pbs=0.6587 cjsws=9.888892e-11
++ mjsws=0.29781 pbsws=0.7418 cjswgs=2.39155046e-10 mjswgs=0.9274 pbswgs=1.4338
++ saref=1.74e-6 sbref=1.74e-6 wlod=0 kvth0=3.29e-08 lkvth0=0
++ wkvth0=2e-07 pkvth0=0.0 llodvth=0.0 wlodvth=1.0 stk2=0.0
++ lodk2=1.0 lodeta0=1.0 ku0=4.5e-08 lku0=0 wku0=2.5e-07
++ pku0=0.0 llodku0=0.0 wlodku0=1.0 kvsat=0.5 steta0=0.0
++ tku0=0.0
+
+.model sky130_fd_pr__pfet_01v8__model.4 pmos
++ lmin = 1.000e-06 lmax = 1.000e-04 wmin = 3.6e-07 wmax = 1.0e-03
++ level=54.0 tnom=30.0 version=4.5 toxm=4.23e-9 xj=1.5e-7
++ lln=1.0 lwn=1.0 wln=1.0 wwn=1.0 lint=-1.3994e-8
++ ll=0.0 lw=0.0 lwl=0.0 wint=7.3039e-9 wl=0.0
++ ww=0.0 wwl=0.0 xl=0.0 xw=0.0 mobmod=0.0
++ binunit=2.0 dwg=-5.722e-9 dwb=-1.7864e-8 igcmod=0.0 igbmod=0.0
++ rgatemod=0.0 rbodymod=1.0 trnqsmod=0.0 acnqsmod=0.0 fnoimod=1.0
++ tnoimod=1.0 permod=1.0 geomod=0.0 rdsmod=0.0 tempmod=0.0
++ lintnoi=-2.0e-7 vfbsdoff=0.0 lambda=0.0 vtl=0.0 lc=5.0e-9
++ xn=3.0 rnoia=0.69 rnoib=0.34 tnoia=25.0e+6 tnoib=.0e-6
++ epsrox=3.9 toxe=4.23e-09 dtox=0.0 ndep=1.7000000000000000e+17 nsd=1.0e+20
++ rshg=0.1 rsh=1.0 vth0=-1.05428 lvth0=4.45398335868474e-09 wvth0=-8.18498031200323e-09
++ pvth0=1.18336237744569e-13 k1=0.0980653419667101 lk1=4.81590905893993e-07 wk1=1.33884739921875e-06 pk1=-1.63952602433292e-12
++ k2=0.154627916744053 lk2=-1.89321276009043e-07 wk2=-5.43376155013411e-07 pk2=6.54154963694011e-13 k3=-15.845
++ dvt0=4.4955 dvt1=0.294 dvt2=0.015 dvt0w=-4.9772 dvt1w=1147200.0
++ dvt2w=-0.00896 w0=0.0 k3b=2.0 phin=0.0 lpe0=0.0
++ lpeb=0.0 vbm=-3.0 dvtp0=0.0 dvtp1=0.0 vsat=244870.871758392
++ lvsat=-0.300970643845179 wvsat=-0.823819744891491 pvsat=1.23570146046027e-6 ua=-1.72978311402204e-09 lua=9.59689190737141e-16
++ wua=4.46701970012618e-15 pua=-6.31353607515413e-21 ub=1.68939709549884e-18 lub=-6.22017514866594e-25 wub=-2.89482804724683e-24
++ pub=3.85371327903394e-30 uc=5.25843552313134e-11 luc=-8.5327028907908e-17 wuc=-4.55175768638106e-16 puc=4.68904902484284e-22
++ rdsw=547.88 prwb=-0.32348 prwg=0.1376 wr=1.0 u0=0.00611155081711135
++ lu0=3.83299338662029e-09 wu0=1.57948331177688e-08 pu0=-2.60433737957449e-14 a0=2.85373084148988 la0=-2.76706775552084e-06
++ wa0=-6.11594696616675e-06 pa0=9.0173960039235e-12 keta=0.102921143491894 lketa=-2.27421572219952e-07 wketa=-4.14883587189008e-07
++ pketa=7.65298293711983e-13 a1=0.0 a2=0.8 ags=-1.46687911362951 lags=3.50501148192711e-06
++ wags=6.013220331301e-06 pags=-1.01780398157215e-11 b0=0.0 b1=0.0 eu=1.67
++ rdswmin=0.0 rdw=0.0 rdwmin=0.0 rsw=0.0 rswmin=0.0
++ voff=-0.306432 lvoff=1.08368210883552e-07 wvoff=2.11938689795257e-07 pvoff=-3.72794908695587e-13 nfactor=-0.352536
++ lnfactor=2.81448441932616e-06 wnfactor=6.47398133412741e-06 pnfactor=-9.83492709259492e-12 up=0.0 ud=0.0
++ lp=1.0 tvfbsdoff=0.0 tvoff=0.0 cit=1.0e-5 cdsc=0.00013
++ cdscb=0.00078 cdscd=0.0 eta0=-0.743360113731169 leta0=1.26787939659428e-06 weta0=1.19978444499777e-06
++ peta0=-1.23336401204437e-12 etab=-34.7328784543308 letab=7.06472350143202e-05 wetab=0.000173158372662235 petab=-3.52211970040009e-10
++ dsub=-0.648150933534041 ldsub=9.33568261861792e-07 wdsub=4.52748858046332e-06 pdsub=-4.65420393085333e-12 voffl=0.0
++ minv=0.0 pclm=1.85601505614594 lpclm=-1.79198106249251e-06 wpclm=-4.94789853553843e-06 ppclm=6.66438051699077e-12
++ pdiblc1=0.391067255322459 lpdiblc1=-2.16438098688287e-09 wpdiblc1=3.94686325668098e-08 ppdiblc1=-8.00419132218985e-14 pdiblc2=0.00108084150236606
++ lpdiblc2=-6.69057254334284e-10 wpdiblc2=-3.24470014933205e-09 ppdiblc2=3.33551281711155e-15 pdiblcb=-0.121567847713041 lpdiblcb=1.24208529434806e-07
++ wpdiblcb=3.57213897670962e-07 ppdiblcb=-3.673223186988e-13 drout=0.220528215552783 ldrout=6.88444705197542e-07 wdrout=4.0147504705487e-07
++ pdrout=-8.14186577726708e-13 pscbe1=741617730.058828 lpscbe1=60.0162729122849 wpscbe1=174.293973300666 ppscbe1=-0.000179172113025405
++ pscbe2=1.32811339333389e-08 lpscbe2=-6.48298283559588e-15 wpscbe2=-7.56924108632876e-15 ppscbe2=8.98654949167113e-21 pvag=0.0
++ delta=0.01 alpha0=2.50048018043741e-10 lalpha0=-1.54247561972749e-16 walpha0=-7.48048218780726e-16 palpha0=7.68984592327961e-22
++ alpha1=1.0e-10 beta0=12.6274591926958 lbeta0=-3.71826124446125e-06 wbeta0=-2.54864799051063e-05 pbeta0=2.5790557438221e-11
++ fprout=0.0 pdits=0.0 pditsl=0.0 pditsd=0.0 agidl=-7.8339168810472e-11
++ lagidl=1.83330525467139e-16 wagidl=8.8909070114221e-16 pagidl=-9.13974571685778e-22 bgidl=2579670906.36265 lbgidl=-1458.38578695672
++ wbgidl=-5324.88602313467 pbgidl=0.00558879445399096 cgidl=300.0 egidl=0.1 aigbacc=0.43
++ bigbacc=0.054 cigbacc=0.075 nigbacc=1.0 aigbinv=0.35 bigbinv=0.03
++ cigbinv=0.006 eigbinv=1.1 nigbinv=3.0 aigc=0.43 bigc=0.054
++ cigc=0.075 nigc=1.0 aigsd=0.43 bigsd=0.054 cigsd=0.075
++ dlcig=0.0 poxedge=1.0 pigcd=1.0 ntox=1.0 toxref=4.23e-9
++ kt1=-0.390580576897025 lkt1=-1.23242417307863e-07 wkt1=-3.27766933962736e-07 pkt1=5.23770613186833e-13 kt2=-0.0111038593327429
++ lkt2=-3.38230309086907e-08 wkt2=-1.53064749815835e-07 pkt2=1.3835508586011e-13 at=353983.792411005 lat=-0.398186471824883
++ wat=-1.09079131010945 pat=1.4225518464206e-6 ute=1.67023776830381 lute=-1.70749483865212e-06 wute=-1.00772125235107e-05
++ pute=9.08232230389904e-12 ua1=3.61852389490631e-09 lua1=7.7412021882092e-16 wua1=-1.26413861642257e-14 pua1=3.52977928918536e-22
++ ub1=-6.77880942391506e-19 lub1=-3.26015161612156e-24 wub1=4.17238556081607e-24 pub1=9.09694674349057e-30 uc1=7.19692533299023e-10
++ luc1=-9.13451220584661e-16 wuc1=-2.37729025009802e-15 puc1=3.25203026811976e-21 kt1l=0.0 prt=0.0
++ xrcrg1=12.0 xrcrg2=1.0 rbpb=50.0 rbpd=50.0 rbps=50.0
++ rbdb=50.0 rbsb=50.0 gbmin=1.0e-12 noia=1.5e+42 noib=0.0
++ noic=0.0 em=41000000.0 af=1.0 ef=1.0 kf=0.0
++ ntnoi=1.0 dmcg=0.0 dmcgt=0.0 dmdg=0.0 xgw=0.0
++ xgl=0.0 ngcon=1.0 diomod=1.0 njs=1.3632 jss=2.1483e-5
++ jsws=8.04e-10 xtis=5.2 bvs=12.69 xjbvs=1.0 ijthsrev=0.1
++ ijthsfwd=0.1 tpb=0.0020386 tpbsw=0.001246 tpbswg=0.0 tcj=0.0012407
++ tcjsw=0.00037357 tcjswg=2.0e-12 cgdo=5.248925e-11 cgso=5.248925e-11 cgbo=0.0
++ capmod=2.0 xpart=0.0 cgsl=9.54827175e-12 cgdl=9.54827175e-12 cf=1.2e-11
++ clc=1.0e-7 cle=0.6 dlc=-3.0e-9 dwc=0.0 vfbcv=-0.14469
++ acde=0.8 moin=18.13 noff=3.9 voffcv=-0.10701 ngate=1.0e+23
++ lwc=0.0 llc=0.0 lwlc=0.0 wlc=0.0 wwc=0.0
++ wwlc=0.0 ckappas=0.6 cjs=0.0007380194454 mjs=0.34629 pbs=0.6587
++ cjsws=9.888892e-11 mjsws=0.29781 pbsws=0.7418 cjswgs=2.39155046e-10 mjswgs=0.9274
++ pbswgs=1.4338 saref=2.74e-6 sbref=2.74e-6 wlod=0 kvth0=3.29e-08
++ lkvth0=0 wkvth0=2e-07 pkvth0=0.0 llodvth=0.0 wlodvth=1.0
++ stk2=0.0 lodk2=1.0 lodeta0=1.0 ku0=4.5e-08 lku0=0
++ wku0=2.5e-07 pku0=0.0 llodku0=0.0 wlodku0=1.0 kvsat=0.5
++ steta0=0.0 tku0=0.0
+
+.subckt sky130_fd_pr__pfet_01v8 d g s b w=1u l=0.15u nf=1 mult=1 ad=0 as=0 pd=0 ps=0
+m0 d g s b sky130_fd_pr__pfet_01v8__model l='l' w='w' nf='nf' m='mult' ad='ad' as='as' pd='pd' ps='ps'
+.ends sky130_fd_pr__pfet_01v8
+
+.subckt sky130_nch d g s b w=1u l=0.15u nf=1 mult=1 ad=0 as=0 pd=0 ps=0
+m0 d g s b sky130_fd_pr__nfet_01v8__model l='l' w='w' nf='nf' m='mult' ad='ad' as='as' pd='pd' ps='ps'
+.ends sky130_nch
+
+.subckt sky130_pch d g s b w=1u l=0.15u nf=1 mult=1 ad=0 as=0 pd=0 ps=0
+m0 d g s b sky130_fd_pr__pfet_01v8__model l='l' w='w' nf='nf' m='mult' ad='ad' as='as' pd='pd' ps='ps'
+.ends sky130_pch
+
+simulator lang=spectre
