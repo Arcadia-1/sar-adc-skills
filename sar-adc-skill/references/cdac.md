@@ -1,54 +1,39 @@
 # CDAC (Capacitive DAC) Design Reference
 
-The charge-redistribution CDAC is the core analog engine of a SAR ADC. It performs three functions in a single structure: sampling the input signal, storing the conversion residue, and implementing the DAC feedback. This eliminates the need for a separate sample-and-hold circuit and an explicit DAC — the capacitor array does it all. Understanding the CDAC is essential for achieving target resolution, noise floor, and linearity.
+The charge-redistribution CDAC is the core analog engine of a SAR ADC. It merges input sampling, residue storage, and binary/sub-radix DAC feedback into one capacitor array — eliminating a separate sample-and-hold and explicit DAC.
 
 ---
 
 ## 1. Charge Redistribution Principle
 
-A charge-redistribution CDAC works by sampling the input voltage onto a capacitor array with a floating top plate, then selectively reconnecting bottom plates to reference voltages to perform binary search.
-
 ### Sampling Phase
 
-During sampling, the top plate is connected to the input through a sampling switch, and all bottom plates are connected to a known voltage (typically VREFP for the positive side). Charge is stored on each capacitor:
+During sampling (`CLKS = 1`), the top plate tracks $V_{\text{in}}$ through the sampling switch while all bottom plates connect to a fixed sampling voltage $V_{\text{bot,samp}}$ (commonly $V_{\text{refp}}$, $V_{\text{refn}}$, or $V_{\text{cm}}$). Total charge stored on the top plate is:
 
-```
-Q_i = C_i × (VIN - VREFP)
-```
+$$Q_{\text{samp}} = C_{\text{tot}} (V_{\text{in}} - V_{\text{bot,samp}}), \qquad C_{\text{tot}} = \sum_i C_i + C_{\text{dummy}}$$
 
-When the sampling switch opens, the total charge on the top plate is frozen:
-
-```
-Q_total = Ctotal × (VIN - VREFP)
-```
+When the sampling switch opens, the top plate floats and $Q_{\text{samp}}$ is conserved.
 
 ### Redistribution Phase
 
-After sampling, bottom plates are selectively switched between VREFP and VREFN. Because charge is conserved on the floating top plate:
+When bottom plates switch to $V_{\text{bot},i}$ (with total top-plate parasitic capacitance $C_p$ tied to AC ground):
 
-```
-VTOP = VIN + VREFP - Vref × D / 2^N
-```
+$$V_{\text{top}} = V_{\text{in}} + \frac{1}{C_{\text{tot}} + C_p} \sum_{i} C_i \left(V_{\text{bot},i} - V_{\text{bot,samp}}\right)$$
 
-where D is the decimal value of the digital code applied, Vref = VREFP - VREFN, and N is the number of bits. The comparator observes VTOP to decide each bit.
+**Concrete convention (bottom plates start at $V_{\text{refp}}$, switching bit $i$ moves $V_{\text{bot},i}$ to $V_{\text{refn}}$, $V_{\text{ref}} = V_{\text{refp}} - V_{\text{refn}}$):**
 
-### Differential Operation
+$$V_{\text{top}} = V_{\text{in}} - \frac{C_{\text{tot}}}{C_{\text{tot}} + C_p} \cdot V_{\text{ref}} \sum_{i} D_i \frac{C_i}{C_{\text{tot}}}$$
 
-In a fully differential SAR ADC, two matched CDACs operate with complementary initial conditions:
+where $D_i \in \{0, 1\}$ indicates whether capacitor $C_i$ has been switched from $V_{\text{refp}}$ to $V_{\text{refn}}$. Notice that when $D_i = 0$ for all $i$, $V_{\text{top}} = V_{\text{in}}$ identically.
 
-```
-P-side:  all bottom plates = VREFP  →  VTOPP = VIP + VREFP - Vref × DP / 2^N
-N-side:  all bottom plates = VREFN  (equivalently, all DCTRL = HIGH)
-         Actually: VTOPN = VIN + VREFP - Vref × DN / 2^N
-```
+### Fully Differential Operation
 
-With complementary codes (DN[i] = 1 - DP[i]), the differential step per bit is:
+Two matched CDACs sample $V_{\text{ip}}$ and $V_{\text{in}}$ respectively. After each comparator decision, the P-side and N-side switches move complementarily (for example, in monotonic switching, only the side with the higher top-plate voltage switches from $V_{\text{refp}}$ down to $V_{\text{refn}}$; in Vcm-based or bidirectional switching, one side steps up and the other steps down so common mode stays constant):
 
-```
-VTOPP - VTOPN = (VIP - VIN) - 2 × Vref × Ci / Ctotal
-```
+- **Monotonic (set-and-down):** Both sides start at $V_{\text{refp}}$. For each bit $i$, only one side's capacitor switches to $V_{\text{refn}}$ (changing $V_{\text{top,p}} - V_{\text{top,n}}$ by $\pm V_{\text{ref}} \cdot C_i / C_{\text{tot}}$). Simple and energy-efficient, but top-plate common mode drops from $V_{\text{cm}}$ toward $V_{\text{cm}} - V_{\text{ref}}/2$, which changes comparator input-pair overdrive and offset across bit cycles.
+- **Vcm-based / Bidirectional:** Each bit switches from $V_{\text{cm}}$ to $V_{\text{refp}}$ on one side and $V_{\text{refn}}$ on the other (or splits each capacitor into two halves switched oppositely), changing $V_{\text{top,p}} - V_{\text{top,n}}$ by $\pm 2 V_{\text{ref}} \cdot C_i / C_{\text{tot}}$ while keeping top-plate common mode nearly constant.
 
-This doubles the effective signal swing compared to single-ended operation.
+Differential operation doubles the full-scale swing ($V_{\text{fs,diff}} = 2 V_{\text{ref}}$), suppresses even-order harmonics, and rejects common-mode charge injection and supply coupling.
 
 ---
 
@@ -56,320 +41,139 @@ This doubles the effective signal swing compared to single-ended operation.
 
 ### Binary-Weighted Array
 
-The simplest architecture: bit i has capacitance 2^i times the unit capacitor Cu. For an N-bit converter with bits 1 through N (bit N = MSB):
+For an $N$-bit array with bits $1 \dots N$ (bit $N$ = MSB) plus one unit dummy capacitor permanently tied to a fixed reference:
 
-```
-C_MSB = 2^(N-1) × Cu
-C_LSB = 1 × Cu
-C_dummy = 1 × Cu  (bottom plate tied to VREFP permanently)
-Ctotal = 2^N × Cu  (including dummy)
-```
+$$C_i = 2^{i-1} C_u \quad (i = 1 \dots N), \qquad C_{\text{dummy}} = C_u, \qquad C_{\text{tot}} = \left(1 + \sum_{i=1}^{N} 2^{i-1}\right) C_u = 2^N C_u$$
 
-Advantages: straightforward layout, one capacitor per bit weight. Disadvantage: the MSB capacitor is 2^(N-1) times the unit cap, which becomes impractical for high resolution (e.g., 14-bit requires 8192 Cu).
+- **Pros:** Exact binary weights, simple digital output (no digital recombination), straightforward common-centroid layout.
+- **Cons:** Total capacitance doubles with each added bit ($2^{10} = 1024\,C_u$ for 10 bits, $2^{14} = 16384\,C_u$ for 14 bits), increasing area, sampling power, and reference switching energy.
+
+### Sub-Radix-2 Redundant Array
+
+Instead of radix $2.0$, successive bit weights grow by radix $r \in [1.8, 1.95]$ (for example, an 11-bit converter using 11–12 bit trials with weights like `1, 2, 3, 6, 12, 21, 42, 78, 144, 270, 501` units — radix $\approx 1.86$ — built from parallel sub-units such as `1×` and `3×` unit cells).
+
+- **Pros:** Earlier bit decisions can tolerate DAC settling errors, reference droop, or comparator noise up to the redundancy range, and later trials recover the error cleanly.
+- **Cons:** Requires 1–2 extra bit cycles and a small digital adder/LUT to combine redundant bit weights into a binary code.
 
 ### Segmented (Split-Capacitor) Array
 
-For resolution above 10 bits, the MSB portion can be implemented with a sub-DAC and attenuation capacitor, reducing the total capacitor count. The tradeoff is added complexity and a parasitic-sensitive bridge node.
-
-### Reference Design Example: SAR_11B_ZZS Cap Array (L5_CAP_ARRAY)
-
-The 11-bit ZZS design uses a binary-weighted array with bits 1 through 11, plus a dummy capacitor (I0). The unit cells come in two flavors:
-
-| Cell | Capacitance | Construction |
-|------|------------|--------------|
-| LB_CUNIT_X1 | 200 aF | Single cap (C0, 200 aF) |
-| LB_CUNIT_X3 | 600 aF (3 x 200 aF) | Three parallel caps (C0, C1, C2 = 200 aF each) |
-
-The X3 unit cell uses three parallel unit caps for improved matching via averaging of random mismatch. This is a common technique: instead of one 600 aF cap, three 200 aF caps in parallel provide sqrt(3) better matching.
-
-**Bit-to-capacitor mapping:**
-
-| Bit | Instance | Type | Count | Total Cap |
-|-----|----------|------|-------|-----------|
-| Dummy | I0 | LB_CUNIT_X1 | 1 | 200 aF |
-| 1 (LSB) | I1 | LB_CUNIT_X1 | 1 | 200 aF |
-| 2 | I2<2:1> | LB_CUNIT_X1 | 2 | 400 aF |
-| 3 | I3 | LB_CUNIT_X3 | 1 | 600 aF |
-| 4 | I4<2:1> | LB_CUNIT_X3 | 2 | 1.2 fF |
-| 5 | I5<4:1> | LB_CUNIT_X3 | 4 | 2.4 fF |
-| 6 | I6<7:1> | LB_CUNIT_X3 | 7 | 4.2 fF |
-| 7 | I7<14:1> | LB_CUNIT_X3 | 14 | 8.4 fF |
-| 8 | I8<26:1> | LB_CUNIT_X3 | 26 | 15.6 fF |
-| 9 | I9<48:1> | LB_CUNIT_X3 | 48 | 28.8 fF |
-| 10 | I10<90:1> | LB_CUNIT_X3 | 90 | 54.0 fF |
-| 11 (MSB) | I11<167:1> | LB_CUNIT_X3 | 167 | 100.2 fF |
-| (dummy caps) | I12<9:1> | LB_CUNIT_X3 | 9 | 5.4 fF (to net2, unused) |
-
-Note: the instance counts for bits 3-11 use X3 units. For bit 3: 1 X3 = 3 Cu = 600 aF. For bit 11 (MSB): 167 X3 = 501 Cu. The ideal binary weight for bit 11 would be 2^10 = 1024 Cu, but using X3 cells: 1024/3 = 341.3, so the actual count of 167 suggests either a smaller Cu multiplier or a different total normalization. The CDF parameter `Cunit="3.3f"` at the L4_CDAC level is the total unit capacitance parameter passed to simulation.
-
-The dummy capacitor I0 has its bottom plate permanently connected to VREFP. The additional dummy instances I12<9:1> have their bottom plates connected to floating nets (net2<0:8>, via noConn), serving as layout fill for matching symmetry.
+Above ~10–12 bits, an attenuation (bridge) capacitor splits the array into MSB and LSB sub-DACs, sharply reducing total unit count. The trade-off is high sensitivity to parasitic capacitance on the LSB sub-DAC top plate, which alters the effective bridge ratio and requires layout care or calibration.
 
 ---
 
 ## 3. Unit Capacitor Sizing
 
-### kT/C Noise Floor
+### $kT/C$ Sampling Noise Floor
 
-The fundamental noise limit of a sampling capacitor is:
+- **Single-ended** ($V_{\text{fs}} = V_{\text{ref}}$, noise variance $kT / C_{\text{tot}}$):
+  $$\sqrt{\frac{kT}{C_{\text{tot}}}} \le \frac{V_{\text{fs}}}{2^N \cdot K} \implies C_{\text{tot}} \ge \frac{K^2 \cdot kT \cdot 2^{2N}}{V_{\text{fs}}^2}$$
+- **Fully differential** ($V_{\text{fs,diff}} = 2 V_{\text{ref}}$, two independent sampling caps give differential noise variance $2 kT / C_{\text{tot}}$):
+  $$\sqrt{\frac{2kT}{C_{\text{tot}}}} \le \frac{V_{\text{fs,diff}}}{2^N \cdot K} \implies C_{\text{tot}} \ge \frac{2 K^2 \cdot kT \cdot 2^{2N}}{V_{\text{fs,diff}}^2}$$
 
-```
-Vn_rms = sqrt(kT / C)
-```
+where $K$ sets the thermal-noise margin relative to 1 LSB ($K = \sqrt{12} \approx 3.46$ equals quantization noise; $K = 4\text{–}6$ keeps $kT/C$ comfortably below quantization noise).
 
-For an N-bit ADC with full-scale range Vfs, the LSB is Vfs/2^N. The noise must be well below 1 LSB:
-
-```
-sqrt(kT / C) < Vfs / (2^N × K)
-```
-
-where K is typically 4-6 for adequate noise margin. Solving for C:
-
-```
-C > K^2 × kT × 2^(2N) / Vfs^2
-```
-
-For 11 bits, VDD = 0.9V, T = 300K, K = 4: C > 16 × 4.14e-21 × 4.19e6 / 0.81 = 0.34 fF. The ZZS design uses Cu = 200 aF with total array cap much larger than this minimum, providing comfortable noise margin.
+**Worked example ($N = 11$, $V_{\text{ref}} = 0.9\text{ V}$, $T = 300\text{ K}$, $kT = 4.14 \times 10^{-21}\text{ J}$, $K = 4$):**
+- **Differential** ($V_{\text{fs,diff}} = 1.8\text{ V}$, $1\text{ LSB} = 0.879\text{ mV}$, $\Delta/\sqrt{12} = 0.254\text{ mV}$):
+  $$C_{\text{tot}} \ge \frac{2 \times 16 \times 4.14 \times 10^{-21} \times 4.194 \times 10^6}{1.8^2} \approx 172\text{ fF per side}$$
+  At $C_{\text{tot}} \approx 205\text{ fF}$ per side, $v_{n,\text{rms,diff}} = \sqrt{2kT/C_{\text{tot}}} \approx 0.201\text{ mV}$ (0.23 LSB, comfortably below quantization noise).
+- **Single-ended** ($V_{\text{fs}} = 0.9\text{ V}$): requires $2\times$ larger capacitance per side ($\approx 343\text{ fF}$) for the same $K$ because the full-scale swing is halved.
 
 ### Matching Requirements
 
-Capacitor mismatch limits DNL. For an N-bit DAC, the MSB capacitor matching must satisfy:
+Capacitor mismatch limits static linearity (DNL/INL). At the worst-case mid-scale MSB transition (half the array switches against the other half), the 1-sigma DNL in LSBs scales as:
 
-```
-sigma(C_MSB) / C_MSB < 1 / (2^N × sqrt(2))
-```
+$$\sigma_{\text{DNL,MSB}} \approx \sqrt{2^N} \cdot \frac{\sigma_u}{C_u} \text{ LSB}$$
 
-Using parallel unit cells (e.g., X3 construction) and common-centroid layout improves matching. The X3 cell in ZZS achieves better matching than a single larger cap by averaging three independent unit cells.
+For $\sigma_{\text{DNL,MSB}} < 0.2\text{–}0.3\text{ LSB}$, unit capacitor relative matching $\sigma_u / C_u$ must scale down as $2^{-N/2}$. Building larger weights from identical parallel unit cells (e.g., 1× and 3× MOM/MIM units) in a common-centroid array with perimeter layout dummies is standard practice.
 
 ---
 
-## 4. Sampling Switch Design
+## 4. Sampling Switch & Dummy Feedthrough Cancellation
 
-### Why Bootstrap Gate Voltage Drives Internal NMOS
+### Bootstrap Integration
 
-A critical architectural decision: the bootstrap circuit does NOT output a sampled voltage. It outputs a gate voltage VGBTS = VIN + VDD that drives an NMOS sampling switch internal to the CDAC. The input signal VIN connects directly to the NMOS source.
+The bootstrap circuit outputs a **boosted gate drive** `VGBTS ≈ VIN + VDD` — not a sampled voltage. The analog input connects directly to the source of the CDAC's internal NMOS sampling switch:
 
-```
-CDAC ports:
-  VIN   → M3 source (sampling NMOS)
-  VGBTS → M3 gate   (bootstrap output)
-  VTOP  → M3 drain  (connects to cap array top plate)
-```
-
-This ensures constant Vgs = VDD across the full input range, eliminating signal-dependent Ron and achieving linearity beyond 10 bits.
-
-### Reference Design: L4_CDAC Sampling Switch
-
-The ZZS CDAC (L4_CDAC) contains two NMOS switches at the transistor level:
-
-| Transistor | Type | Gate | Drain | Source | Role | W | L | Fingers |
-|-----------|------|------|-------|--------|------|---|---|---------|
-| M3 | nch_mac | VGBTS | VTOP | VIN | Main sampling switch | 5u | 30n | 10 |
-| M4 | nch_mac | net1 | VTOP | VINB | Dummy switch (charge cancel) | 5u | 30n | 10 |
-
-Both use `nch_mac` (standard Vth), not `nch_ulvt_mac`. Standard Vth provides better matching and lower leakage compared to ultra-low Vth, which matters for charge retention on the top plate during conversion.
-
-### Dummy Switch for Differential Charge Cancellation
-
-M4 is the dummy switch: same size as M3, with its source connected to VINB (the complementary input). Its gate is driven by net1, which is generated by a cascode structure (M2 + M5):
-
-```
-M5: nch_ulvt_mac, G=VDD, D=net2, S=VSS  (W=4u, L=30n, NF=8)
-M2: nch_ulvt_mac, G=VDD, D=net1, S=net2  (W=4u, L=30n, NF=8)
-```
-
-M2 and M5 form a cascode with gates tied to VDD. This generates a controlled gate voltage (net1) for M4 that tracks approximately VDD/2 to mid-rail, ensuring M4 is in a similar operating region as M3 during transitions. When the sampling switch M3 turns off, its charge injection error is partially cancelled by M4's complementary charge injection (since VINB moves opposite to VIN in differential operation).
+- **Main sampling switch (MS):** Gate = `VGBTS`, Source = `VIN`, Drain = `VTOP`. Prefer a **standard-Vth** (rather than ultra-low-Vth) NMOS when conversion time is long, to minimize off-state subthreshold leakage off the floating top plate during conversion.
+- **Cross-connected dummy switch (MD):** Same size as MS, Drain = `VTOP`, Source = `VINB` (the complementary differential input), Gate tied to `VSS` (always OFF). Because `VIN` keeps swinging during the hold/conversion phase, the off-state overlap/feedthrough capacitance of MS couples input changes onto `VTOP`, degrading high-frequency SFDR. Tying an identical always-off dummy switch from `VTOP` to `VINB` injects equal and opposite capacitive feedthrough, cancelling the error to first order.
 
 ---
 
-## 5. Bottom-Plate DAC Switches (L5_DAC_SWI)
+## 5. Bottom-Plate DAC Switches
 
-### Complementary Pass Gate Topology
+### Complementary CMOS Switch (2-Transistor Pass Gate)
 
-Each bit uses one NMOS and one PMOS transistor sharing the same DCTRL gate signal:
+Each bit's bottom plate can be driven between `VREFP` and `VREFN` by a single PMOS + NMOS pair sharing one control line `DCTRL[i]`:
 
 ```
          VREFP
            |
-    M_pmos: G = DCTRL[i], S = VREFP, D = VBOT[i]
+     PMOS (G = DCTRL[i], S = VREFP, D = VBOT[i])
            |
     ────── VBOT[i] ──────
            |
-    M_nmos: G = DCTRL[i], S = VREFN, D = VBOT[i]
+     NMOS (G = DCTRL[i], S = VREFN, D = VBOT[i])
            |
          VREFN
 ```
 
-| DCTRL | PMOS (Vgs) | NMOS (Vgs) | VBOT | Notes |
-|-------|-----------|-----------|------|-------|
-| LOW (0) | ON (Vgs = -VDD) | OFF | VREFP | Initial/sample state |
-| HIGH (VDD) | OFF | ON (Vgs = +VDD) | VREFN | Bit set -> VTOP decreases |
+| `DCTRL[i]` | PMOS | NMOS | `VBOT[i]` | Effect on `VTOP` (from `VREFP` initial state) |
+|---|---|---|---|---|
+| LOW (`0`) | ON | OFF | `VREFP` | Initial / sample state |
+| HIGH (`VDD`) | OFF | ON | `VREFN` | `VTOP` steps down by $V_{\text{ref}} \cdot C_i / (C_{\text{tot}} + C_p)$ |
 
-No inverter is needed because the same DCTRL signal naturally turns on complementary devices.
-
-### Switch Sizing: Width Scales with Bit Weight
-
-The switch width scales proportionally to the capacitance it drives, maintaining matched RC time constants across all bits. This ensures uniform settling time.
-
-**Reference design switch sizing (L5_DAC_SWI):**
-
-| Bit | NMOS W | NMOS NF | PMOS W | PMOS NF | Cap Weight |
-|-----|--------|---------|--------|---------|------------|
-| 11 (MSB) | 6.4u | 16 | 8.32u | 16 | 1024 Cu |
-| 10 | 3.2u | 8 | 4.16u | 8 | 512 Cu |
-| 9 | 1.6u | 4 | 2.08u | 4 | 256 Cu |
-| 8 | 800n | 2 | 1.04u | 2 | 128 Cu |
-| 7 | 400n | 1 | 520n | 1 | 64 Cu |
-| 6-1 | 200n | 1 | 260n | 1 | 32-1 Cu |
-
-The PMOS is approximately 1.3x wider than the NMOS to compensate for lower hole mobility, achieving matched pull-up and pull-down times.
-
-The switches use `nch_mac` / `pch_mac` (standard Vth) rather than ultra-low Vth. This provides better matching and lower leakage on the bottom plates, which is important because leakage during conversion corrupts the stored charge.
+- **Sizing rule:** Scale switch width proportionally to the bit capacitance $C_i$ (clamped at minimum practical width for the lower LSBs) so every bit shares a uniform $R_{\text{on}} C_i$ settling time constant. Size PMOS $\approx 1.3\text{–}1.5\times$ wider than NMOS (depending on process $\mu_n/\mu_p$) for balanced rise/fall transitions.
+- **Vth choice:** Prefer standard-Vth devices for lower leakage and better matching on the bottom-plate reference rails.
 
 ---
 
-## 6. Initial State and Conversion Flow
+## 6. Parasitic Capacitance Impact
 
-### Differential Initial Conditions
-
-At the start of conversion (CLKS falls), the SAR logic resets all DAC switches:
-
-```
-P-side (I_CDACP):
-  All DCTRLP = LOW  →  all VBOTP = VREFP
-  
-N-side (I_CDACN):
-  All DCTRLN = HIGH →  all VBOTN = VREFN
-```
-
-This establishes the starting voltage on the top plates. After sampling:
-
-```
-VTOPP = VIP  (since all bottom plates = VREFP, same as during sampling)
-VTOPN = VIN  (since all bottom plates = VREFN, fully switched from sampling state)
-```
-
-Wait -- the actual initial state depends on the implementation. In ZZS, the initial reset forces all DCTRLP = LOW (VBOTP = VREFP) and all DCTRLN = LOW (VBOTN = VREFP). But the complementary operation means that when DCTRLP goes HIGH to set a bit on the P-side, the corresponding DCTRLN stays LOW (or vice versa), creating the differential feedback.
-
-### Bit Trial Sequence
-
-For each bit i from MSB to LSB:
-
-1. **Preset**: Set DCTRLP[i] = HIGH (VBOTP[i] = VREFN), DCTRLN[i] = LOW (VBOTN[i] = VREFP)
-2. **Compare**: Fire comparator, observe VTOPP vs VTOPN
-3. **Decide**: If VTOPP > VTOPN, keep the bit (DCTRLP[i] stays HIGH). If VTOPP < VTOPN, clear the bit (DCTRLP[i] = LOW, restore VBOTP[i] = VREFP).
+- **Top-plate parasitic $C_p$** (switch drain junctions + top-plate routing + comparator input capacitance): attenuates all DAC steps uniformly by $C_{\text{tot}} / (C_{\text{tot}} + C_p)$. Linear fixed $C_p$ causes a gain/full-scale reduction (not INL), whereas **voltage-dependent** junction/gate capacitance on `VTOP` creates harmonic distortion and INL. Keep $C_{\text{tot}} \gg C_p$ and shield top-plate routing cleanly.
+- **Bottom-plate parasitic:** Driven by low-impedance DAC switches, so bottom-plate-to-substrate capacitance slows settling slightly and increases switching power, but does **not** alter the final settled charge ratio on `VTOP` (provided settling completes). Cross-coupling capacitance directly from bottom plates to the top plate *does* alter individual bit weights and must be extracted and verified post-layout.
 
 ---
 
-## 7. Parasitic Capacitance Impact
-
-### Top-Plate Parasitic
-
-The top plate accumulates parasitic capacitance from:
-- Sampling switch drain junction (M3, M4)
-- Cap array top-plate wiring
-- Comparator input gate capacitance
-
-This parasitic Cp adds to the total capacitance seen at VTOP:
-
-```
-VTOP_actual = VIN + (Ctotal / (Ctotal + Cp)) × (VREFP - Vref × D / 2^N - VREFP)
-```
-
-The factor Ctotal/(Ctotal+Cp) attenuates the DAC step size, effectively reducing the full-scale range. If Cp is a significant fraction of Ctotal, the bit weights are no longer binary, causing INL errors.
-
-### Bottom-Plate Parasitic
-
-Bottom-plate parasitics from switch junctions and wiring add to each bit's capacitance. Since they scale with switch size (which scales with bit weight), the relative error is approximately constant across bits and does not significantly impact linearity.
-
-### Mitigation
-
-- Make Ctotal >> Cp (use sufficiently large unit capacitors)
-- In the ZZS comparator, input caps C9 and C10 (5 fF each) are explicitly shown, representing the expected loading
-- Layout: minimize top-plate routing, use metal shields between top-plate and bottom-plate wiring
-
----
-
-## 8. Design Checklist
+## 7. Design Checklist
 
 | Item | Guideline |
-|------|-----------|
-| Unit cap size | Set by kT/C noise and matching, not by area alone |
-| Unit cell construction | Use parallel sub-units (e.g., X3) for matching improvement |
-| Sampling switch Vth | Standard Vth (nch_mac), not ultra-low Vth |
-| Sampling switch W/L | Large enough for adequate settling (Ron x Csample << Tsample/5) |
-| Dummy switch | Match sampling switch exactly; gate driven by cascode |
-| DAC switch type | Standard Vth (nch_mac / pch_mac) for matching and low leakage |
-| DAC switch scaling | Width proportional to bit weight; PMOS ~1.3x NMOS |
-| Dummy cap | One unit cap with bottom plate permanently on VREFP |
-| Top-plate parasitic | Must be << Ctotal; verify with extracted layout |
-| VGBTS connection | Bootstrap GATE output only; VIN goes directly to switch source |
+|---|---|
+| Total capacitance $C_{\text{tot}}$ | Satisfy both differential $kT/C$ noise and mismatch $\sigma_u / C_u$ budgets |
+| Unit cell & layout | Parallel identical unit cells in common-centroid layout + perimeter dummies |
+| Sampling switch | Standard-Vth NMOS driven by `VGBTS = VIN + VDD`; $R_{\text{on}} C_{\text{tot}} \ll T_{\text{sample}} / 5$ |
+| Feedthrough dummy | Match sampling switch on `VTOP`–`VINB` with gate tied off (`VSS`) |
+| DAC switches | Standard-Vth CMOS inverter-style drivers; width scaled with bit weight; PMOS $\sim 1.3\text{–}1.5\times$ NMOS |
+| Top-plate parasitic | Minimize $C_p / C_{\text{tot}}$; verify extracted bit weights post-layout |
 
 ---
 
 ## How to Verify a CDAC
 
-### Static Linearity (DNL/INL)
+### 1. Static Linearity (DNL / INL)
 
-The most critical CDAC test — verifies that all bit weights are correct.
+- Drive all $2^N$ codes (or all key major-carry transitions for $N > 10$) using ideal switches/control, wait for full settling at each code, and record settled $V_{\text{top,p}} - V_{\text{top,n}}$.
+- Compute actual steps `step[k] = Vdiff[k] - Vdiff[k-1]`, endpoint ideal LSB `(Vdiff_max - Vdiff_min) / (2^N - 1)`, `DNL[k] = step[k]/LSB - 1`, and cumulative `INL`.
+- **Pass criteria:** $|\text{DNL}| < 0.5\text{ LSB}$ and $|\text{INL}| < 1\text{ LSB}$ (tighter pre-layout to leave margin for mismatch and extracted parasitics).
 
-- Apply all 2^N codes sequentially by driving the bottom-plate switches with an ideal SAR controller (Verilog-A behavioral logic works well here).
-- At each code, wait for VTOP to settle completely, then measure the DC voltage.
-- Compute the actual step size at each code transition: `step[i] = VTOP[i] - VTOP[i-1]`.
-- Compute the ideal LSB: `LSB_ideal = (VTOP_max - VTOP_min) / (2^N - 1)`.
-- DNL = `(step_actual / LSB_ideal) - 1` at each code.
-- INL = cumulative sum of DNL (endpoint fit).
-- Pass criteria: |DNL| < 0.5 LSB and |INL| < 1 LSB across all codes.
-- Alternative approach: apply a slow ramp input and use a behavioral SAR to generate codes automatically — this tests the CDAC in a more realistic operating context.
-- For large arrays (> 10 bits), focus detailed checking on the MSB and MSB-1 transitions where mismatch has the largest absolute impact.
+### 2. Per-Bit Settling Time
 
-### Settling Time Per Bit
+- Toggle each bit individually (especially MSB and MSB−1) in both directions (`VREFN → VREFP` and `VREFP → VREFN`) with `maxstep` $\le 5\text{ ps}$.
+- Measure time to settle within $0.5\text{ LSB}$ (or within redundancy tolerance for sub-radix-2).
+- **Pass criterion:** Settling time $<$ async loop delay (or $<$ one sync bit-clock slot) with corner margin.
 
-Each bit decision in the SAR loop requires the CDAC to settle before the comparator fires.
+### 3. Sampling Pedestal & Feedthrough Cancellation
 
-- Switch one bit at a time (e.g., toggle DCTRL from LOW to HIGH), and measure the time for VTOP to settle within 0.5 LSB of its final value.
-- The MSB settles slowest because it has the largest capacitor and produces the largest voltage step on VTOP.
-- Settling time must be less than one SAR bit-clock period (for sync SAR) or less than the async loop delay (for async SAR).
-- Test both rising (VREFN to VREFP) and falling (VREFP to VREFN) transitions — they may have different settling times due to asymmetric switch Ron (NMOS vs. PMOS pull paths).
-- Use transient analysis with `maxstep` set small enough (< 5 ps) to resolve the settling tail.
+- Open the sampling switch while holding differential inputs at several DC levels and measure the jump on `VTOPP`, `VTOPN`, and `VTOPP - VTOPN`.
+- In hold mode, apply a fast sine on `VIP`/`VIN` and verify that the dummy switch keeps differential feedthrough onto `VTOPP - VTOPN` well below 0.5 LSB.
 
-### Charge Injection and Clock Feedthrough
+### 4. Total & Per-Bit Extracted Capacitance (DC + AC)
 
-When the sampling switch opens, channel charge splits between the source and drain, creating a voltage error on VTOP.
-
-- Measure the VTOP change (pedestal) at the moment VGBTS goes low (switch opens).
-- For single-ended operation: this pedestal is signal-dependent and directly limits achievable ENOB.
-- For differential operation: verify that the common-mode injection cancels — the pedestal on VTOPP should approximately equal the pedestal on VTOPN (within 0.5 LSB).
-- The residual differential pedestal after cancellation sets the effective offset of the CDAC, which the SAR loop can tolerate as long as it is less than 0.5 LSB.
-
-### Parasitic Capacitance Impact on Bit Weights
-
-Top-plate parasitic capacitance attenuates all DAC steps uniformly, but bottom-plate and routing parasitics can change individual bit weights.
-
-- Compare actual bit weights (measured VTOP step sizes from the DNL test) against ideal binary weights.
-- Compute the weight error for each bit: `error[i] = actual_weight[i] / ideal_weight[i] - 1`.
-- If the weight error exceeds 0.5 LSB at any bit, the ADC will have missing codes at that transition.
-- Parasitic impact is worst for lower bits (where the unit capacitor is smallest relative to the parasitic).
-- Mitigation: increase Cu, use shielded routing, or apply digital calibration post-silicon.
-
-### Total Capacitance Measurement (DC + AC)
-
-Verify the actual total CDAC capacitance (including parasitics) using a simple DC + AC simulation. This catches routing parasitic and fringe capacitance that the schematic doesn't show.
-
-**Testbench:**
-```
-// Connect all bottom plates to VSS, measure current into VTOP
-V_TOP (vtop 0) vsource dc=VDD/2 mag=1 type=dc    // DC bias + AC stimulus
-V_BOT (vss 0) vsource dc=0 type=dc
-
-// Connect all CDAC bottom plates to VSS
-// (set all CTRL = HIGH so NMOS switches connect to VREFN = VSS)
-
-dcOp dc                          // DC operating point
-ac ac start=1M stop=10G          // AC sweep
-
-save V_TOP:1                     // save current into top plate
+```spectre
+// Tie all bottom plates to AC ground (0) and drive VTOP with a 1 V AC source
+V_TOP (vtop 0) vsource dc=vdd/2 mag=1 type=dc
+dcOp dc
+ac ac start=1M stop=10G
+save V_TOP:p
 ```
 
-**Extraction:** At each frequency, `C_total = I_ac / (2π × f × V_ac)`. The capacitance should be flat across frequency (until self-resonance) and match the designed value `(2^N + 1) × Cu`. Any deviation reveals parasitic capacitance from switches, routing, or substrate coupling.
-
-**Per-bit capacitance:** Repeat with only one bit's bottom plate connected to the AC source (others grounded) to measure individual bit capacitances. Compare against binary weighting ratios.
+Extract $C_{\text{tot,eff}} = |I_{\text{ac}}| / (2\pi f \cdot V_{\text{ac}})$ in the flat mid-band region. Repeat by driving one bottom plate with AC while grounding all other bottom plates and `VTOP` (measuring current into `VTOP`) to extract exact per-bit coupling weights and verify ratios against the intended binary or sub-radix-2 weights.

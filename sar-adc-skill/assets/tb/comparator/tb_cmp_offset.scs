@@ -1,0 +1,58 @@
+// =============================================================================
+// Process-Independent Dynamic Comparator Testbench — Bisection Offset & Memory
+// =============================================================================
+// Uses `cmp_bisect.va` (mode=1) to binary-search the comparator input-referred
+// offset within +/-vrange over `n_bits` clock cycles:
+//   - Static / Monte Carlo mismatch offset: set vpre=0, n_cycles=18 (~16-bit res)
+//   - Memory / hysteresis effect: run twice with vpre=+100m and vpre=-100m
+//     (set n_cycles=36 since every test cycle is preceded by a pre-charge cycle);
+//     offset(+vpre) - offset(-vpre) = 2 * memory_effect.
+//
+// Read the converged offset from VMON at t = stop (or from the Spectre log).
+//
+// DUT interface contract:
+//   subckt dut_cmp CMPCK DCMPN DCMPP VDD VIN VIP VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "cmp_bisect.va"
+
+parameters \
+    vdd=0.8 \
+    vcm=0.4 \
+    tclk=1n \
+    tr=10p \
+    tf=10p \
+    cload=2f \
+    vrange=50m \
+    vpre=0 \
+    n_cycles=18 \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0 type=dc
+VCK  (CMPCK 0) vsource type=pulse val0=0 val1=vdd \
+    period=tclk delay=tclk/2 rise=tr fall=tf width=tclk/2
+
+XS (VIP VIN CMPCK DCMPP DCMPN VMON) cmp_bisect \
+    mode=1 vcm=vcm vid=0 vrange=vrange vth=vdd/2 vpre=vpre
+
+CLP (DCMPP 0) capacitor c=cload
+CLN (DCMPN 0) capacitor c=cload
+
+I0 (CMPCK DCMPN DCMPP VDD VIN VIP VSS) dut_cmp
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-3 vabstol=1e-6 iabstol=1e-12 \
+    temp=temp_c tnom=27 scalem=1.0 scale=1.0 \
+    gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5 digits=5 cols=80 \
+    pivrel=1e-3 checklimitdest=psf
+
+tran tran stop=n_cycles*tclk errpreset=conservative annotate=status maxiters=5
+
+save CMPCK DCMPP DCMPN VMON
+saveOptions options save=selected

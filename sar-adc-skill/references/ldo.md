@@ -1,304 +1,111 @@
-# LDO Theory Reference for SAR ADC Power Delivery
+# LDO Theory & Verification Reference for SAR ADC Power Delivery
 
-A low-dropout (LDO) linear regulator sits between the raw supply and the SAR ADC's analog domain to decouple digital switching noise from sensitive circuitry. The SAR ADC presents an unusually demanding load: the CDAC switches charge in bursts at every bit-cycle, creating a periodic high-frequency current demand that rides on top of a near-static average. Without a clean, low-impedance supply, this burst current modulates VOUT and couples through the reference and supply rails of the comparator and CDAC, directly degrading ENOB. An LDO provides the high PSRR and low output impedance needed to absorb these transients without allowing supply noise to corrupt the conversion result.
-
----
-
-## Why the SAR ADC Needs a Clean Supply
-
-### PSRR Budget
-
-Every millivolt of supply ripple that reaches VOUT appears as an equivalent input error. For an N-bit ADC with full-scale range VFS the 1-LSB threshold is VFS / 2^N. A 10-bit, 1 V full-scale converter has 1 LSB ≈ 1 mV; any supply coupling larger than half an LSB degrades linearity. The LDO must therefore provide enough PSRR at the frequencies where supply noise exists to keep the coupled error below ~0.5 LSB.
-
-At the Nyquist frequency (fs/2) the PSRR requirement is tightest because comparator kickback and CDAC switching inject energy there. A practical target is PSRR ≥ 40–60 dB at fs/2, with the exact value set by the system noise budget allocated to supply coupling.
-
-### Reference Noise Coupling
-
-The voltage reference and the LDO output often share a common rail or are generated from the same supply. High-frequency noise on VREF directly sets the noise floor of the ADC. The LDO's output impedance determines how much CDAC switching current (which flows through the reference network) translates into VREF ripple.
-
-### Digital Switching Noise
-
-SAR logic toggles synchronously, causing supply current spikes at the clock frequency and its harmonics. These spikes appear as deterministic tones in the ADC output spectrum. The LDO, together with decoupling capacitors, must attenuate these tones to below the noise floor. The burst profile of CDAC switching — large current at the start of each bit-trial, tapering off — also demands low output impedance over a wide bandwidth so that the voltage droop during a burst remains below the PSRR budget allocation.
+A low-dropout (LDO) linear regulator decouples the SAR ADC's analog and reference domains from noisy system supplies. Because a SAR ADC draws periodic high-frequency current bursts during CDAC switching and comparator firing, the LDO must combine adequate loop bandwidth, low output impedance (assisted by on-chip decoupling), and high PSRR up to $f_s/2$.
 
 ---
 
-## Circuit Topology
+## 1. Why the SAR ADC Needs a Clean Supply
 
-PMOS-pass LDO with Miller-compensated two-stage error amplifier:
+- **PSRR budget:** Any supply ripple reaching `VOUT` or `VREF` adds directly to the conversion error. For an $N$-bit ADC with full-scale $V_{\text{FS}}$, keeping supply-coupled error below $\sim 0.5\text{ LSB} = V_{\text{FS}}/2^{N+1}$ typically requires **40–60 dB PSRR** across low-to-mid frequencies, with on-chip decoupling capacitance `CL` shunting high-frequency ripple beyond the LDO unity-gain bandwidth.
+- **Burst load transients:** Each bit trial pulls a short charge burst through `VREF`/`VDD`. The resulting voltage droop is $\Delta V_{\text{out}} \approx \Delta I_{\text{burst}} \cdot |Z_{\text{out}}(f_{\text{switch}})|$ and must settle before the next bit comparison (or stay within redundancy/LSB budget).
+
+---
+
+## 2. Circuit Topology
+
+Standard PMOS-pass LDO with a Miller-compensated single-stage error amplifier:
 
 ```
-VIN ──► M2 (pass, PMOS) ──────────────────────────► VOUT
-              ▲ gate = net3                              │
-              │                                  R0 (R_FB_TOP)
-         ┌────┴───────────────────────────┐           │
-         │      Error Amplifier           │      net30 (V_fb)
-         │                                │           │
-         │  M3/M4 (PMOS current mirror)   │      R1 (R_FB_BOT)
-         │     ▲             ▲            │           │
-         │   M0(VREF)    M1(V_fb)  ←──── ┘          GND
-         │   NMOS diff pair (non-inv / inv)
+VIN ──► M2 (PMOS pass device) ─────────────────────────► VOUT
+              ▲ gate = net_g                                │
+              │                                       R0 (R_FB_TOP)
+         ┌────┴─────────────────────────────┐               │
+         │         Error Amplifier          │          V_fb
+         │  M3 / M4 (PMOS mirror load)      │               │
+         │     ▲              ▲             │         R1 (R_FB_BOT)
+         │   M0 (VREF)     M1 (V_fb)  ◄─────┘               │
+         │   NMOS differential pair                        VSS
          │        │
-         │   M5 (tail mirror, N×) ─── M6 (diode ref, 1×) ←── I_bias
-         └────────────────────────────────────────────────────────────
-Compensation: Rz + Cc from net3 → VOUT
-  → introduces left-half-plane zero: fz = 1/(2π·Rz·Cc)
-Output decoupling: CL on VOUT
+         │   M5 (tail, N×) ─── M6 (diode ref, 1×) ◄── I_bias
+         └──────────────────────────────────┘
+Compensation: series Rz + Cc from net_g to VOUT
+Output decoupling: CL (+ parasitic ESR) on VOUT
 ```
 
-**Topology constraints:**
-- M0 = M1: identical sizes — matched differential pair
-- M3 = M4: identical sizes — matched current mirror load
-- M5 / M6: same L, W_M5 = N × W_M6 (mirror ratio N, default N = 10)
+**Matching constraints:** `M0 = M1` (matched diff pair), `M3 = M4` (matched current mirror), `M5/M6` share the same $L$ with $W_{M5} = N_{\text{mir}} \cdot W_{M6}$.
 
-The feedback divider sets the regulated output voltage:
-
-```
-Vout = Vref × (R0 + R1) / R1
-```
+$$V_{\text{out}} = V_{\text{ref}} \cdot \frac{R_0 + R_1}{R_1}, \qquad \beta = \frac{R_1}{R_0 + R_1} = \frac{V_{\text{ref}}}{V_{\text{out}}}$$
 
 ---
 
-## Transistor Role Table
+## 3. Initial Sizing Methodology
 
-| Device | Type | Role | Key sizing lever |
-|--------|------|------|-----------------|
-| M0 | NMOS | Non-inverting input of diff pair (connects to VREF) | Long L for high gm·ro and matching |
-| M1 | NMOS | Inverting input of diff pair (connects to V_fb) | Must match M0 exactly |
-| M3 | PMOS | Current mirror load, output branch | Long L for high ro (high Av1) |
-| M4 | PMOS | Current mirror load, diode-connected reference | Must match M3; sets Av1 via ro3∥ro4 |
-| M5 | NMOS | Tail current mirror, scaled branch (N×) | Same L as M6; multiplier sets I_tail |
-| M6 | NMOS | Tail bias reference, diode-connected (1×) | Long L reduces current mismatch |
-| M2 | PMOS | Pass device — carries full load current | Wide W for low Vdrop; size sets Vout accuracy |
-| Cc | — | Miller compensation capacitor | Sets GBW and dominant pole |
-| Rz | — | Series compensation resistor | Places LHP zero to cancel ωp2 effect |
+Given targets **$(V_{\text{ref}}, V_{\text{in}}, V_{\text{out}}, I_{\text{load}}, C_{\text{load}})$**:
+
+1. **Feedback divider (`R0`, `R1`):** Allocate $I_{\text{div}} \approx 0.5\text{–}1\% \cdot I_{\text{load}}$ (or lower for ultra-low-power designs), giving $R_1 = V_{\text{ref}} / I_{\text{div}}$ and $R_0 = (V_{\text{out}} - V_{\text{ref}}) / I_{\text{div}}$.
+2. **Pass PMOS (`M2`):** Start near minimum $L$ (or slightly above $L_{\min}$ if higher $r_{o2}$ / PSRR is needed) and scale total width (multi-finger) to deliver $I_{\text{load,max}}$ at minimum dropout $V_{\text{in,min}} - V_{\text{out}}$ while keeping `M2` in saturation.
+3. **Bias mirror (`M5`, `M6`):** Choose $I_{\text{bias}}$ and mirror ratio $N_{\text{mir}}$ to set error-amp tail current $I_{\text{tail}} = N_{\text{mir}} I_{\text{bias}}$. Use long $L$ ($\ge 4 L_{\min}$) for low current mismatch.
+4. **Error-amp diff pair (`M0`, `M1`) & load (`M3`, `M4`):** Use long $L$ ($\ge 2\text{–}4 L_{\min}$) for high intrinsic gain $A_{v1} = g_{m1}(r_{o1} \parallel r_{o3})$, low $1/f$ noise, and low offset.
+5. **Compensation (`Cc`, `Rz`):** Size `Cc` to set unity-gain bandwidth $\text{GBW} \approx \beta g_{m1} / C_c$ well below the non-dominant output pole $\omega_{p2}$, and choose nulling resistor $R_z > 1/g_{m2}$ to move the right-half-plane Miller zero into the left half-plane ($\omega_z = -1/[(R_z - 1/g_{m2}) C_c]$) near $\omega_{p2}$ to boost phase margin to $\ge 45\text{–}60^\circ$ across the full load-current range (including light load!).
 
 ---
 
-## Initial Sizing Methodology
+## 4. Small-Signal Formulas & Trade-Offs
 
-Given user specs: **Vref**, **Vin**, **Vout**, **Iload**, **Cload**.
+### Loop Gain, Poles, and Zero
 
-### Step 1 — Feedback Resistors R0, R1
+$$T_0 = \beta \cdot A_{v1} \cdot g_{m2} r_{o2}, \qquad A_{v1} = g_{m1}(r_{o1} \parallel r_{o3}), \qquad \text{GBW} \approx \frac{\beta g_{m1}}{C_c}$$
 
-From the regulation condition:
+| Pole / Zero | Approximate Expression | Design Note |
+|---|---|---|
+| Dominant pole $\omega_{p1}$ | $\approx \dfrac{1}{A_{v1} g_{m2} r_{o2} (r_{o1}\parallel r_{o3}) C_c}$ (Miller-multiplied) | Sets DC-to-GBW roll-off ($\omega_{p1} \approx \text{GBW}/T_0$) |
+| Output pole $\omega_{p2}$ | $\approx \dfrac{g_{m2}}{C_L}$ (when $C_L \gg C_c$) | Moves inward at **light load** ($g_{m2} \propto \sqrt{I_{\text{load}}}$ drops) — always check light-load stability! |
+| Compensation zero $\omega_z$ | $= -\dfrac{1}{(R_z - 1/g_{m2}) C_c}$ | RHP if $R_z = 0$; LHP when $R_z > 1/g_{m2}$ |
+| High-freq pole $\omega_{p3}$ | $\approx \dfrac{1}{R_z C_S}$, $C_S \approx C_{g2} \parallel C_c$ | Keep $\omega_{p3} \ge 2\text{–}3 \times \text{GBW}$ |
 
-```
-R0 / R1 = Vout/Vref − 1
+### Regulation & PSRR
 
-Select I_div = 1% × Iload   (current through divider)
-→ R0 + R1 = Vout / I_div
-→ R1 = Vref / I_div
-→ R0 = (Vout − Vref) / I_div
-```
+- **DC output impedance (load regulation):** $Z_{\text{out}}(0) \approx \dfrac{1}{\beta A_{v1} g_{m2}}$
+- **DC line regulation:** $\dfrac{\Delta V_{\text{out}}}{\Delta V_{\text{in}}} \approx \dfrac{1}{T_0}$ (ignoring supply feedthrough of the error-amp bias/mirror).
+- **PSRR across frequency:**
+  - **At DC:** $\text{PSRR}(0) \approx T_0$ (higher $A_{v1}$, $g_{m2}$, and $r_{o2}$ improve DC PSRR).
+  - **Mid-band (above $\omega_{p1}$, below GBW):** Loop gain rolls off at $-20\text{ dB/dec}$, so PSRR degrades accordingly.
+  - **High frequency (above GBW):** The error amp loses control. Supply ripple couples through `M2` ($r_{o2}$ and $C_{gd2}$), so supply-to-output transfer approaches $g_{m2} r_{o2} / (1 + g_{m2} r_{o2}) \approx 1$ (0 dB rejection) unless shunted to ground by the low impedance of `CL` ($1/(\omega C_L)$) or isolated by a cascode/pre-regulator.
 
-### Step 2 — Pass Transistor M2 (PMOS)
+### Output-Referred Noise
 
-M2 must supply the full Iload with a small drain-source voltage (low dropout). Start with minimum L for lowest Vdrop, then scale total W to achieve sufficient gm2 and the required Vout accuracy. Increase the multiplier (number of parallel fingers) until DC output voltage is within ±1% of target.
+- **Thermal noise PSD:**
+  $$S_{v,\text{out,th}} \approx \frac{1}{\beta^2}\left[4kT(R_0 \parallel R_1) + \frac{8kT\gamma}{g_{m1}}\left(1 + \frac{g_{m4}}{g_{m1}}\right)\right]$$
+- **Flicker ($1/f$) noise PSD:**
+  $$S_{v,\text{out},1/f}(f) \approx \frac{2K}{\beta^2 C_{\text{ox}} f}\left[\frac{1}{W_1 L_1} + \frac{1}{W_4 L_4}\left(\frac{g_{m4}}{g_{m1}}\right)^2\right]$$
+- Maximize $W_1, L_1, L_4$ (and keep $g_{m4}/g_{m1}$ small) to suppress low-frequency noise; maximize $g_{m1}$ for thermal noise.
 
-**DC iteration rule**: if Vout_sim < 0.99 × Vout_target, increase M2 multiplier; if Vout_sim > 1.01 × Vout_target, decrease it.
-
-### Step 3 — Bias Current Mirror M5 / M6 (NMOS)
-
-```
-Ibias = Iload / 1000          (e.g. 100 µA for Iload = 100 mA)
-I_tail = Ibias × N_mirror     (default N = 10)
-```
-
-Use a long L for M6 to reduce current mismatch from channel-length modulation (ΔI/I ∝ 1/L).
-
-### Step 4 — Differential Pair M0 / M1 (NMOS, matched)
-
-Use a long L (≥ 2× Lmin) for high intrinsic gain (gm·ro) and good matching. This directly determines offset, noise, and regulation accuracy.
-
-### Step 5 — Current Mirror Load M3 / M4 (PMOS, matched)
-
-Use a very long L (≥ 4× Lmin) for high ro, which maximises first-stage gain Av1 = gm1 × (ro1 ∥ ro3). High Av1 is the primary driver of loop gain and therefore load regulation.
-
-### Step 6 — Compensation Network
-
-```
-Cc (initial) ≈ Cload / 5000
-Rz: choose so that ωz ≈ GBW
-```
-
-The zero at ωz = 1/(Rz · Cc) should approximately cancel the phase loss from the output pole ωp2 at the gain crossover frequency.
-
----
-
-## Theoretical Formulas
-
-### Key Small-Signal Quantities
-
-```
-β   = R1 / (R0 + R1) = Vref / Vout        (feedback factor)
-Av1 = gm1 × (ro1 ∥ ro3)                   (error-amp first-stage DC gain)
-gm  = √(2 · µ · Cox · (W/L) · Id)         → increase via W; reduce Id to lower noise
-ro  ∝ 1 / (λ · Id)                        → increase via longer L
-```
-
-### Loop Gain and GBW
-
-**DC loop gain:**
-```
-T0 = β × Av1 × gm2 × ro2
-```
-
-**Gain-bandwidth product:**
-```
-GBW ≈ β × gm1 / Cc
-```
-
-### Poles and Zero
-
-| Frequency | Expression | Notes |
-|-----------|-----------|-------|
-| ωp1 (dominant) | ≈ 1 / (T0 · ro2 · CL) | Set by CL and loop gain; very low frequency |
-| ωp2 (output) | ≈ gm2 / CL | Push out by increasing gm2 or reducing CL |
-| ωz (compensation zero) | ≈ −1 / [(Rz − 1/gm2) · Cc] | Place near GBW to recover phase |
-| ωp3 (parasitic) | ≈ −1 / (Rz · CS) | Target ωp3 ≥ 2 × GBW |
-
-where `CS = (Cn · Cc · CL) / (Cn · Cc + Cn · CL + Cc · CL)` and Cn is the gate capacitance of M2.
-
-**Stability target:** ωz ≈ GBW and ωp3 ≥ 2 × GBW, giving phase margin ≥ 45–60°.
-
-### Load Regulation
-
-Output impedance determines how much Vout shifts with load current:
-
-```
-Zout(s) ≈ (1 + s · Cc · (ro1 ∥ ro3)) / (β · Av1 · gm2)
-```
-
-At DC, Zout → 1 / (β · Av1 · gm2), so high loop gain minimises the static output error.
-
-### Line Regulation
-
-How much Vout shifts with Vin variation:
-
-```
-ΔVout / ΔVin ≈ 1 / (β · Av1 · gm2 · ro2)
-```
-
-High loop gain and high pass-device output resistance ro2 improve line regulation. At high frequencies the error amplifier cannot respond fast enough, and line regulation degrades.
-
----
-
-## PSRR: Formula and Intuition
-
-```
-PSRR(s) ≈ [gm2 · (ro1 ∥ ro3) · s · Cc + 1/ro2] / (β · Av1 · gm2)
-```
-
-**DC PSRR** is dominated by the loop gain: PSRR(0) ≈ T0 / (gm2 · ro2). High Av1 and high gm2 improve DC PSRR.
-
-**High-frequency PSRR degradation** is caused by the pass device M2. At frequencies above the loop gain bandwidth, the error amplifier can no longer actively correct for supply variation. VIN couples directly to VOUT through M2's drain-source channel and gate-drain capacitance Cgd2. Because M2 is a common-source stage with its gate driven by a slow error amp at high frequencies, it behaves like a low-resistance path between VIN and VOUT with approximately:
-
-```
-PSRR_HF ≈ gm2 · ro2 / (1 + gm2 · ro2)  →  close to unity (0 dB) at very high f
-```
-
-In practice, the output decoupling capacitor CL provides a low-impedance path to ground at high frequencies and partially restores PSRR, but the fundamental limit comes from the pass device. This is why active supply pre-regulation or cascode pass devices are used in high-PSRR designs.
-
-**Tuning PSRR:**
-
-| Action | Effect |
-|--------|--------|
-| ↑ Av1 (↑W1 or ↓L1) | ↑ DC PSRR |
-| ↑ gm2 (↑W2) | ↑ DC PSRR |
-| ↑ ro2 (↑L2) | ↑ DC PSRR |
-| ↑ Cc | ↑ mid-frequency PSRR (trades against load regulation at high freq) |
-
----
-
-## Noise Referred to Output
-
-### Thermal Noise
-
-```
-Vn²_out = (1/β²) × [4kT(R0 ∥ R1) + 8kTγ · (gm1 + gm4) / gm1²]
-```
-
-The first term is resistor divider noise; the second is transistor channel noise from the differential pair (M0/M1) and mirror load (M3/M4). Both are divided by β², so a larger feedback factor (output closer to Vref) reduces referred noise.
-
-### Flicker (1/f) Noise
-
-```
-Vn²_out = (2K / β² · Cox · f) × [1/(W1 · L1) + (1/(W4 · L4)) · (gm4/gm1)²]
-        ≈ (2K / β² · Cox · f) × [1/(W1 · L1) + µp · L1 / (µn · W1 · L4²)]
-```
-
-Flicker noise dominates at low frequencies. Increasing the area of the differential pair (W1 · L1) and mirror load (W4 · L4) reduces it. The crossover from 1/f to thermal noise defines the 1/f corner frequency.
-
-### Noise Optimization
-
-| Frequency range | Primary actions |
-|-----------------|----------------|
-| Low freq (1/f dominant) | ↑ W1 (best with L1 also ↑ proportionally); ↑ L4 |
-| High freq (thermal dominant) | ↑ gm1 (↑W1); ↓ gm4 (↓W4 or ↑L4) |
-
----
-
-## Compensation Trade-off: Cc vs Phase Margin vs Output Pole
-
-The Miller capacitor Cc creates the dominant pole at ωp1 ≈ GBW/T0 (very low frequency) and sets the gain crossover at GBW ≈ β · gm1 / Cc.
-
-| Adjustment | PM | PSRR | Load Reg (HF) | GBW |
-|------------|----|----|----|----|
-| ↑ Cc | ↑ (GBW↓, more phase margin) | ↓ (high-freq rejection worsens) | ↓ | ↓ |
-| ↓ Cc | ↓ | ↑ | ↑ | ↑ |
-| ↑ Rz | Move ωz toward GBW (corrects PM) | Marginal effect | Minor | — |
-| ↓ Rz | ωz moves away from GBW | — | — | — |
-
-The key insight is that Cc creates a trade-off between stability (larger Cc) and high-frequency rejection (smaller Cc). The compensation zero from Rz cancels the phase loss caused by ωp2 without moving the gain crossover, so tuning Rz is the primary tool for phase margin adjustment once Cc is set.
-
-Output pole ωp2 ≈ gm2/CL moves with both the pass device transconductance and the load capacitance. A larger CL (heavier decoupling) pushes ωp2 inward, making stability harder and requiring either more Cc or a higher gm2.
-
----
-
-## Trade-off Table: Tuning Each Device
+### Device Tuning Summary
 
 | Adjustment | Improves | Degrades |
-|-----------|----------|---------|
-| ↑ W1 (diff pair wider) | Load reg (LF+HF), Line reg, PSRR, Noise, Offset | PM (GBW↑ → less phase margin) |
-| ↓ L1 (diff pair shorter) | gm1↑, Load reg (LF), Line reg (LF) | gm·ro↓ (Av1↓), 1/f noise↑, Offset |
-| ↑ W2 (pass transistor wider) | Output accuracy, Load/Line reg, PSRR | ωp3↓ (Cgg2↑ → PM↓) |
-| ↓ W2 and ↓ L2 (same ratio) | ωp3↑ (PM↑) | gm2↓ (regulation↓) |
-| ↑ L4 (load mirror longer) | Av1↑, 1/f noise↓, Offset, PSRR | Speed (pole at mirror node slows) |
-| ↑ Cc | PM (GBW↓) | PSRR (↓), Load reg (HF↓) |
-| ↓ Cc | PSRR, Load reg (HF) | PM↓ |
-| ↑ Rz | ωz↑ → adjust PM correction | ωp3↓ (through CS path) |
-| ↓ Rz | ωp3↑ | ωz↓ → may lose PM correction |
-
-**Decision rule:** identify the spec with the least margin, then select the adjustment that improves it without pushing a near-failing spec into violation.
+|---|---|---|
+| ↑ $W_1$ (diff pair) | Load/line reg, DC PSRR, noise, offset | Phase margin (GBW ↑) |
+| ↑ $L_1, L_4$ | $A_{v1}$, $1/f$ noise, offset, DC PSRR | Mirror/internal pole frequency |
+| ↑ $W_2$ (pass PMOS) | Dropout, $g_{m2}$, DC reg | $C_{g2}$ ↑ ($\omega_{p3}$ ↓, area ↑) |
+| ↑ $C_c$ | Phase margin (GBW ↓) | Mid-band PSRR, transient speed |
+| Tune $R_z$ ($> 1/g_{m2}$) | Places LHP zero to recover phase margin | Excess $R_z$ pulls $\omega_{p3}$ inward |
+| ↑ $C_L$ | High-freq PSRR, burst droop | Pulls $\omega_{p2}$ inward (harder stability at light load) |
 
 ---
 
-## Context for SAR ADC Use
+## How to Verify an LDO
 
-### Required PSRR at fs/2
-
-For a 10-bit SAR ADC with fs = 100 MS/s and VFS = 1 V, the target at fs/2 = 50 MHz is:
-
-- 1 LSB ≈ 1 mV
-- Supply noise budget ≈ 0.5 LSB ≈ 0.5 mV (allowing 6 dB margin)
-- If board-level supply has 10 mV ripple at 50 MHz: PSRR ≥ 26 dB minimum, ≥ 40 dB with guard-band
-
-In practice, 40–60 dB PSRR at fs/2 is a common design target. At DC and low frequencies the loop gain provides 60–80 dB, degrading toward 0 dB at frequencies well above the LDO bandwidth (~1–10 MHz for a typical LDO). The output CL provides additional attenuation beyond the LDO bandwidth.
-
-### Burst Current from CDAC Switching
-
-At the start of each bit-trial the SAR switches a subset of CDAC capacitors, injecting a charge packet into VOUT. The current pulse has:
-
-- **Amplitude**: proportional to CDAC total capacitance × VLSB / τ_switch, where τ_switch is the switch on-time (nanosecond scale)
-- **Duration**: one bit-cycle (1/(N · fs) for synchronous SAR)
-- **Repetition**: fs for the largest cap switch (MSB), faster for lower bits in asynchronous architectures
-
-The LDO must supply this burst without allowing VOUT to droop by more than ~0.5 LSB. The output impedance Zout at the switching frequency directly sets the droop:
-
-```
-ΔVout ≈ ΔI_burst × Zout(f_switch)
-```
-
-For a 10-bit, 100 MS/s SAR with 1 pF CDAC and 1 V swing, ΔI_burst ≈ 100 µA; requiring ΔVout < 0.5 mV demands Zout < 5 Ω at the switching frequency. This is achievable with a large CL and a fast error amplifier, but it requires careful co-design of the LDO bandwidth and decoupling capacitor placement.
-
-An on-chip decoupling capacitor placed directly at the CDAC supply node reduces the effective impedance seen by the burst current and relaxes the LDO transient requirement.
+1. **DC Operating Point, Line & Load Regulation:**
+   - Sweep $I_{\text{load}}$ from $I_{\text{min}}$ (light load) to $I_{\text{max}}$ (full load) and $V_{\text{in}}$ from $V_{\text{in,min}}$ to $V_{\text{in,max}}$ across PVT.
+   - Verify `VOUT` accuracy (typically within $\pm 1\%$), dropout headroom, quiescent current $I_Q$, and that every device (`M0`–`M6`, `M2`) stays in saturation.
+2. **Loop Stability (`stb` analysis):**
+   - Insert an `iprobe` in the feedback loop (e.g., between `VOUT` and `R0`) and run Spectre `stb` across **light load, nominal load, and max load**, plus PVT and `CL` extremes.
+   - **Pass criteria:** DC loop gain $T_0 \ge 50\text{–}60\text{ dB}$, phase margin $\text{PM} \ge 45\text{–}60^\circ$, gain margin $\ge 10\text{ dB}$ at **all** load currents (light load is usually worst-case!).
+3. **AC PSRR & Output Impedance:**
+   - Apply AC `mag=1` on `VIN` (`ac start=1 stop=10G`) and plot $\text{PSRR}(f) = -20\log_{10}|V_{\text{out}}(f)/V_{\text{in}}(f)|$. Check PSRR at DC, 1 MHz, and $f_s/2$.
+   - Inject AC `1 A` current probe at `VOUT` to plot $|Z_{\text{out}}(f)|$ and confirm $|Z_{\text{out}}(f_{\text{switch}})|$ meets the burst droop budget.
+4. **Transient Load-Step & CDAC Burst Droop:**
+   - Apply fast current pulses mimicking CDAC bit-switching bursts (and a full $I_{\text{min}} \leftrightarrow I_{\text{max}}$ step).
+   - Verify peak droop/overshoot $< 0.5\text{ LSB}$ (or within reference budget) and well-damped recovery (no ringing).
+5. **Output Noise (`noise` analysis):**
+   - Integrate `noise` PSD over the ADC signal bandwidth (e.g. `10 Hz` to $f_s/2$) and confirm integrated RMS noise fits inside the supply/reference noise budget.

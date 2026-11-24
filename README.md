@@ -1,24 +1,41 @@
 # sar-adc-skills
 
-SAR ADC design knowledge base for agentic IC design — from system-level architecture to transistor-level implementation and verification.
+Process-independent SAR ADC design knowledge base and verification toolkit for agentic IC design — covering system-level budgeting, circuit topologies, top-level integration, Verilog-A behavioral modeling, and standalone Spectre testbenches.
 
 ## What This Skill Covers
 
 | Topic | Reference |
 |-------|-----------|
-| SAR operation, CDAC-centered architecture, sync vs async | `core-architecture.md` |
-| Design flow, noise budgets, switching schemes, sampling | `design-and-tradeoffs.md` |
-| PVT, metastability, BER, reference path, supply integrity | `robustness-and-system.md` |
-| CDAC: charge redistribution, cap array, DAC switches, differential operation | `cdac.md` |
-| StrongArm comparator: topology, sizing, offset trim, noise | `comparator.md` |
-| Bootstrap switch: gate boosting, Ron flatness, integration with CDAC | `bootstrap_switch.md` |
-| Async SAR logic: latch chain, DCTRL generation, DAC switch mapping | `sar-logic.md` |
-| Top-level integration: module connectivity, signal flow, cross-connections | `integration.md` |
-| Spectre simulation: coherent sampling, strobe, ADCToolbox, per-block verification | `simulation-and-verification.md` |
-| LDO regulator for clean ADC supply | `ldo.md` |
-| Taped-out 11-bit reference design with full module hierarchy and sizing | `sar-adc-11b-zzs.md` |
+| SAR operation, residue viewpoint, CDAC-centered architecture, sync vs. async | [core-architecture.md](sar-adc-skill/references/core-architecture.md) |
+| Design flow, noise budgets (Q, kT/C, comparator, jitter), switching schemes, redundancy | [design-and-tradeoffs.md](sar-adc-skill/references/design-and-tradeoffs.md) |
+| PVT vs. Monte Carlo, metastability, BER, reference path, input drive, supply integrity | [robustness-and-system.md](sar-adc-skill/references/robustness-and-system.md) |
+| CDAC: charge redistribution, differential kT/C sizing, binary & sub-radix-2 arrays, switches | [cdac.md](sar-adc-skill/references/cdac.md) |
+| Dynamic comparators: StrongARM & Miyahara two-stage, sizing, noise, offset, FoM1/FoM2 | [comparator.md](sar-adc-skill/references/comparator.md) |
+| Bootstrapped sampling switch: gate boosting, `Ron` flatness, feedthrough, CDAC interface | [bootstrap_switch.md](sar-adc-skill/references/bootstrap_switch.md) |
+| Sync & async SAR logic: latch chain, `NOR3` stop logic, `VALID_L`/`EN` race, switch polarity | [sar-logic.md](sar-adc-skill/references/sar-logic.md) |
+| Top-level integration: module connectivity, polarity conventions, bring-up debug | [integration.md](sar-adc-skill/references/integration.md) |
+| Spectre simulation: coherent sampling, `strobeonly`, `noiseruns=1`, ADCToolbox, Maestro pitfalls | [simulation-and-verification.md](sar-adc-skill/references/simulation-and-verification.md) |
+| PMOS-pass LDO regulator: Miller compensation, DC/HF PSRR, noise, transient verification | [ldo.md](sar-adc-skill/references/ldo.md) |
 
-Every module reference includes a **"How to Verify"** section with Spectre testbench setup, analysis commands, metric extraction, and pass/fail criteria.
+Every circuit reference includes a **"How to Verify"** section with Spectre setup, analysis commands, metric extraction, and pass/fail criteria. All guides and testbenches are **100% process-independent** — plug in your own PDK models and DUT subcircuits.
+
+## Bundled Assets
+
+### Comparator Spectre Testbench Suite (`sar-adc-skill/assets/tb/comparator/`)
+
+Standalone, process-independent Spectre testbenches and a Python runner for dynamic comparator characterization (verified against Cadence ADE Maestro):
+
+- **`tb_cmp_pss_pnoise.scs`** — PSS + sampled full-spectrum PNOISE (`harms=100`, `autotstab=yes`, `noisetype=sampled`, `pm0 jitterevent`, exact `A_eff = V_OBSERVE / vidin` gain)
+- **`tb_cmp_delay.scs`** — clock-to-Q propagation delay and energy per comparison
+- **`tb_cmp_trannoise.scs`** — multi-cycle transient noise (`noiseruns=1`) with probit CDF extraction
+- **`tb_cmp_offset.scs` + `cmp_bisect.va`** — single-run Verilog-A binary-search offset extraction
+- **`run_cmp_tb.py`** — automated batch runner and FoM1/FoM2 summary table generator
+
+See [assets/tb/comparator/README.md](sar-adc-skill/assets/tb/comparator/README.md) for the DUT pin contract and CLI usage.
+
+### Verilog-A Behavioral Models (`sar-adc-skill/assets/va/`)
+
+Baseline 4-bit Verilog-A models for phased verification (behavioral -> hybrid -> transistor-level): `L2_cdac_4b_ideal.va`, `L2_comparator_ideal.va`, `L2_logic_4b_sync.va`, `L3_logic_4b_async.va`, `_va_dac_4b.va`, `_va_dac_4b_se.va`, and `sar_4b_se_ideal.va`.
 
 ## Quick Start
 
@@ -29,14 +46,16 @@ Install as a skill for your AI coding agent:
 ln -s /path/to/sar-adc-skills/sar-adc-skill .claude/skills/sar-adc
 ```
 
-The skill activates on SAR ADC design questions — architecture, CDAC switching, comparator noise, bootstrap sampling, async logic, simulation setup, or ENOB analysis.
+The skill activates on SAR ADC design questions — architecture, noise budgeting, CDAC switching, comparator noise/FoM, bootstrap sampling, async logic timing, Spectre simulation setup, or ENOB analysis.
 
 ## Repository Layout
 
-```
+```text
 sar-adc-skill/
-├── SKILL.md              # Skill definition and read-order guide
-├── references/           # 11 technical references (111 KB total)
+├── SKILL.md                      # Skill definition and read-order guide
+├── agents/
+│   └── openai.yaml               # Agent interface metadata
+├── references/                   # 10 process-independent technical references
 │   ├── core-architecture.md
 │   ├── design-and-tradeoffs.md
 │   ├── robustness-and-system.md
@@ -46,23 +65,23 @@ sar-adc-skill/
 │   ├── sar-logic.md
 │   ├── integration.md
 │   ├── simulation-and-verification.md
-│   ├── ldo.md
-│   └── sar-adc-11b-zzs.md
-├── assets/va/            # Verilog-A behavioral models (4-bit SAR)
-└── evals/                # Evaluation prompts for skill testing
+│   └── ldo.md
+├── assets/
+│   ├── tb/comparator/            # Standalone Spectre comparator TB suite + runner
+│   └── va/                       # Verilog-A behavioral models (4-bit SAR)
+└── evals/
+    └── evals.json                # Evaluation prompts for skill testing
 ```
 
 ## Design Depth
 
-The skill supports the full design chain:
+The skill supports the full design chain without locking into a specific foundry or PDK:
 
-1. **Specs to budgets** — ENOB target to noise/timing allocation
-2. **Architecture** — fully differential, charge-redistribution CDAC, dynamic comparator, async/sync SAR
-3. **Circuit implementation** — transistor topologies, sizing guidelines, silicon-proven examples
-4. **Integration** — module connectivity, polarity conventions, differential cross-connections
-5. **Verification** — per-block (PSS+Pnoise, THD, DNL/INL, timing) and full-ADC (ENOB, SNDR, SFDR)
-
-Includes a taped-out 11-bit reference design with complete module hierarchy, transistor sizing, and simulation parameters.
+1. **Specs to budgets** — ENOB/SNDR target to quantization, kT/C, comparator, jitter, and timing allocation
+2. **Architecture** — fully differential charge-redistribution CDAC, binary or redundant array, dynamic comparator, sync/async SAR
+3. **Circuit implementation** — transistor topologies, first-order sizing rules, and common failure modes
+4. **Integration** — module connectivity, differential polarity conventions, and phased bring-up
+5. **Verification** — per-block (PSS+PNOISE, delay/energy, trannoise, offset, THD, DNL/INL, stability) and full-ADC (ENOB, SNDR, SFDR)
 
 ## Related Repositories
 

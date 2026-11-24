@@ -1,80 +1,52 @@
-# Robustness And System
+# Robustness And System Closure
 
-Use this file for PVT, Monte Carlo interpretation, metastability, BER, references, input drive, supply design, and product-level concerns.
+Use this file for PVT and Monte Carlo interpretation, metastability and BER, reference strategy, input drive, supply/clock integrity, and product-level closure.
 
-## PVT Thinking
+## PVT And Monte Carlo Thinking
 
-- Separate local variation from global variation.
-- Local variation matters strongly for matching-sensitive structures such as the CDAC.
-- Global variation more directly affects speed, operating point, and timing.
-
-Important practical warning:
-- do not mechanically stack worst-case corners and local Monte Carlo pessimism in a way that becomes unrealistically conservative.
-
-If the PDK provides global-only corners such as `SSG` or `FFG`, those are often better starting points for combined variation analysis.
-
-## Margin Philosophy
-
-Two valid strategies exist:
-- leave conservative margin,
-- or deliberately screen and bin slower parts.
-
-That is both a circuit decision and a product decision.
+- **Separate global variation from local mismatch:**
+  - Global corners (`ss`/`tt`/`ff`, voltage, temperature) primarily govern speed, operating points, and loop timing closure.
+  - Local mismatch governs CDAC DNL/INL and comparator random offset.
+- **Avoid unrealistic pessimism:** Mechanically stacking worst-case local+global corners (`SS` + full local Monte Carlo) double-counts variation. When the PDK provides global-only corners (`SSG`/`FFG`), combine those with local Monte Carlo instead.
+- **Supply / margin strategy:** Leaving full timing margin at nominal `VDD` across `ss` is cleanest; when `ss` timing is marginally tight, document whether supply boost at slow corners (or speed binning) is an acceptable system-level knob — and keep post-layout RC slowdown (often 10–25%) in the margin budget from day one.
 
 ## Metastability And BER
 
-- In a well-designed ADC, catastrophic wrong-code events should mainly trace back to metastability.
-- More available time is usually the cleanest mitigation.
-- More time reduces the metastability tail exponentially.
-- Loading latch nodes or adding poorly chosen detection structures can make BER worse rather than better.
-- Async SAR often behaves better than sync SAR because time is shared rather than hard-sliced.
-
-Also keep the MTF view in mind:
-- a BER that looks numerically small can still imply frequent failure at high sample rate.
+- In a functionally verified SAR ADC, rare catastrophic code errors trace primarily to **comparator metastability** on near-zero residues.
+- Metastability probability decays **exponentially** with available regeneration time:
+  $$P_{\text{meta}} \propto \exp\!\left(-\frac{t_{\text{avail}}}{\tau}\right)$$
+  giving the comparator more regeneration time (or smaller $\tau$) is the most effective lever.
+- **Counterproductive "fixes":** Adding heavy metastability-detection circuitry onto the latch nodes increases $C_{\text{latch}}$ and $\tau$, often making BER *worse*.
+- **Async advantage:** Asynchronous SAR naturally lets a single slow metastable bit borrow slack from the other $N-1$ fast bits, improving BER dramatically over fixed-slot synchronous SAR.
+- **MTF reality check:** At 1 GS/s, a BER of $10^{-12}$ still means one error every ~17 minutes; size BER against target Mean Time to Failure (MTF), not an arbitrary number.
 
 ## Reference Path
 
-Two common strategies:
-- large decap to keep ripple small,
-- or a fast reference buffer to recover quickly.
+Two primary strategies:
+- **Large on-chip/off-chip decoupling capacitor:** Zero static power, but costs area and can ring with package/bondwire inductance (`L_pkg` + `C_decap`).
+- **Fast reference buffer:** Active recovery between conversions and smaller area, at the cost of power and stability/noise co-design.
 
-Tradeoffs:
-- decap costs area and can ring with package inductance,
-- buffer costs power and demands enough bandwidth and transient strength.
+Check reference droop across a worst-case full-scale switching sequence (including input-dependent reference current, which turns into distortion!).
 
-## Input Path
+## Input Drive Path
 
-Check:
-- source impedance,
-- whether an input buffer or THA is required,
-- settling accuracy inside the sample window,
-- anti-alias filtering,
-- amplitude and common-mode matching.
+Verify:
+- Source impedance $R_s$ and sampling settling inside $T_{\text{sample}}$ (remember kickback from the sampling switch and CDAC back onto the driver!),
+- Whether a wideband high-linearity input buffer / THA is needed (for high-$f_s$, low-distortion systems, buffer output impedance and metal routing resistance must stay very low),
+- Anti-aliasing filter bandwidth and input amplitude/common-mode matching.
 
-## Supply And Clock
+## Supply And Clock Integrity
 
-- Supply integrity matters because ripple, IR drop, and inductive effects can hurt the system even when the core looks fine.
-- Clock quality matters because jitter can become the dominant SNR ceiling at high input frequency.
+- **Supply:** IR drop, bondwire $L\,di/dt$, and shared digital/analog rails inject deterministic spurs and degrade ENOB; decouple locally near comparator and SAR logic.
+- **Clock:** At high $f_{\text{in}}$, aperture jitter imposes a hard SNR ceiling ($\text{SNR}_{\text{jit}} = -20\log_{10}(2\pi f_{\text{in}} \sigma_t)$) that no core improvement can overcome.
 
-## Product-Level Closure
+## Product-Level Closure Checklist
 
-A shippable ADC is not just the SAR core.
-
-Real closure also includes:
-- usable full swing,
-- timing margin,
-- reference recovery,
-- sampling linearity,
-- PVT coverage,
-- BER,
-- supply quality,
-- input-drive assumptions,
-- and peripheral integration.
-
-Use this file when the user asks for:
-- PVT interpretation,
-- Monte Carlo realism,
-- metastability and BER,
-- reference strategy,
-- input-drive strategy,
-- or the difference between a teaching model and a product-level ADC.
+Moving from a schematic core to a shippable SAR ADC requires closing:
+- usable full swing after top-plate parasitics,
+- pre- and post-layout PVT timing margin (including slow corners and race margins),
+- reference recovery and supply PSRR,
+- sampling linearity up to Nyquist,
+- CDAC mismatch DNL/INL and comparator offset/trim,
+- metastability / BER target,
+- clock jitter and input-driver co-simulation.

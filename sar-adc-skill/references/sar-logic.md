@@ -1,468 +1,165 @@
-# SAR Logic Implementation
+# SAR Logic Design & Verification Reference
 
-Use this file for SAR logic architecture, async latch chain circuit implementation, DAC switch polarity convention, output latching, and Verilog-A behavioral model correspondence. Source material is the taped-out SAR_11B_ZZS (TSMC 28nm HPC+, 0.9V) and the bundled Verilog-A assets.
-
----
-
-## 1. Total Architecture & Signal Interface
-
-### Port Table
-
-| Port | Dir | Description |
-|------|-----|-------------|
-| CLKS | input | Sample clock (external). Rising = enter sample. Falling = start conversion. |
-| DCMPP, DCMPN | input | Comparator differential outputs |
-| CMPCK | output | Comparator clock, generated internally by logic (async) or passed through (sync) |
-| VBOTP\<11:1\>, VBOTN\<11:1\> | output | CDAC bottom plate voltages, driven to VREFP or VREFN each bit cycle |
-| DOUT\<11:0\> | output | Final digital output, latched at end of conversion |
-| RSTP | input | Global reset (active low in 11b ZZS) |
-| VREFP, VREFN | inout | Reference voltages (0.9V / 0V in 11b ZZS) |
-
-### Architecture Block Diagram
-
-```
-CLKS ──────────────────────────────────────────────┐
-                                                    │
-DCMPP ──┐                                          │
-DCMPN ──┴──> [L5_LATCH_CELL<11>] ──ENB_NEXT──>    │
-             [L5_LATCH_CELL<10>] ──ENB_NEXT──>     │
-             ...                                    │
-             [L5_LATCH_CELL<1>]  ──ENB_NEXT──>     │
-             [L5_LATCH_CELL_LSB<0>]                 │
-                    │DP/DN per bit                  │
-                    ↓                               │
-             [L5_DAC_SWI x2]                        │
-             ├── VBOTP<11:1>  → CDAC_P bottom       │
-             └── VBOTN<11:1>  → CDAC_N bottom       │
-                                                    │
-             CMPCK ──────────────────────────────── ┘
-             (via BUFFD2 chain, driven by latch chain)
-
-             DFF x12 (clocked by CLKS↑) → DOUT<11:0>
-```
-
-### When to Use Each Implementation
-
-| Implementation | Use When |
-|----------------|----------|
-| Synchronous SAR | Medium speed, power-limited, easy timing closure |
-| Asynchronous SAR (L5_LATCH_CELL chain) | High speed, dynamic time allocation per bit |
+This reference covers synchronous and asynchronous SAR control logic, dynamic SRAM/16T latch-chain bit slices, global asynchronous clock/stop generation, DAC switch polarity, internal timing races, and verification checks.
 
 ---
 
-## 2. Full Conversion Timing
+## 1. Signal Interface & System Role
 
-One complete conversion cycle, step by step:
-
-```
-CLKS ──────╮                              ╭─────
-           │                              │
-           ╰──────────────────────────────╯
-           ↑CLKS↓                         ↑CLKS↑
-
-CLKS↓:  Reset VBOTP/N to initial state (all VBOTP=VREFP, VBOTN=VREFN)
-        Preset MSB: VBOTP<11>=VREFN, VBOTN<11>=VREFP
-        bit_ptr = 11
-
-  ──> CMPCK↑: Fire comparator for bit 11
-  ──> Comparator decides (DCMPP or DCMPN wins)
-  ──> Latch captures result: BP[11] = (DCMPP > DCMPN)
-  ──> Update CDAC: complementary assignment for VBOTP/N[11]
-  ──> CMPCK↓ then ↑: Fire comparator for bit 10
-  ──> ... repeat for bits 10 down to 0 ...
-
-CLKS↑:  Latch DOUT<11:0> = BP[11:0] via DFF
-        Reset VBOTP/N to sample state
-```
-
-Key timing constraint (async): the logic delay from comparator output to CMPCK re-trigger must be longer than CDAC settling time. In 11b ZZS, `t_logic_delay ≈ 200 ps` is set by the buffer chain driving CMPCK.
-
----
-
-## 3. Synchronous vs Asynchronous
-
-### State Machine Comparison
-
-| | Synchronous | Asynchronous |
+| Signal | Direction | Description |
 |---|---|---|
-| CMPCK source | External CLKC (fixed rate) | Internal, driven by latch chain |
-| step decrement | On CLKC↑ | On comparator output reset (↓ edge) |
-| Speed | Fixed per-bit slot = worst case | Dynamic: easy bits finish early |
-| Timing risk | Wasted margin on easy bits | Ring must not outrun CDAC settling |
-| Implementation | D-FF shift register | L5_LATCH_CELL cascade |
-
-### Synchronous Pseudocode
-
-```
-on CLKS↑:  step = N;  clear all DCTRL, DOUT
-on CLKC↑:  step = step - 1
-on DCMPP↑: DOUT[step] = 1;  if step>0: DCTRLN[step] = 1
-on DCMPN↑: if step>0: DCTRLP[step] = 1
-```
-
-### Asynchronous Pseudocode
-
-```
-on CLKS↑:  step = N-1;  clear all DCTRL
-on CLKC↑:  CMPCK = 1                          // first trigger only
-on DCMPP↑ or DCMPN↑:                          // comparator decided
-    CMPCK = 0                                  // close comparator
-    DOUT[step] = (DCMPP > DCMPN)
-    if step >= 1:
-        if DOUT[step]: DCTRLN[step] = 1
-        else:          DCTRLP[step] = 1
-on DCMPP↓ or DCMPN↓:                          // comparator reset complete
-    step = step - 1
-    if step >= 0: CMPCK = 1                    // trigger next bit
-```
+| `CLKS` | Input | External sampling clock. High = sample & reset; falling edge starts conversion; rising edge ends conversion and latches output. |
+| `DCMPP`, `DCMPN` | Input | Differential comparator outputs (active-low convention: both reset to `VDD` when `CMPCK = 0`; one drops to `VSS` on decision). |
+| `CMPCK` | Output | Comparator clock — external (`CLKC`) in synchronous SAR, self-timed internally in asynchronous SAR. |
+| `DOP<N-1:0>`, `DON<N-1:0>` | Output / Internal | Per-bit latched differential decisions driving the CDAC bottom-plate drivers (directly or via inverters/buffers). |
+| `VBOTP`, `VBOTN` | Output | CDAC bottom-plate voltages driven to `VREFP` or `VREFN`. |
+| `DOUT<N-1:0>` | Output | Retimed binary/redundant output code captured by output DFFs at the end of conversion. |
 
 ---
 
-## 4. Async Chain Core: L5_LATCH_CELL
+## 2. Synchronous vs. Asynchronous SAR Logic
 
-The fundamental building block. 11 instances cascade from MSB (bit 11) to LSB (bit 0). The LSB uses L5_LATCH_CELL_LSB (slightly modified termination).
+| Aspect | Synchronous SAR | Asynchronous SAR |
+|---|---|---|
+| `CMPCK` source | External high-speed bit clock ($\ge (N+2) f_s$) | Internal self-timed feedback ring (`VALID_G → CMPCK`) |
+| Bit time allocation | Fixed slot sized for worst-case metastable bit | Dynamically shared: large-residue bits finish fast, small-residue bits borrow slack |
+| Power / clock distribution | High-frequency clock tree overhead | Only $f_s$ clock (`CLKS`) needed externally |
+| Primary timing risk | Wasted margin on easy bits | Self-timed loop can outrun CDAC settling or trigger internal `VALID_L`/`EN` races |
+| Typical hardware | Shift-register sequencer + bit registers | Domino dynamic latch chain (`logic_cell`) + global clock/stop logic |
 
-### Per-Cell Timing Sequence
+### Full Conversion Cycle (Asynchronous)
 
-```
-① ENB_PRE goes LOW  (from previous cell, or CLKS for cell 11)
-② NOR3 → EN = HIGH  (enabled only when: prev done AND comparator valid)
-③ DCMPP/DCMPN drive M6/M9 gates  (comparator already fired via CMPCK)
-④ One side pulls down → cross-couple regenerates
-⑤ DP, DN settle to complementary logic values
-⑥ NAND2 detects DP≠DN → RDY = LOW
-⑦ NAND2 → ENB_NEXT goes LOW  → triggers next latch cell
-⑧ ENB_NEXT also drives CMPCK → comparator fires for next bit
-```
-
-### Transistor Role Table
-
-| Transistor | Type | Role |
-|------------|------|------|
-| M6 | nch_ulvt_mac | DCMPP input path into latch |
-| M9 | nch_ulvt_mac | DCMPN input path into latch |
-| M7, M8 | nch_ulvt_mac | Cross-couple pull-down (regeneration) |
-| M2, M5 | pch_ulvt_mac | Pull-up load |
-| M3, M10 | pch_ulvt_mac | Reset pull-up (force both sides HIGH on reset) |
-| M0 | nch_ulvt_mac | Enable path (gated by EN) |
-| M1 | nch_ulvt_mac | Reset pull-down |
-| M12, M14 | nch_ulvt_mac | DP/DN output driver |
-| M11, M13 | pch_ulvt_mac | DP/DN pull-up |
-
-All transistors: `nch_ulvt_mac` / `pch_ulvt_mac` (ultra-low Vth for speed at 0.9V).
-
-### Standard Cell Control Logic
-
-| Cell | Type | Function |
-|------|------|----------|
-| I15 | NR3D0 (NOR3) | EN = NOR(ENB_PRE, RSTN_GLB_B, VALID_B) — gates latch until previous bit done |
-| I4 | ND2D0 (NAND2) | RDY = NAND(DP, DN_B) — detects regeneration complete |
-| I26 | ND2D0 (NAND2) | ENB_NEXT = NAND(RDY_B, ...) — propagates enable to next cell |
-| I25 | INVD0 | RSTN = INV(ENB_PRE) — local reset from previous enable |
-| C0, C10 | cap | Stabilization on DPB/DNB nodes |
-
-The NOR3 enable gate is the key robustness element: the latch will not activate until the previous cell has completed AND the comparator is in a valid state. This prevents metastability propagation.
-
-### Timing Constraint
-
-```
-t_latch_regen + t_NAND + t_buffer_CMPCK < t_CDAC_settle
-
-In 11b ZZS (28nm, 0.9V): total async loop ≈ 200–300 ps per bit
-```
-
-If CMPCK re-fires before CDAC settles, the comparator sees residual charge redistribution → bit error. Add decoupling caps (DCAP4/DCAP8) near logic supply rails to absorb switching transients.
+1. **Sample & Reset (`CLKS = 1`):** `RSTP = 1`, `RSTN_G = 0`, `STOP = 1`, `CMPCK = 0`. All bit latches reset to their precharge state and CDAC bottom plates return to the sampling state.
+2. **Conversion Start (`CLKS` falls):** `STOP` drops to `0` (`RSTP = 0`, `RSTN_G = 1`). Because the comparator is reset (`DCMPP = DCMPN = VDD` → `VALID_G = 0`), `CMPCK = NOR(VALID_G, STOP)` immediately rises to fire bit $N-1$ (MSB).
+3. **Self-Timed Bit Loop (bits $N-1 \to 0$):**
+   - Comparator evaluates → one of `DCMPP`/`DCMPN` falls to `VSS`.
+   - Active bit slice latches the decision onto `DOP[k]`/`DON[k]`, updates its CDAC bottom-plate switch, asserts `VALID_L[k]`, and pulls `ENB_N[k]` low to arm bit $k-1$.
+   - Globally, `VALID_G = NAND(DCMPP, DCMPN)` rises to `1` → `CMPCK = NOR(VALID_G, STOP)` falls to `0` → comparator resets (`DCMPP = DCMPN = VDD`).
+   - Once comparator resets, `VALID_G` drops back to `0` → `CMPCK` rises again to fire bit $k-1$ (provided `STOP = 0`).
+4. **End of Conversion (`ENB_N[0]` falls):** `VALID_LSB = !ENB_N[0]` goes high, immediately asserting `STOP = 1` to halt `CMPCK` cleanly after exactly $N$ pulses (no spurious $(N+1)$-th comparison). Final codes are captured into output DFFs (on `CLKS` rising or `STOP` rising, depending on whether the latch chain holds codes until `CLKS` or self-resets immediately).
 
 ---
 
-## 5. DAC Switch & DCTRL Polarity
+## 3. Asynchronous Bit Slice: Dynamic SRAM + 16T Domino Latch
 
-### Circuit: Complementary Pass Gate (L5_DAC_SWI)
+A widely used high-speed async bit slice combines a **dynamic cross-coupled SRAM latch** (zero static power, minimal clock-to-CDAC delay) with a compact **4-gate (16T) domino sequencer**:
 
-Two transistors per bit, no inverter needed:
+### Per-Bit Circuit Roles
 
-```
-         VREFP
-           │
-    M1 (pch_mac): G = DCTRL[i]
-           │
-    ────── VBOT[i] ──────
-           │
-    M0 (nch_mac): G = DCTRL[i]
-           │
-         VREFN
-```
+- **Precharge PMOS (`MPR_P`, `MPR_N`):** Controlled by `RSTN = !ENB_P`. While the previous bit has not finished (`ENB_P = 1`, `RSTN = 0`), both `DOP` and `DON` are precharged to `VDD`.
+- **NMOS Pass Gates (`MNT_P`, `MNT_N`):** Controlled by `EN`. When enabled, they pass the active-low comparator outputs `DCMPP`/`DCMPN` directly to `DOP`/`DON` with only ~1 pass-transistor delay (no intervening logic gate on the critical CDAC path!).
+- **Cross-Coupled Latch (`MPL_P/N`, `MNL_P/N`) with Series Foot Switches (`MNL_EN` gated by `VALID_L`, `MNL_RST` gated by `RSTN`):** Off during precharge; once one side of `DOP`/`DON` drops and `VALID_L` rises, the latch locks the state and holds it even after `EN` turns off and the comparator resets.
+- **4-Gate Local Sequencer:**
+  - `RSTN = INV(ENB_P)` — releases precharge when previous bit completes.
+  - `VALID_L = NAND(DOP, DON)` — rises to `1` as soon as either `DOP` or `DON` is pulled low (current bit decided).
+  - `EN = NOR3(ENB_P, VALID_G, VALID_L)` — pass gates open **only** when (1) previous bit finished (`ENB_P = 0`), (2) comparator is still in reset (`VALID_G = 0`, prevents capturing the *previous* bit's decision), and (3) current bit has not yet decided (`VALID_L = 0`).
+  - `ENB_N = NAND(VALID_L, RSTN_G)` — falls to `0` to arm the next bit once `VALID_L = 1` (forced back to `1` during global reset `RSTN_G = 0`).
 
-Same DCTRL drives both gates simultaneously:
+### Polarity Alignment Requirement
 
-| DCTRL | PMOS M1 | NMOS M0 | VBOT | Effect on VTOP |
-|-------|---------|---------|------|----------------|
-| LOW | ON (Vgs = −VDD) | OFF | VREFP | Initial / sample state |
-| HIGH | OFF | ON (Vgs = +VDD) | VREFN | Set bit → VTOP decreases |
-
-Uses `nch_mac` / `pch_mac` (standard Vth, not ulvt) — better matching and lower leakage on bottom plates.
-
-### Polarity Convention (Critical)
-
-```
-Setting a bit (BP[i]=1):
-  VBOTP[i] = VREFN  →  CDAC_P top plate decreases
-  VBOTN[i] = VREFP  →  CDAC_N top plate increases
-  Net differential: VTOPP − VTOPN decreases by 2 × Vref × Ci/Ctotal
-```
-
-**This is opposite to some textbook conventions where setting a bit raises VTOP.** In ZZS, a HIGH DCTRL means VREFN (GND), which pulls VTOP down. The positive side (P) and negative side (N) CDACs are always driven complementarily.
-
-### Charge Redistribution (after sampling)
-
-```
-VTOPP = VIN_P + VREFP − Vref × Σ(BP[i] × Ci) / Ctotal
-VTOPN = VIN_N + VREFP − Vref × Σ(BN[i] × Ci) / Ctotal
-
-Differential residue:
-  VTOPP − VTOPN = (VIN_P − VIN_N) − Vref × Σ((BP[i]−BN[i]) × Ci) / Ctotal
-```
-
-Since BN[i] = 1 − BP[i], the differential step per bit = `2 × Vref × Ci / Ctotal`.
+Because `DOP`/`DON` precharge to `VDD` and NMOS pass gates pull one node low, the comparator **must** present `DCMPP = DCMPN = VDD` during reset and pull one output low during evaluation (2 output inverters for StrongARM; 1 output inverter for Miyahara). Flipping comparator output polarity without flipping the entire SRAM cell (to NMOS pre-discharge + PMOS pass gates + NOR `VALID_L`) breaks both `VALID_G` and bit latching.
 
 ---
 
-## 6. Output Latching
+## 4. Global Asynchronous Clock & Stop Generation
 
-### DFF Array
-
-12× `DFQD1BWP12T30P140` (standard cell D flip-flop, 12T track, 28nm digital library).
+### Recommended Global Clock Ring
 
 ```
-D input:  DCTRLP<11:0>   (from latch cell DP outputs)
-Clock:    CLKS rising edge
-Q output: DOUT<11:0>
+VALID_G   = NAND2(DCMPP, DCMPN)            // 0 in reset, 1 when comparator decides
+CMPCK     = NOR2(VALID_G, STOP)            // 1 to evaluate, 0 to reset or stop
+
+VALID_LSB = INV(ENB_N<0>)                  // 1 when bit 0 finishes
+SR Latch (NOR-type):  S = CLKS, R = VALID_LSB  →  Q = 1 during conversion, QN = 0
+run       = NOR3(CLKS, QN, VALID_LSB)      // 3-input NOR kills CMPCK immediately on LSB!
+STOP      = INV(run)                       // = CLKS | QN | VALID_LSB
+RSTP      = INV(run)                       // separate buffer driving bit-(N-1) ENB_P and RSTN_G
+RSTN_G    = INV(RSTP)
 ```
 
-DCTRLP is used (not DCTRLN) because the positive side encoding directly maps to the binary output: BP[i]=1 means the bit was set.
+**Why the 3-input `NOR3(CLKS, QN, VALID_LSB)` matters:** Using only `NOR2(CLKS, QN)` introduces the SR-latch propagation delay between `VALID_LSB` rising and `STOP` asserting. In fast loops, `VALID_G` can clear first and launch an unwanted $(N+1)$-th comparator pulse before `STOP` arrives. Feeding `VALID_LSB` directly into `NOR3` cuts `VALID_LSB → STOP` latency roughly in half and guarantees **exactly $N$ comparator pulses** across `ss`/`tt`/`ff`.
 
-### MSB Buffer
-
-DCTRLP\<11\> and DCTRLN\<11\> pass through INVD4 buffers (I35, I36) before driving DAC switches, due to higher fan-out on the MSB.
-
-### DOUT Mapping
-
-| DOUT bit | Maps to | Weight |
-|----------|---------|--------|
-| DOUT\<11\> | BP[11], MSB | 2^10 |
-| DOUT\<10\> | BP[10] | 2^9 |
-| ... | ... | ... |
-| DOUT\<1\> | BP[1] | 2^0 |
-| DOUT\<0\> | 0 (LSB, no DAC switch) | — |
-
-DOUT\<0\> is always 0 in this implementation — the LSB latch cell captures the final residue sign but is not used for CDAC control.
+*(Note: if `RSTP` is driven by `STOP`, the chain resets immediately after the LSB finishes, so capture `DOUT` on the `STOP` rising edge — or buffer `RSTP` directly from `CLKS` if you want `DOP`/`DON` held static until `CLKS` rises.)*
 
 ---
 
-## 7. Verilog-A Behavioral Model Correspondence
+## 5. Critical Timing Constraints & Races
 
-The file `sar_logic_11b_diff.va` (in `sar_adc_10b/veriloga/`) is a synchronous behavioral equivalent. Key event-to-hardware mapping:
+### Constraint 1 — CDAC Settling vs. Asynchronous Loop Delay
 
-| Verilog-A `@` event | Hardware equivalent |
-|---------------------|---------------------|
-| `cross(V(CLKS), -1)` | CLKS↓ → start conversion, preset MSB |
-| `cross(V(CLKS), +1)` | CLKS↑ → DFF latches DOUT, reset to sample state |
-| `cross(V(CMPCK), -1)` | CMPCK↓ → read comparator result (StrongArm resetting) |
-| `BP[bit_ptr] = 1` | L5_LATCH_CELL DP goes HIGH, DCTRL HIGH |
-| `V(VBOTP[i]) = VREFN` | L5_DAC_SWI NMOS on, VBOT = VREFN |
+The time from bit-$k$ latch decision to the next comparator evaluation edge must exceed the CDAC settling time for bit $k$:
 
-### Reading the Comparator in Verilog-A
+$$t_{\text{loop,next}} = t_{\text{cmp,rst}} + t_{\text{VALID\_G}\downarrow} + t_{\text{CMPCK}\uparrow} + t_{\text{delay\_buf}} > t_{\text{CDAC,settle}}$$
 
-```verilog-a
-// On CMPCK↓: StrongArm is resetting, outputs returning to VDD
-// Read DCMPP vs DCMPN voltage at this moment:
-if (V(DCMPP, VSS) < V(DCMPN, VSS))
-    BP[bit_ptr] = 1;   // DCMPP fell during evaluation → VTOPP > VTOPN → keep bit
-else
-    BP[bit_ptr] = 0;
-```
+If the clock ring outruns the CDAC (especially on the MSB transition), the comparator evaluates an unsettled residue, causing missing codes or degraded ENOB. Add intentional delay buffers in the `VALID_G → CMPCK` path (or use sub-radix-2 redundancy) when CDAC settling is slower than the raw clock ring.
 
-This corresponds to: the side that fell during StrongArm evaluation is the winner. At reset moment, the loser is still near VDD, the winner already pulled down.
+### Constraint 2 — Internal `VALID_L` vs. `EN` Race
 
-### Async vs Behavioral Model
+When the comparator decides (`DCMP ↓`), two paths race to turn off `EN = NOR3(ENB_P, VALID_G, VALID_L)` in the active bit slice:
 
-The `L3_logic_4b_async.va` (in skill assets) captures the same flow for 4 bits with explicit `@(cross(..., +1) or cross(..., -1))` events mimicking the latch chain behavior. For 11-bit behavioral work, use `sar_logic_11b_diff.va` as the starting point.
+- **Path A (desired winner):** `DCMP ↓ → pass gate → DOP/DON ↓ → VALID_L ↑` (locks the latch and disables `EN`).
+- **Path B (competing global path):** `DCMP ↓ → I_VG (NAND2) → VALID_G ↑ → EN ↓`.
 
----
+If **Path B wins** (most likely at the `ff` corner or when post-layout parasitic capacitance slows down `DOP`/`DON`), `EN` shuts off before `DOP`/`DON` cross the `VALID_L` threshold — causing either a double-comparison retry (slowing conversion) or a mis-latched bit.
 
-## Usage Guide
+- **Key design lessons:**
+  - Buffer `DOP`/`DON` with inverters before driving heavy CDAC switches so the internal dynamic latch nodes stay lightly loaded.
+  - Do **not** blindly bypass `DCMP` by taking `CMPCK` directly from the comparator's first inverter (`NOR3(OPB, ONB, STOP)`) without checking this race — bypassing `DCMP` can shorten the clock loop faster than `logic_cell` can latch, driving `VALID_L`-vs-`EN` margin negative and corrupting codes!
+  - Upsizing pass gates `MNT_P/N` alone gives diminishing returns because larger pass-gate capacitance simultaneously loads `EN` and `DCMP`. If margin is negative post-layout, add small controlled delay specifically on the `VALID_G → EN` branch rather than blindly widening pass gates.
 
-| Goal | Read |
-|------|------|
-| Understand SAR logic architecture and signal flow | Sections 1–3 |
-| Implement latch chain in schematic | Sections 4–5 |
-| Connect logic to CDAC and latch output | Sections 5–6 |
-| Debug behavioral simulation (Verilog-A) | Section 7 |
-| Full implementation reference | All sections |
+### Constraint 3 — Clock Ring Drive Sizing
+
+In high-speed async SARs (hundreds of MS/s to ~1 GS/s), `I_VG` (`VALID_G` NAND) drives all $N$ bit-slice `NOR3` gates plus `I_CK`, while `I_CK` (`CMPCK` NOR) directly drives the comparator tail and reset PMOS gate capacitance. Minimum-size (`X1`) gates here can burn **>50% of the per-bit loop delay**. Sizing `I_VG` (`X4`–`X8`) and `I_CK` (`X8`–`X12`) to match fan-out can cut total 8-bit conversion time by ~40% — verify both speed and `VALID_L`-vs-`EN` margin across `ss`, `tt`, and `ff`.
 
 ---
 
-## 8. DCTRL-to-VBOT Signal Chain and Initial State
+## 6. DAC Switch Polarity & Output Latching
 
-### From Latch Cell to DAC Switch to CDAC Bottom Plate
+### Complementary Pass-Gate DAC Switch
 
-The complete signal path from comparator decision to CDAC feedback:
+With a 2-transistor CMOS driver per bit (`PMOS` to `VREFP`, `NMOS` to `VREFN`, shared gate `DCTRL[i]`):
+- `DCTRL[i] = LOW` → `VBOT[i] = VREFP` (initial/sample state)
+- `DCTRL[i] = HIGH` → `VBOT[i] = VREFN` (bit set → `VTOP` decreases)
 
-```
-Comparator decides → DCMPP/DCMPN
+Because `DOP[k]` / `DON[k]` are active-low out of the dynamic latch (one falls to `0`, the other stays `1`), inserting an inverter stage between `DOP`/`DON` and `DCTRLP`/`DCTRLN` both **isolates the sensitive latch node** from DAC switch capacitance and produces clean active-high `DCTRL` signals (`0` during reset, `1` when selected). Verify sign/MSB polarity in simulation before wiring the full loop — a swapped comparator polarity on bit $N-1$ or an extra inversion on a single MSB buffer is one of the most common integration bugs.
 
-L5_LATCH_CELL[i]:
-  DCMPP/DCMPN inputs → cross-couple regeneration → DP[i], DN[i]
-  
-  DP[i] = DCTRLP[i]  (directly connected for bits 10:1)
-  DN[i] = DCTRLN[i]  (directly connected for bits 10:1)
+### Output Retiming (DFF Array)
 
-  For bit 11 (MSB): DP/DN pass through INVD4 buffers (I35/I36)
-    I35: net5 (=DP from cell 11) → ZN = DCTRLP<11>
-    I36: net8 (=DN from cell 11) → ZN = DCTRLN<11>
-    Note: the INVD4 inverts, so DCTRLP<11> = NOT(DP<11>)
+Capture the $N$ decided bits into a bank of standard-cell D flip-flops clocked by the end-of-conversion strobe (or `CLKS` rising edge if codes are held until sampling) so downstream digital blocks see clean, glitch-free `DOUT<N-1:0>` held for the entire next clock period.
 
-L5_DAC_SWI (two instances: I0 for P-side, I1 for N-side):
-  I0: DCTRL<11:1> = DCTRLP<11:1> → VBOT<11:1> = VBOTP<11:1>
-  I1: DCTRL<11:1> = DCTRLN<11:1> → VBOT<11:1> = VBOTN<11:1>
+---
 
-  Per bit:
-    DCTRL[i] = LOW  → PMOS on → VBOT[i] = VREFP
-    DCTRL[i] = HIGH → NMOS on → VBOT[i] = VREFN
+## 7. Correspondence to Bundled Verilog-A Assets
 
-L4_CDAC:
-  VBOT<11:1> connects to L5_CAP_ARRAY bottom plates
-  Charge redistributes → VTOP changes → comparator sees new residue
-```
+The skill includes 4-bit behavioral reference models in [`../assets/va/`](../assets/va/):
+- [`L2_logic_4b_sync.va`](../assets/va/L2_logic_4b_sync.va): synchronous SAR state machine (`CLKS` + `CLKC`).
+- [`L3_logic_4b_async.va`](../assets/va/L3_logic_4b_async.va): asynchronous event-driven model mimicking comparator fire (`CMPCK = 1`), decision capture, comparator close (`CMPCK = 0`), reset detect, and step decrement with parameterized `t_logic_delay`.
 
-### Initial State at Conversion Start
-
-When CLKS falls (start conversion), the SAR logic resets all latch cells. The initial state of the DAC control signals:
-
-```
-P-side:
-  All DCTRLP<10:1> = LOW  (latch cells reset: DP=LOW, DN=LOW)
-  DCTRLP<11> = HIGH (MSB buffer inverts: DP=LOW → INVD4 → DCTRLP=HIGH)
-  
-  Wait — this needs careful analysis. The MSB cell DP initially resets to LOW.
-  I35 inverts: DCTRLP<11> = NOT(DP<11>) = NOT(LOW) = HIGH
-  
-  So VBOTP<11> = VREFN (NMOS on), VBOTP<10:1> = VREFP (PMOS on)
-  
-  This means the MSB is initially "set" (preset) at the start of conversion.
-
-N-side:
-  All DCTRLN<10:1> = LOW  (latch cells reset: DN=LOW)
-  DCTRLN<11> = HIGH (MSB buffer inverts: DN=LOW → INVD4 → DCTRLN=HIGH)
-  
-  So VBOTN<11> = VREFN (NMOS on), VBOTN<10:1> = VREFP (PMOS on)
-```
-
-The MSB preset is a standard SAR technique: the first bit trial starts with the MSB already set, so the comparator immediately evaluates whether to keep or clear it.
-
-### DCMPP/DCMPN Swap at MSB
-
-A critical wiring detail in L4_LOGIC_SWI: the MSB latch cell (I_LATCH_CELL<11>) has its comparator inputs **swapped**:
-
-```
-I_LATCH_CELL<11>:
-  DCMPP port = DCMPN net  (comparator's negative output)
-  DCMPN port = DCMPP net  (comparator's positive output)
-```
-
-This swap implements the correct sign convention for the first bit trial. Without it, the MSB decision would be inverted. Bits 10 down to 0 receive DCMPP/DCMPN with normal (unswapped) polarity.
-
-### DFF Output Latching
-
-At the end of conversion (CLKS/RSTP rising edge), the 12 DFFs (I26<11:0>, DFQD1BWP12T30P140) capture the final state:
-
-```
-DFF inputs:  D = DCTRLP<11:0>
-DFF clock:   CP = RSTP (derived from CLKS)
-DFF outputs: Q = DOUT<11:0>
-```
-
-DCTRLP is used (not DCTRLN) because the positive-side code directly encodes the binary output. DOUT<0> comes from the LSB latch cell's DP output; since there is no DAC switch for bit 0, it captures only the final residue sign.
-
-### L5_DAC_SWI Complete Switch Sizing
-
-The DAC switch module contains 11 NMOS + 11 PMOS switches (bits 11 down to 1). The switch widths scale with bit weight for matched RC settling:
-
-| Bit | NMOS Instance | NMOS W | NMOS NF | PMOS Instance | PMOS W | PMOS NF |
-|-----|--------------|--------|---------|--------------|--------|---------|
-| 11 (MSB) | M0 | 6.4u | 16 | M1 | 8.32u | 16 |
-| 10 | M2 | 3.2u | 8 | M3 | 4.16u | 8 |
-| 9 | M5 | 1.6u | 4 | M4 | 2.08u | 4 |
-| 8 | M6 | 800n | 2 | M7 | 1.04u | 2 |
-| 7 | M8 | 400n | 1 | M9 | 520n | 1 |
-| 6-1 | M10<5:0> | 200n | 1 | M11<5:0> | 260n | 1 |
-
-All NMOS: `nch_mac` (standard Vth), L=30n. All PMOS: `pch_mac` (standard Vth), L=30n.
-
-The PMOS/NMOS width ratio is approximately 1.3x (e.g., 8.32u/6.4u = 1.3, 260n/200n = 1.3), compensating for the mobility difference to achieve symmetric pull-up/pull-down timing.
-
-### CMPCK Generation Chain
-
-The comparator clock is generated from the latch chain completion signals through a buffer chain:
-
-```
-DCMPP AND DCMPN → I2 (ND2D0, NAND) → net2
-net2 → I3 (BUFFD2) → VALID
-net2 NOR STOP → I4 (NR2D0) → net3
-net3 → I5 (BUFFD0) → net4
-net4 → I6 (BUFFD2) → CMPCK
-```
-
-The NAND gate I2 detects when both comparator outputs have returned to their reset state (both high = both comparator decisions captured). The NOR gate I4 gates this with the STOP signal (which goes high when all bits are done). The buffer chain (I5 → I6) adds controlled delay to ensure CDAC settling before the next comparison fires.
-
-### Decoupling Capacitors
-
-The logic module includes substantial decoupling:
-- I39<36:1>: 36 instances of DCAP4 (standard cell decoupling caps)
-- I37<4:1>: 4 instances of DCAP4
-- I38<10:1>: 10 instances of DCAP8 (larger decoupling caps, placed near latch cells)
-
-These absorb switching transients from the digital logic, preventing supply noise from coupling into the sensitive comparator and CDAC through shared VDD/VSS rails.
+Note that the behavioral models use active-high comparator outputs (`0` in reset, one rises to `VDD` on decision), whereas a 2-inverter StrongARM or 1-inverter Miyahara uses active-low outputs (`VDD` in reset, one falls to `0`). Align polarity explicitly when mixing behavioral and transistor-level blocks in Phase 3 hybrid verification.
 
 ---
 
 ## How to Verify SAR Logic
 
-### Full-Code Functional Test
+### 1. Code & Pulse-Count Verification (Behavioral CDAC + Real Logic/Comparator)
 
-The baseline sanity check — verify that the logic produces all expected output codes.
+- Connect transistor-level `sar_logic` + `comparator` to an ideal Verilog-A CDAC (`vcm = VDD/2`).
+- Test several DC inputs spanning negative, near-zero (small residue / worst-case metastability), and positive full scale for at least 2–3 consecutive conversions each (verifying reset repeatability!).
+- **Pass criteria:**
+  - Output code matches ideal quantized code on every conversion.
+  - **Exact pulse count:** `CMPCK` emits exactly $N$ pulses per conversion (neither $N-1$ nor $N+1$), and stays quiescent during `CLKS = 1`.
+  - `RSTP` is a full-swing pulse (not a runt glitch).
 
-- Apply a slow ramp input covering the full analog input range (0 to VREF) through a behavioral (ideal) comparator and CDAC. This isolates the logic from analog imperfections.
-- Capture DOUT at every conversion cycle.
-- Verify: output code increases monotonically with increasing input.
-- Verify: all 2^N codes appear at least once (no missing codes).
-- If codes are missing, check the DCTRL-to-VBOT mapping and the latch cell enable chain for stuck or swapped signals.
-- For differential designs, also verify that the code is centered at mid-scale when VIP = VIN (zero differential input).
+### 2. Corner Timing & Race Margin Sweep
 
-### Timing Verification
+- Run across `ss`, `tt`, `ff` (plus temperature extremes and supply bounds, e.g., nominal `VDD` and any allowed slow-corner supply boost).
+- Measure:
+  1. Total conversion time $T_{\text{conv}}$ (`CLKS ↓` to `VALID_LSB ↑`) vs. conversion window $(1 - D_{\text{samp}}) / f_s$.
+  2. Per-bit delay breakdown: comparator decision, comparator reset, `I_VG`, and `I_CK`.
+  3. Internal race margin per bit: $t(\text{EN}\downarrow) - t(\text{VALID\_L}\uparrow)$ — must stay positive across all corners, especially `ff` and post-layout with extracted `DOP`/`DON` parasitics.
 
-For asynchronous SAR logic, the self-timed loop must complete all N bit decisions within one conversion period.
+### 3. Dynamic ENOB Verification (Coherent Sine + Behavioral CDAC)
 
-- Measure the per-bit decision delay: from CMPCK rising edge to comparator decision (DCMPP/DCMPN valid) to DCTRL update to the next CMPCK rising edge.
-- Total conversion time = sum of all per-bit delays + sampling phase duration.
-- This total must be less than 1/Fs with margin (typically < 80% of the full clock period).
-- For synchronous SAR: each bit decision must complete within one BITCLK period. Measure the critical path from BITCLK edge through comparator, latch, and DAC switch settling.
-- Watch for the MSB and LSB extremes: the MSB has the largest CDAC step (longest settling), while the LSB may have the smallest comparator overdrive (longest regeneration time).
-
-### DCTRL-to-VBOT Signal Integrity
-
-The DAC switch outputs must be clean digital levels — any glitch or incomplete transition corrupts the CDAC charge.
-
-- Verify VBOT swings rail-to-rail between VREFP and VREFN at each bit transition.
-- Check transition time (10%-90%) — it should be short relative to the bit period but not so fast that it causes excessive ringing on the bottom-plate node.
-- Verify complementary operation: when DCTRLP[i] goes HIGH (VBOTP = VREFN), DCTRLN[i] must go LOW (VBOTN = VREFP) simultaneously. Any skew between the P and N sides creates a transient common-mode disturbance at the comparator input.
-- Inspect the MSB transition especially carefully — it drives the largest switch and capacitor, and any glitch has the largest impact on VTOP.
-
-### Reset and Initialization
-
-Correct reset behavior is essential for cycle-to-cycle repeatability.
-
-- After each conversion completes (CLKS rises), verify that all DCTRLP signals return to their initial state (LOW for bits 10:1, HIGH for the MSB if the MSB is preset via an inverting buffer).
-- Verify that DCTRLN signals also return to their initial state.
-- Check that the latch cells fully reset: both DP and DN should return to LOW (or their defined reset state) before the next conversion begins.
-- If using an asynchronous design, verify that the CMPCK generator stops after the LSB decision and does not produce spurious pulses during the sampling phase.
+- Drive a coherent sine wave sampled at `CLKS` falling edge for $N_{\text{FFT}} = 256$ cycles (plus warmup) at the target $f_s$ and sampling duty cycle.
+- Count undecided bits across all $N_{\text{FFT}} \times N$ bit trials — any undecided bits at `ss` indicate insufficient conversion window.
+- Compute SNDR/ENOB (via `adctoolbox.analyze_spectrum`) and verify code latency (confirming conversion never spills into the next sampling phase, which can masquerade as a 1-sample phase shift in FFT!).

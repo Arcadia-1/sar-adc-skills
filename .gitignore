@@ -14,3 +14,10 @@ extract_text.py
 
 # Raw source materials
 raw_materials/
+
+# Spectre simulation outputs and local PDK/DUT hooks
+psf/
+*.ahdlSimDB/
+spectre.out
+models_corner.scs
+dut_subckt.scs
