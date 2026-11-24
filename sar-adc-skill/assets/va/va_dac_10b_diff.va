@@ -1,0 +1,47 @@
+// Process-independent 10-bit ideal differential reconstruction DAC
+//
+// Latches offset-binary DIN[9:0] on RDY rising edge and outputs:
+//   - AOUT : mid-rise differential reconstructed voltage in [-vref, +vref]:
+//            AOUT = ((code + 0.5) / 1024.0 * 2.0 - 1.0) * vref
+//   - CODE : exact integer code [0..1023] encoded as voltage [0..1023 V]
+//            for direct exact post-processing in PSF ASCII / Python / ADCToolbox.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dac_10b_diff(
+    input  electrical [9:0] DIN,
+    input  electrical       RDY,
+    output electrical       AOUT,
+    output electrical       CODE
+);
+
+parameter real vdd  = 0.9 from (0:inf);
+parameter real vth  = 0.45;
+parameter real vref = 0.9 from (0:inf);   // half of differential full-scale (VFS_diff = 2*vref)
+parameter real tr   = 20p from (0:inf);
+
+real aout_val, code_val;
+integer code_int;
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        aout_val = 0.0;
+        code_val = 512.0;
+    end
+
+    @(cross(V(RDY) - vth, +1)) begin
+        code_int = 0;
+        for (k = 9; k >= 0; k = k - 1) begin
+            code_int = code_int * 2 + ((V(DIN[k]) > vth) ? 1 : 0);
+        end
+        code_val = code_int;
+        aout_val = (((code_val + 0.5) / 1024.0) * 2.0 - 1.0) * vref;
+    end
+
+    V(AOUT) <+ transition(aout_val, 0, tr, tr);
+    V(CODE) <+ transition(code_val, 0, tr, tr);
+end
+
+endmodule

@@ -1,0 +1,22 @@
+name: Validate SAR ADC Skills
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  offline-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install validation dependencies
+        run: python -m pip install --upgrade pip numpy pyyaml
+
+      - name: Run offline repository validation
+        run: python -B scripts/validate_repo.py

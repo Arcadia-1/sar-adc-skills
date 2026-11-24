@@ -221,9 +221,43 @@
     {
       "id": 25,
       "prompt": "My Spectre SAR ADC FFT shows ~0.3 bit worse ENOB than expected, huge raw output files, and an off-by-one sample mismatch. What Spectre and Maestro settings should I check?",
-      "expected_output": "Should check simulator accuracy mode (aps instead of mx, which can degrade ENOB by ~0.3 bit), strobeoutput=strobeonly with save=selected to keep waveform files compact and avoid jittered interpolation, noiseruns=1 for multi-cycle transient noise, 1-sample output-register latency alignment before FFT, and ADE Maestro pitfalls such as GUI-only fields or definitionFiles not exported cleanly to standalone decks.",
+      "expected_output": "Should check simulator accuracy mode (aps instead of mx, which can degrade ENOB by ~0.3 bit), strobeoutput=strobeonly (with strobedelay < strobeperiod and filtering out Spectre's off-grid t=0 / t=t_stop endpoints) with save=selected to keep waveform files compact and avoid spectral leakage, noiseruns=1 for multi-cycle transient noise, 1-sample output-register latency alignment before FFT, and ADE Maestro pitfalls such as GUI-only fields or definitionFiles not exported cleanly to standalone decks.",
       "files": [
-        "references/simulation-and-verification.md"
+        "references/simulation-and-verification.md",
+        "assets/tb/adc_top/tb_sar_adc_fft.scs",
+        "assets/tb/common/psf_utils.py"
+      ]
+    },
+    {
+      "id": 26,
+      "prompt": "Why did my DC sweep of Ron vs Vin on a bootstrapped sampling switch fail to show flat Ron, and how should I set up the Spectre testbench instead?",
+      "expected_output": "Should explain that a pure DC sweep leaves the flying bootstrap capacitor CB uncharged so VG is never boosted above VDD; recommend the clocked multi-step transient sweep in assets/tb/bootstrap/tb_boot_ron_sweep.scs that toggles CLKS (0 to precharge CB, VDD to measure switch current under a fixed small Vds probe) plus coherent near-Nyquist sine sampling in tb_boot_tran_linearity.scs.",
+      "files": [
+        "references/bootstrap_switch.md",
+        "assets/tb/bootstrap/tb_boot_ron_sweep.scs",
+        "assets/tb/bootstrap/README.md"
+      ]
+    },
+    {
+      "id": 27,
+      "prompt": "I want to verify my 10-bit asynchronous SAR ADC architecture in Spectre before designing transistors, including comparator thermal noise, metastability delay, and top-plate parasitic attenuation. Which bundled assets should I wire together?",
+      "expected_output": "Should point to the 10-bit behavioral Verilog-A library under assets/va/ (va_cdac_10b_diff.va with c_par_ratio/dm_msb/tau_settle, va_cmp_dynamic.va with vos/vnoise_rms/tau_regen, va_sar_logic_10b_async.va, va_dac_10b_diff.va) driven by assets/tb/adc_top/tb_sar_adc_fft.scs and tb_sar_adc_ramp_dnl.scs, and explain how to incrementally swap blocks to transistor subcircuits in Phase 3.",
+      "files": [
+        "SKILL.md",
+        "assets/va/va_cdac_10b_diff.va",
+        "assets/va/va_cmp_dynamic.va",
+        "assets/va/va_sar_logic_10b_async.va",
+        "assets/tb/adc_top/README.md"
+      ]
+    },
+    {
+      "id": 28,
+      "prompt": "How do I verify an LDO powering my SAR ADC in Spectre for stability, supply rejection, noise, and CDAC burst droop without breaking the DC bias point?",
+      "expected_output": "Should reference assets/tb/ldo/ and ldo.md: expose a breakable feedback sense pin (FB_IN) and insert an iprobe for Spectre stb analysis across light-to-full load (checking DC gain T0, UGF, PM >= 45-60 deg, GM >= 10 dB), run AC PSRR(f) and integrated output noise in tb_ldo_psrr_noise.scs, and run fast load-step transient droop verification in tb_ldo_load_tran.scs.",
+      "files": [
+        "references/ldo.md",
+        "assets/tb/ldo/tb_ldo_stb.scs",
+        "assets/tb/ldo/README.md"
       ]
     }
   ]

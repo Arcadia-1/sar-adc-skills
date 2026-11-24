@@ -131,15 +131,18 @@ Capture the $N$ decided bits into a bank of standard-cell D flip-flops clocked b
 
 ## 7. Correspondence to Bundled Verilog-A Assets
 
-The skill includes 4-bit behavioral reference models in [`../assets/va/`](../assets/va/):
-- [`L2_logic_4b_sync.va`](../assets/va/L2_logic_4b_sync.va): synchronous SAR state machine (`CLKS` + `CLKC`).
-- [`L3_logic_4b_async.va`](../assets/va/L3_logic_4b_async.va): asynchronous event-driven model mimicking comparator fire (`CMPCK = 1`), decision capture, comparator close (`CMPCK = 0`), reset detect, and step decrement with parameterized `t_logic_delay`.
+The skill includes both 4-bit tutorial and 10-bit production behavioral models in [`../assets/va/`](../assets/va/):
+- [`L2_logic_4b_sync.va`](../assets/va/L2_logic_4b_sync.va): 4-bit synchronous SAR state machine (`CLKS` + `CLKC`).
+- [`L3_logic_4b_async.va`](../assets/va/L3_logic_4b_async.va): 4-bit asynchronous event-driven model mimicking comparator fire (`CMPCK = 1`), decision capture, comparator close (`CMPCK = 0`), reset detect, and step decrement.
+- [`va_sar_logic_10b_async.va`](../assets/va/va_sar_logic_10b_async.va): 10-bit self-timed asynchronous SAR logic with `EOC` completion stop (zero spurious post-LSB `CMPCK` pulses), glitch-free latched `DOUT[9:0]`, and parameterized `t_start_delay` / `t_valid_to_rst` / `t_rst_to_cmp`.
 
 Note that the behavioral models use active-high comparator outputs (`0` in reset, one rises to `VDD` on decision), whereas a 2-inverter StrongARM or 1-inverter Miyahara uses active-low outputs (`VDD` in reset, one falls to `0`). Align polarity explicitly when mixing behavioral and transistor-level blocks in Phase 3 hybrid verification.
 
 ---
 
 ## How to Verify SAR Logic
+
+> **Ready-to-run process-independent Spectre testbench:** See [`../assets/tb/sar_logic/`](../assets/tb/sar_logic/README.md) (`tb_sar_logic_timing.scs`, `analyze_sar_logic.py`), which pairs your SAR logic DUT with [`va_cmp_dynamic.va`](../assets/va/va_cmp_dynamic.va) (logarithmic metastability delay) and [`va_cdac_10b_diff.va`](../assets/va/va_cdac_10b_diff.va) across 4 test frames including a `0.1 mV` near-metastable MSB stress.
 
 ### 1. Code & Pulse-Count Verification (Behavioral CDAC + Real Logic/Comparator)
 

@@ -1,0 +1,118 @@
+// Process-independent 10-bit fully differential behavioral CDAC
+//
+// Supports:
+//   - Top-plate sampling on CLKS=1 (holds differential sample on CLKS falling edge)
+//   - Switching schemes:
+//       scheme = 0 : Vcm-based (constant common-mode, symmetric +/- step/2 per side)
+//       scheme = 1 : Monotonic downward (drops only the higher side by full step)
+//   - Top-plate parasitic attenuation: alpha = 1 / (1 + c_par_ratio)
+//     (attenuates DAC redistribution relative to sampled input, modeling early clipping)
+//   - Optional MSB fractional capacitor mismatch (dm_msb) for INL/DNL/HD3 studies
+//   - Optional 1-pole RC DAC settling time constant (tau_settle)
+//
+// Polarity convention (matches va_sar_logic_10b_async & L2/L3 4-bit models):
+//   - Full-scale differential input range: [-vref, +vref], where vref = vrefp - vrefn
+//   - DCTRLN[k]=1 (bit k = 1, VCP > VCN) decreases (VCP - VCN) by alpha * vref / 2^(10-k)
+//   - DCTRLP[k]=1 (bit k = 0, VCP < VCN) increases (VCP - VCN) by alpha * vref / 2^(10-k)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_cdac_10b_diff(
+    input  electrical       VIP,
+    input  electrical       VIN,
+    input  electrical       CLKS,
+    input  electrical [9:1] DCTRLP,
+    input  electrical [9:1] DCTRLN,
+    output electrical       VCP,
+    output electrical       VCN
+);
+
+parameter real    vdd         = 0.9  from (0:inf);
+parameter real    vrefp       = 0.9;
+parameter real    vrefn       = 0.0;
+parameter integer scheme      = 0    from [0:1];    // 0=Vcm-based, 1=monotonic downward
+parameter real    c_par_ratio = 0.0  from [0:inf);  // C_parasitic / C_total_dac
+parameter real    dm_msb      = 0.0;                // fractional mismatch on bit 9 cap
+parameter real    tau_settle  = 0.0  from [0:inf);  // 1-pole RC settling constant [s]
+parameter real    tr          = 15p  from (0:inf);  // edge transition time [s]
+
+electrical vcp_ideal, vcn_ideal;
+
+real vp_hold, vn_hold;
+real vref, alpha;
+real dvp, dvn, step_k;
+real vp_tgt, vn_tgt;
+integer hold_mode;
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        vref      = vrefp - vrefn;
+        alpha     = 1.0 / (1.0 + c_par_ratio);
+        vp_hold   = V(VIP);
+        vn_hold   = V(VIN);
+        hold_mode = (V(CLKS) > vdd/2) ? 0 : 1;
+    end
+
+    // Enter track mode when CLKS rises
+    @(cross(V(CLKS) - vdd/2, +1)) begin
+        hold_mode = 0;
+    end
+
+    // Sample top-plate voltages on CLKS falling edge
+    @(cross(V(CLKS) - vdd/2, -1)) begin
+        vp_hold   = V(VIP);
+        vn_hold   = V(VIN);
+        hold_mode = 1;
+    end
+
+    if (hold_mode == 0) begin
+        vp_tgt = V(VIP);
+        vn_tgt = V(VIN);
+    end else begin
+        dvp = 0.0;
+        dvn = 0.0;
+        for (k = 9; k >= 1; k = k - 1) begin
+            step_k = alpha * vref * pow(2.0, k - 10);
+            if (k == 9) begin
+                step_k = step_k * (1.0 + dm_msb);
+            end
+
+            if (V(DCTRLN[k]) > vdd/2) begin
+                if (scheme == 0) begin
+                    dvp = dvp - 0.5 * step_k;
+                    dvn = dvn + 0.5 * step_k;
+                end else begin
+                    dvp = dvp - step_k;
+                end
+            end else if (V(DCTRLP[k]) > vdd/2) begin
+                if (scheme == 0) begin
+                    dvp = dvp + 0.5 * step_k;
+                    dvn = dvn - 0.5 * step_k;
+                end else begin
+                    dvn = dvn - step_k;
+                end
+            end
+        end
+        vp_tgt = vp_hold + dvp;
+        vn_tgt = vn_hold + dvn;
+    end
+
+    if (tau_settle > 0.0) begin
+        // Exact passive 1-pole RC settling network (R = 1 ohm, C = tau_settle)
+        V(vcp_ideal) <+ transition(vp_tgt, 0, tr, tr);
+        V(vcn_ideal) <+ transition(vn_tgt, 0, tr, tr);
+        I(vcp_ideal, VCP) <+ V(vcp_ideal, VCP);
+        I(VCP)            <+ tau_settle * ddt(V(VCP));
+        I(vcn_ideal, VCN) <+ V(vcn_ideal, VCN);
+        I(VCN)            <+ tau_settle * ddt(V(VCN));
+    end else begin
+        V(vcp_ideal) <+ 0.0;
+        V(vcn_ideal) <+ 0.0;
+        V(VCP) <+ transition(vp_tgt, 0, tr, tr);
+        V(VCN) <+ transition(vn_tgt, 0, tr, tr);
+    end
+end
+
+endmodule

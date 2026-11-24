@@ -1,0 +1,54 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Loop Stability (`stb` via `iprobe`)
+// =============================================================================
+// Measures small-signal loop gain T(f) across frequency using Spectre `stb`
+// analysis without breaking DC operating point or output loading:
+//   - DC loop gain T0 [dB]
+//   - Unity-gain frequency UGF [Hz]
+//   - Phase Margin PM [deg] and Gain Margin GM [dB]
+//
+// Run across both ILOAD_MIN (lightest load, worst-case non-dominant output pole)
+// and ILOAD_MAX (heaviest load, highest pass-device gm and widest UGF).
+//
+// DUT interface contract (5-pin LDO exposing breakable feedback sense FB_IN):
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+//     // For internal resistor dividers, expose the divider tap node or insert
+//     // IPRB right at the VOUT -> feedback-network connection.
+//   ends dut_ldo
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    iload=1m \
+    cload=100p \
+    resr=0.5 \
+    temp_c=27
+
+VSUP  (VDD 0)      vsource dc=vdd_in type=dc
+VGND  (VSS 0)      vsource dc=0      type=dc
+VVREF (VREF 0)     vsource dc=vref   type=dc
+
+I0    (VDD VREF VOUT FB_IN VSS) dut_ldo
+IPRB  (VOUT FB_IN) iprobe
+
+// Load current + output decoupling capacitor with realistic ESR
+ILOAD (VOUT VSS)    isource dc=iload type=dc
+RESR  (VOUT V_CESR) resistor r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc  dc
+stb stb start=1 stop=10G dec=20 probe=IPRB annotate=status
+
+save VOUT
+saveOptions options save=selected

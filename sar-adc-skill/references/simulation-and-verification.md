@@ -100,14 +100,14 @@ stat = analyze_inl_from_sine(codes, num_bits=N_bits)  # needs >= 1024 samples
 ## 5. Phased Verification Flow
 
 ### Phase 1 — All-Behavioral Verilog-A Baseline
-- Build the complete loop using behavioral CDAC, comparator, and sync/async logic (starting from [`../assets/va/`](../assets/va/)).
+- Build the complete loop using the 10-bit behavioral models (`va_cdac_10b_diff.va`, `va_cmp_dynamic.va`, `va_sar_logic_10b_async.va`, `va_dac_10b_diff.va`, `va_bootstrap_sw.va`, `va_ldo_ideal.va`) or 4-bit tutorial models in [`../assets/va/`](../assets/va/), driven by [`../assets/tb/adc_top/`](../assets/tb/adc_top/README.md) (`tb_sar_adc_fft.scs` and `tb_sar_adc_ramp_dnl.scs`).
 - Confirm architecture, polarities, bus ordering, coherent FFT setup, and near-ideal ENOB baseline ($6.02N + 1.76\text{ dB}$).
 
 ### Phase 2 — Standalone Per-Block Characterization
 
-Run each block independently with quantitative pass/fail gates:
+Run each block independently with its ready-to-run, process-independent Spectre testbench suite (plug in your PDK `models_corner.scs` + `dut_subckt.scs`, or smoke-test with [`../assets/tb/common/models_generic_bsim4.scs`](../assets/tb/common/models_generic_bsim4.scs)):
 
-1. **Comparator** — use the ready-to-run, process-independent testbenches in [`../assets/tb/comparator/`](../assets/tb/comparator/README.md):
+1. **Comparator** — [`../assets/tb/comparator/`](../assets/tb/comparator/README.md):
    - **`tb_cmp_pss_pnoise.scs`** (~3 s/corner): Shooting `pss` (`fund=1/tclk`, `harms=100`, `errpreset=conservative`, `autotstab=yes`) + sampled full-spectrum `pnoise` (`start=0`, `stop=0.5/tclk`, `measurement=[pm0]`, `pm0 jitterevent` on internal latch nodes `[LP LM]` crossing `v_observe`). Extract:
      - $\sigma_n = \frac{1}{V_{\text{observe}}/V_{\text{id,in}}} \sqrt{\int_0^{f_{\text{clk}}/2} S_{v,\text{out}}(f)\, df}$
      - `t_cmp`, `t_rst`, regeneration $\tau$, `power`, `energy = power * tclk`
@@ -115,10 +115,11 @@ Run each block independently with quantitative pass/fail gates:
    - **`tb_cmp_delay.scs`**: Sweep `vidin = 100u, 1m, 10m` across PVT corners.
    - **`tb_cmp_trannoise.scs`**: 300-cycle transient noise cross-check confirming PSS+PNOISE accuracy.
    - **`tb_cmp_offset.scs` + `cmp_bisect.va`**: Binary-search offset (Monte Carlo mismatch) and memory/hysteresis (`vpre = ±100m`).
-2. **Bootstrap switch** — differential sine sampling into a CDAC-sized cap (`analyze_spectrum()` THD target below noise floor, typically $< -70\text{ dB}$ for 10+ bits), $R_{\text{on}}$ vs. $V_{\text{in}}$ flatness ($< 10\%$), and `VGATE` droop/oxide-stress check.
-3. **CDAC** — static code sweep (DNL $< 0.5\text{ LSB}$, INL $< 1\text{ LSB}$), MSB settling time in both directions, hold-mode feedthrough, and AC total/per-bit capacitance extraction.
-4. **SAR logic** — DC + sine closed-loop test with real comparator + ideal CDAC: verify zero missing codes, exact $N$ `CMPCK` pulses, $T_{\text{conv}} < (1 - D_{\text{samp}})/f_s$ across PVT, and positive `VALID_L`-vs-`EN` race margin.
-5. **LDO (if used)** — DC line/load regulation, `stb` phase margin ($\ge 45\text{–}60^\circ$), AC PSRR at $f_s/2$, transient CDAC burst droop ($< 0.5\text{ LSB}$), and integrated output noise.
+2. **Bootstrap switch** — [`../assets/tb/bootstrap/`](../assets/tb/bootstrap/README.md) (`tb_boot_ron_sweep.scs`, `tb_boot_tran_linearity.scs`, `analyze_bootstrap.py`): clocked $R_{\text{on}}(V_{\text{in}})$ sweep (precharging flying cap `CB` every cycle, flatness $< 10\%$), near-Nyquist coherent sine sampling into `CL` (THD below noise floor, typically $< -70\text{ dB}$ for 10+ bits), and `VGATE` droop/oxide-stress audit.
+3. **CDAC** — [`../assets/tb/cdac/`](../assets/tb/cdac/README.md) (`tb_cdac_static_dnl_inl.scs`, `tb_cdac_settling.scs`, `analyze_cdac.py`): full-code static sweep (DNL $< 0.5\text{ LSB}$, INL $< 1\text{ LSB}$, common-mode shift), worst-case MSB 0.5-LSB settling time, hold-mode feedthrough, and AC capacitance extraction.
+4. **SAR logic** — [`../assets/tb/sar_logic/`](../assets/tb/sar_logic/README.md) (`tb_sar_logic_timing.scs`, `analyze_sar_logic.py`): multi-frame closed-loop timing & metastability check with `va_cmp_dynamic.va` + `va_cdac_10b_diff.va` (exact $N$ `CMPCK` pulses, clean `EOC`/`NOR3` stop, $T_{\text{conv}} < (1 - D_{\text{samp}})/f_s$, positive `VALID_L`-vs-`EN` margin).
+5. **LDO (if used)** — [`../assets/tb/ldo/`](../assets/tb/ldo/README.md) (`tb_ldo_stb.scs`, `tb_ldo_psrr_noise.scs`, `tb_ldo_load_tran.scs`, `analyze_ldo.py`): `stb` phase margin ($\ge 45\text{–}60^\circ$), AC PSRR, integrated output noise, and fast load-step droop.
+6. **Full SAR ADC top** — [`../assets/tb/adc_top/`](../assets/tb/adc_top/README.md) (`tb_sar_adc_fft.scs`, `tb_sar_adc_ramp_dnl.scs`, `analyze_adc_top.py`): coherent FFT (ENOB/SNDR/SFDR/THD) and overdriven ramp DNL/INL + usable full-swing check.
 
 ### Phase 3 — Incremental Transistor Replacement
 Replace behavioral blocks one at a time in order: **Comparator → Bootstrap → CDAC → SAR Logic**, verifying ENOB and timing at each step to isolate interface, polarity, kickback, or parasitic issues immediately.
@@ -149,3 +150,5 @@ When running these testbenches through Cadence ADE Maestro instead of standalone
 | Double comparator firing on one bit | `VALID_L` vs. `EN` race margin negative | Buffer `DOP`/`DON` before CDAC switches; add delay on `VALID_G → EN` path |
 | Extra $(N+1)$-th `CMPCK` pulse | Slow `VALID_LSB → STOP` path through SR latch | Feed `VALID_LSB` directly into `NOR3(CLKS, QN, VALID_LSB)` |
 | Silent zero noise in Maestro `NOISE` | `tranNoise` toggle not written to `input.scs` | Check `input.scs` for `noisefmax`; enable via GUI form or run standalone Spectre |
+| `ERROR (SPECTRE-16394)` on `strobedelay` | `strobedelay >= strobeperiod` in `tran` | Keep `strobedelay < strobeperiod` and drop the initial warmup samples in post-processing |
+| Severe FFT leakage or false `-1 LSB` DNL on `strobeonly` | Spectre appends `t = 0` and `t = t_stop` off the strobe grid | Filter waveforms to the uniform `k * strobeperiod + strobedelay` grid (see `extract_uniform_strobe` in `assets/tb/common/psf_utils.py`) |

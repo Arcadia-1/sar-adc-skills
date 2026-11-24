@@ -1,0 +1,75 @@
+// Process-independent 10-bit code sweep generator for static CDAC DNL/INL tests
+//
+// Steps code from start_code to stop_code on each rising CLK edge and drives:
+//   - CODE[9:0]   : 10-bit offset-binary digital code (for general DAC DUTs)
+//   - DCTRLN[9:1] : complementary bit=1 controls (matches va_cdac_10b_diff)
+//   - DCTRLP[9:1] : complementary bit=0 controls (matches va_cdac_10b_diff)
+//   - CODE_MON    : exact integer code [0..1023] as voltage for PSF analysis
+//
+// Note: Because a 10-bit differential CDAC has 9 switched bit groups [9:1]
+// (512 distinct DAC levels, with LSB resolved by the comparator's sign check
+// around zero residue), stepping all 512 upper codes (step_size=2) tests every
+// unique CDAC switch state in 512 clock cycles!
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_code_ramp_10b(
+    input  electrical       CLK,
+    output electrical [9:0] CODE,
+    output electrical [9:1] DCTRLP,
+    output electrical [9:1] DCTRLN,
+    output electrical       CODE_MON
+);
+
+parameter real    vdd        = 0.9  from (0:inf);
+parameter integer start_code = 0    from [0:1023];
+parameter integer stop_code  = 1023 from [0:1023];
+parameter integer step_size  = 2    from [1:512];  // 2 = all 512 unique 9-bit CDAC states
+parameter real    tr         = 15p  from (0:inf);
+
+integer cur_code, tmp;
+integer bits[9:0];
+integer dcp[9:1], dcn[9:1];
+genvar k;
+
+analog begin
+    @(initial_step) begin
+        cur_code = start_code;
+        tmp      = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+        for (k = 1; k <= 9; k = k + 1) begin
+            dcn[k] = bits[k];
+            dcp[k] = 1 - bits[k];
+        end
+    end
+
+    @(cross(V(CLK) - vdd/2, +1)) begin
+        if (cur_code + step_size <= stop_code) begin
+            cur_code = cur_code + step_size;
+        end
+        tmp = cur_code;
+        for (k = 0; k <= 9; k = k + 1) begin
+            bits[k] = tmp % 2;
+            tmp     = tmp / 2;
+        end
+        for (k = 1; k <= 9; k = k + 1) begin
+            dcn[k] = bits[k];
+            dcp[k] = 1 - bits[k];
+        end
+    end
+
+    for (k = 0; k <= 9; k = k + 1) begin
+        V(CODE[k]) <+ transition(bits[k] * vdd, 0, tr, tr);
+    end
+    for (k = 1; k <= 9; k = k + 1) begin
+        V(DCTRLP[k]) <+ transition(dcp[k] * vdd, 0, tr, tr);
+        V(DCTRLN[k]) <+ transition(dcn[k] * vdd, 0, tr, tr);
+    end
+    V(CODE_MON) <+ transition(cur_code, 0, tr, tr);
+end
+
+endmodule

@@ -1,0 +1,57 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Load-Step Transient Droop & Recovery
+// =============================================================================
+// Applies a sharp load-current step (iload_lo -> iload_hi -> iload_lo) modeling
+// SAR ADC switching bursts and measures:
+//   - Maximum undershoot droop (mV)
+//   - Maximum overshoot (mV)
+//   - 1% settling / recovery time
+//
+// DUT interface contract:
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.2 \
+    vref=0.9 \
+    iload_lo=0.2m \
+    iload_hi=5m \
+    cload=100p \
+    resr=0.5 \
+    t_step1=1u \
+    t_step2=3u \
+    t_stop=5u \
+    tr=10n \
+    tf=10n \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd_in type=dc
+VGND  (VSS 0)  vsource dc=0      type=dc
+VVREF (VREF 0) vsource dc=vref   type=dc
+
+I0    (VDD VREF VOUT VOUT VSS) dut_ldo
+
+ILOAD (VOUT VSS) isource type=pwl wave=[ \
+    0           iload_lo \
+    t_step1     iload_lo \
+    (t_step1+tr) iload_hi \
+    t_step2     iload_hi \
+    (t_step2+tf) iload_lo \
+    t_stop      iload_lo ]
+RESR  (VOUT V_CESR) resistor r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative
+
+save VOUT ILOAD:sink
+saveOptions options save=selected
