@@ -1,0 +1,98 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Multi-Load Efficiency (DCM & CCM)
+// =============================================================================
+// Sweeps load current via `alter` across 4 regimes spanning light-load DCM to
+// full-load CCM (`20 mA`, `100 mA`, `300 mA`, `500 mA`) at Vin=3.3 V, Vout=1.2 V,
+// f_sw=2 MHz, L=2.2 uH (DCR=80 mOhm), Cout=10 uF (ESR=15 mOhm).
+//
+// Extracts (via `analyze_buck.py efficiency`):
+//   - Per-load: vout_avg_v, p_in_mw, p_out_mw, eff_pct, p_loss_mw, mode (DCM/CCM)
+//   - Summary : eff_peak_pct, eff_full_load_pct, eff_light_load_pct
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_eff_ccm_dcm.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_power_stage.va"
+ahdl_include "../va/va_buck_controller.va"
+
+parameters \
+    v_in=3.3 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    t_dead=10n \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    i_ocp=0.85 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    r_load=60.0 \
+    t_stop=60u \
+    temp_c=27
+
+VSUP    (VIN  0)      vsource dc=v_in  type=dc
+VGND    (VSS  0)      vsource dc=0     type=dc
+VVREF   (VREF 0)      vsource dc=v_ref type=dc
+VEN     (EN   0)      vsource dc=v_in  type=dc
+
+I_CTRL  (VIN VREF EN FB COMP ISNS GH GL VSS) va_buck_controller \
+    f_sw=f_sw r_sns=r_sns i_ocp=i_ocp m_slope=m_slope t_dead=t_dead \
+    gm_ea=400u ro_ea=5M i_ea_max=100u t_ss=80u v_ref_nom=v_ref
+
+I_PWR   (VIN SW GH GL VSS) va_buck_power_stage \
+    r_on_hs=r_on_hs r_on_ls=r_on_ls c_g_hs=120p c_g_ls=120p \
+    r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=1 i_q=150u
+
+// Type-II compensation network on COMP
+R_COMP  (COMP N_CC)   resistor  r=r_comp
+C_COMP  (N_CC VSS)    capacitor c=c_comp
+C_HF    (COMP VSS)    capacitor c=c_hf
+
+// Feedback divider (beta = 0.5 -> VOUT = 2 * VREF = 1.2 V)
+R_FB1   (VOUT FB)     resistor  r=100k
+R_FB2   (FB   VSS)    resistor  r=100k
+
+// Output LC filter with DCR, ESR, and zero-volt current probes
+VMEAS_L (SW   N_L1)   vsource   dc=0 type=dc
+H_ISNS  (ISNS VSS)    ccvs      rm=r_sns probe=VMEAS_L
+L_OUT   (N_L1 N_L2)   inductor  l=l_out
+R_DCR   (N_L2 VOUT)   resistor  r=r_dcr
+R_ESR   (VOUT V_CESR) resistor  r=r_esr
+C_OUT   (V_CESR VSS)  capacitor c=c_out
+
+VMEAS_O (VOUT VOUT_L) vsource   dc=0 type=dc
+R_LOAD  (VOUT_L VSS)  resistor  r=r_load
+
+ic VOUT=1.2 V_CESR=1.2 COMP=0.35
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Light load: 20 mA (DCM)
+tran_20ma  tran stop=t_stop errpreset=conservative maxstep=5n
+
+// 2. Medium-light load: 100 mA (CCM)
+alt_100ma  alter param=r_load value=12.0
+tran_100ma tran stop=t_stop errpreset=conservative maxstep=5n
+
+// 3. Nominal load: 300 mA (CCM, near peak efficiency)
+alt_300ma  alter param=r_load value=4.0
+tran_300ma tran stop=t_stop errpreset=conservative maxstep=5n
+
+// 4. Full load: 500 mA (CCM)
+alt_500ma  alter param=r_load value=2.4
+tran_500ma tran stop=t_stop errpreset=conservative maxstep=5n
+
+save VIN VOUT SW VSUP:p VMEAS_L:p VMEAS_O:p
+saveOptions options save=selected

@@ -1,0 +1,103 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Load-Step & Line-Step Transient
+// =============================================================================
+// Applies fast sequential dynamic stimuli in one Spectre transient run:
+//   1. Load step-up   : 50 mA (DCM) -> 400 mA (CCM) in 1 us at `t_ld1 = 35 us`
+//   2. Load step-down : 400 mA (CCM) -> 50 mA (DCM) in 1 us at `t_ld2 = 65 us`
+//   3. Line step-up   : 3.3 V -> 4.2 V in 2 us at `t_ln1 = 95 us`
+//   4. Line step-down : 4.2 V -> 3.3 V in 2 us at `t_ln2 = 115 us`
+//
+// Extracts (via `analyze_buck.py tran`):
+//   - vout_nom_v, load_undershoot_mv, load_overshoot_mv
+//   - t_recover_load_us, line_step_dev_mv
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_load_line_tran.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_power_stage.va"
+ahdl_include "../va/va_buck_controller.va"
+
+parameters \
+    v_in_lo=3.3 \
+    v_in_hi=4.2 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    t_dead=10n \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    i_ocp=0.85 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    i_ld_lo=50m \
+    i_ld_hi=400m \
+    t_ld1=35u \
+    t_ld2=65u \
+    t_ln1=95u \
+    t_ln2=115u \
+    t_stop=140u \
+    temp_c=27
+
+VSUP    (VIN  0) vsource dc=v_in_lo type=pwl wave=[ \
+    0           v_in_lo \
+    t_ln1       v_in_lo \
+    (t_ln1+2u)  v_in_hi \
+    t_ln2       v_in_hi \
+    (t_ln2+2u)  v_in_lo \
+    t_stop      v_in_lo ]
+
+VGND    (VSS  0) vsource dc=0       type=dc
+VVREF   (VREF 0) vsource dc=v_ref   type=dc
+VEN     (EN   0) vsource dc=v_in_lo type=dc
+
+I_CTRL  (VIN VREF EN FB COMP ISNS GH GL VSS) va_buck_controller \
+    f_sw=f_sw r_sns=r_sns i_ocp=i_ocp m_slope=m_slope t_dead=t_dead \
+    gm_ea=400u ro_ea=5M i_ea_max=100u t_ss=80u v_ref_nom=v_ref
+
+I_PWR   (VIN SW GH GL VSS) va_buck_power_stage \
+    r_on_hs=r_on_hs r_on_ls=r_on_ls c_g_hs=120p c_g_ls=120p \
+    r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=1 i_q=150u
+
+R_COMP  (COMP N_CC)   resistor  r=r_comp
+C_COMP  (N_CC VSS)    capacitor c=c_comp
+C_HF    (COMP VSS)    capacitor c=c_hf
+
+R_FB1   (VOUT FB)     resistor  r=100k
+R_FB2   (FB   VSS)    resistor  r=100k
+
+VMEAS_L (SW   N_L1)   vsource   dc=0 type=dc
+H_ISNS  (ISNS VSS)    ccvs      rm=r_sns probe=VMEAS_L
+L_OUT   (N_L1 N_L2)   inductor  l=l_out ic=0.05
+R_DCR   (N_L2 VOUT)   resistor  r=r_dcr
+R_ESR   (VOUT V_CESR) resistor  r=r_esr
+C_OUT   (V_CESR VSS)  capacitor c=c_out
+
+// Dynamic current load step (50 mA -> 400 mA -> 50 mA in 1 us)
+ILOAD   (VOUT VSS) isource dc=i_ld_lo type=pwl wave=[ \
+    0           i_ld_lo \
+    t_ld1       i_ld_lo \
+    (t_ld1+1u)  i_ld_hi \
+    t_ld2       i_ld_hi \
+    (t_ld2+1u)  i_ld_lo \
+    t_stop      i_ld_lo ]
+
+ic VOUT=1.2 V_CESR=1.2 COMP=0.20
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=10n
+
+save VIN VOUT COMP VMEAS_L:p
+saveOptions options save=selected

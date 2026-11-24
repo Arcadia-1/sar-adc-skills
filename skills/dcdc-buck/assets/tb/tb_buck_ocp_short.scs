@@ -1,0 +1,97 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Over-Current & Hard Short Recovery
+// =============================================================================
+// Operates at nominal steady state (`R_load = 4.0 ohm`, `300 mA`), applies a
+// hard output short (`R_short = 0.2 ohm` via Spectre `relay`) from `t_sh1=40u`
+// to `t_sh2=80u`, then releases the fault back to `4.0 ohm` through `150 us`.
+//
+// Verifies cycle-by-cycle peak inductor current clamping at `i_ocp = 0.85 A`
+// and clean, latch-up-free recovery to nominal 1.2 V after fault removal.
+//
+// Extracts (via `analyze_buck.py ocp`):
+//   - il_ocp_peak_ma, vout_short_mv, vout_recover_ok, t_recover_us
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_ocp_short.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_power_stage.va"
+ahdl_include "../va/va_buck_controller.va"
+
+parameters \
+    v_in=3.3 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    t_dead=10n \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    i_ocp=0.85 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    r_nom=4.0 \
+    r_short=0.2 \
+    t_sh1=40u \
+    t_sh2=80u \
+    t_stop=150u \
+    temp_c=27
+
+VSUP    (VIN  0) vsource dc=v_in  type=dc
+VGND    (VSS  0) vsource dc=0     type=dc
+VVREF   (VREF 0) vsource dc=v_ref type=dc
+VEN     (EN   0) vsource dc=v_in  type=dc
+
+VSHORT  (SHORT_EN 0) vsource dc=0 type=pwl wave=[ \
+    0           0 \
+    t_sh1       0 \
+    (t_sh1+50n) 1.0 \
+    t_sh2       1.0 \
+    (t_sh2+50n) 0 \
+    t_stop      0 ]
+
+I_CTRL  (VIN VREF EN FB COMP ISNS GH GL VSS) va_buck_controller \
+    f_sw=f_sw r_sns=r_sns i_ocp=i_ocp m_slope=m_slope t_dead=t_dead \
+    gm_ea=400u ro_ea=5M i_ea_max=100u t_ss=80u v_ref_nom=v_ref
+
+I_PWR   (VIN SW GH GL VSS) va_buck_power_stage \
+    r_on_hs=r_on_hs r_on_ls=r_on_ls c_g_hs=120p c_g_ls=120p \
+    r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=1 i_q=150u
+
+R_COMP  (COMP N_CC)   resistor  r=r_comp
+C_COMP  (N_CC VSS)    capacitor c=c_comp
+C_HF    (COMP VSS)    capacitor c=c_hf
+
+R_FB1   (VOUT FB)     resistor  r=100k
+R_FB2   (FB   VSS)    resistor  r=100k
+
+VMEAS_L (SW   N_L1)   vsource   dc=0 type=dc
+H_ISNS  (ISNS VSS)    ccvs      rm=r_sns probe=VMEAS_L
+L_OUT   (N_L1 N_L2)   inductor  l=l_out ic=0.3
+R_DCR   (N_L2 VOUT)   resistor  r=r_dcr
+R_ESR   (VOUT V_CESR) resistor  r=r_esr
+C_OUT   (V_CESR VSS)  capacitor c=c_out
+
+// Nominal load + parallel hard-short fault switch (R_short = 0.2 ohm)
+R_LOAD  (VOUT VSS)    resistor  r=r_nom
+model sw_short relay rclosed=r_short ropen=1e9 vt1=0.4 vt2=0.6
+S_SHORT (VOUT VSS SHORT_EN 0) sw_short
+
+ic VOUT=1.2 V_CESR=1.2 COMP=0.47
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative maxstep=10n
+
+save VOUT SHORT_EN COMP VMEAS_L:p
+saveOptions options save=selected

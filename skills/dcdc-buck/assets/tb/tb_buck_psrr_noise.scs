@@ -1,0 +1,101 @@
+// =============================================================================
+// Process-Independent Synchronous Buck TB — Audio Susceptibility PSRR & FFT Spur
+// =============================================================================
+// Two-part signoff deck in a single Spectre X run:
+//   (a) `ac_psrr`   : Averaged small-signal audio susceptibility PSRR(f) from
+//                     100 Hz to 10 MHz (`mag=1` AC on VIN_AC).
+//   (b) `tran_spur` : Coherently strobed steady-state switching Buck transient
+//                     (fs = 64 MHz, strobeperiod = 15.625 ns, N = 1024 = 32
+//                     exact switching cycles after 40 us settling) measuring
+//                     fundamental f_sw (2 MHz) and 2*f_sw (4 MHz) output spurs.
+//
+// Extracts (via `analyze_buck.py psrr_spur`):
+//   - psrr_dc_db, psrr_10khz_db, psrr_fc_min_db, f_psrr_min_khz
+//   - spur_fsw_dbv, spur_fsw_mvrms, spur_2fsw_dbv, spur_2fsw_mvrms
+//
+// Recommended Spectre X command:
+//   spectre +preset=cx +mt=2 -format psfascii tb_buck_psrr_noise.scs
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+ahdl_include "../va/va_buck_avg_model.va"
+ahdl_include "../va/va_buck_power_stage.va"
+ahdl_include "../va/va_buck_controller.va"
+
+parameters \
+    v_in=3.3 \
+    v_ref=0.6 \
+    f_sw=2.0e6 \
+    l_out=2.2u \
+    r_dcr=80m \
+    c_out=10u \
+    r_esr=15m \
+    r_on_hs=120m \
+    r_on_ls=90m \
+    t_dead=10n \
+    r_sns=1.0 \
+    m_slope=0.45e6 \
+    i_ocp=0.85 \
+    r_comp=47k \
+    c_comp=330p \
+    c_hf=5p \
+    r_load=4.0 \
+    t_strobe=15.625n \
+    t_stop=56u \
+    temp_c=27
+
+VGND    (VSS   0) vsource dc=0     type=dc
+VVREF   (VREF  0) vsource dc=v_ref type=dc
+
+// ---- Replica A: Continuous Averaged Buck for Small-Signal PSRR(f) ----
+VSUP_AC (VIN_AC 0) vsource dc=v_in mag=1 type=dc
+I_AVG   (VIN_AC VREF FB_AC COMP_AC SW_AC VSS) va_buck_avg_model \
+    f_sw=f_sw l_nom=l_out r_on_hs=r_on_hs r_on_ls=r_on_ls \
+    r_sns=r_sns m_slope=m_slope gm_ea=400u ro_ea=5M i_q=150u
+R_CMP_A (COMP_AC N_CCA)  resistor  r=r_comp
+C_CMP_A (N_CCA   VSS)    capacitor c=c_comp
+C_HF_A  (COMP_AC VSS)    capacitor c=c_hf
+R_FB1_A (VOUT_AC FB_AC)  resistor  r=100k
+R_FB2_A (FB_AC   VSS)    resistor  r=100k
+L_OUT_A (SW_AC   N_LA)   inductor  l=l_out
+R_DCR_A (N_LA    VOUT_AC) resistor r=r_dcr
+R_ESR_A (VOUT_AC V_ESRA) resistor  r=r_esr
+C_OUT_A (V_ESRA  VSS)    capacitor c=c_out
+R_LD_A  (VOUT_AC VSS)    resistor  r=r_load
+
+// ---- Replica B: Switching Buck for Steady-State Output Spur FFT ----
+VSUP_SW (VIN_SW 0) vsource dc=v_in type=dc
+VEN_SW  (EN_SW  0) vsource dc=v_in type=dc
+I_CTRL  (VIN_SW VREF EN_SW FB_SW COMP_SW ISNS_SW GH_SW GL_SW VSS) va_buck_controller \
+    f_sw=f_sw r_sns=r_sns i_ocp=i_ocp m_slope=m_slope t_dead=t_dead \
+    gm_ea=400u ro_ea=5M i_ea_max=100u t_ss=80u v_ref_nom=v_ref
+I_PWR   (VIN_SW SW_SW GH_SW GL_SW VSS) va_buck_power_stage \
+    r_on_hs=r_on_hs r_on_ls=r_on_ls c_g_hs=120p c_g_ls=120p \
+    r_drv_hs=18.0 r_drv_ls=18.0 c_sw=100p zcd_en=1 i_q=150u
+R_CMP_S (COMP_SW N_CCS)  resistor  r=r_comp
+C_CMP_S (N_CCS   VSS)    capacitor c=c_comp
+C_HF_S  (COMP_SW VSS)    capacitor c=c_hf
+R_FB1_S (VOUT_SW FB_SW)  resistor  r=100k
+R_FB2_S (FB_SW   VSS)    resistor  r=100k
+VMEAS_L (SW_SW   N_LS1)  vsource   dc=0 type=dc
+H_ISNS  (ISNS_SW VSS)    ccvs      rm=r_sns probe=VMEAS_L
+L_OUT_S (N_LS1   N_LS2)  inductor  l=l_out ic=0.3
+R_DCR_S (N_LS2   VOUT_SW) resistor r=r_dcr
+R_ESR_S (VOUT_SW V_ESRS) resistor  r=r_esr
+C_OUT_S (V_ESRS  VSS)    capacitor c=c_out
+R_LD_S  (VOUT_SW VSS)    resistor  r=r_load
+
+ic VOUT_SW=1.2 V_ESRS=1.2 COMP_SW=0.47
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-12 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac_psrr   ac   start=100 stop=10M dec=30
+tran_spur tran stop=t_stop errpreset=conservative maxstep=4n \
+    strobeperiod=t_strobe strobedelay=0 strobeoutput=strobeonly
+
+save VIN_AC VOUT_AC VOUT_SW
+saveOptions options save=selected
