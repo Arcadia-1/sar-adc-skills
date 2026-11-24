@@ -1,0 +1,64 @@
+// =============================================================================
+// Process-Independent POR/BOR TB — Negative VDD Glitch Immunity & Brown-Out
+// =============================================================================
+// Starting from regulated operation (VDD = 1.8 V, RSTB = 1.8 V), injects four
+// negative VDD drop pulses down to vdd_dip (0.6 V) with increasing duration:
+//   - Pulse 1: 0.5 us  (short spike -> MUST be rejected, RSTB stays HIGH)
+//   - Pulse 2: 1.5 us  (short spike -> MUST be rejected, RSTB stays HIGH)
+//   - Pulse 3: 5.0 us  (brown-out   -> MUST assert RSTB=0, release after t_rst)
+//   - Pulse 4: 15.0 us (brown-out   -> MUST assert RSTB=0, release after t_rst)
+//
+// DUT interface contract (4-pin POR/BOR Supervisor):
+//   subckt dut_por_bor VDD VTRIM RSTB VSS
+//   ends dut_por_bor
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.8 \
+    vdd_dip=0.6 \
+    vtrim_code=3 \
+    t_edge=50n \
+    cload=1p \
+    temp_c=27
+
+// Sequence of 4 negative VDD pulses: 0.5 us, 1.5 us, 5.0 us, 15.0 us
+VSUP (VDD 0) vsource type=pwl wave=[ \
+    0                         vdd_nom \
+    20u                       vdd_nom \
+    (20u+t_edge)              vdd_dip \
+    (20.5u-t_edge)            vdd_dip \
+    20.5u                     vdd_nom \
+    80u                       vdd_nom \
+    (80u+t_edge)              vdd_dip \
+    (81.5u-t_edge)            vdd_dip \
+    81.5u                     vdd_nom \
+    140u                      vdd_nom \
+    (140u+t_edge)             vdd_dip \
+    (145.0u-t_edge)           vdd_dip \
+    145.0u                    vdd_nom \
+    240u                      vdd_nom \
+    (240u+t_edge)             vdd_dip \
+    (255.0u-t_edge)           vdd_dip \
+    255.0u                    vdd_nom \
+    340u                      vdd_nom ]
+
+VGND (VSS   0) vsource dc=0          type=dc
+VTRM (VTRIM 0) vsource dc=vtrim_code type=dc
+
+I0 (VDD VTRIM RSTB VSS) dut_por_bor
+CL (RSTB VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran_glitch tran stop=340u errpreset=conservative maxstep=0.2u
+
+save VDD RSTB VSUP:p
+saveOptions options save=selected

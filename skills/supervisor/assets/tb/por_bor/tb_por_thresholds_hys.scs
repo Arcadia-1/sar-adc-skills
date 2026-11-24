@@ -1,0 +1,53 @@
+// =============================================================================
+// Process-Independent POR/BOR TB — Rising/Falling Thresholds, Hysteresis & I_q
+// =============================================================================
+// Drives a slow triangular VDD ramp (0 -> vdd_nom -> 0 V with a 2 ms flat
+// top plateau) to extract exact rising release threshold V_POR+, falling
+// brown-out threshold V_POR-, hysteresis V_hys = V_POR+ - V_POR-, low-VDD
+// cold-boot spurious glitch peak (while VDD < V_POR+), and steady-state I_q.
+//
+// DUT interface contract (4-pin POR/BOR Supervisor):
+//   subckt dut_por_bor VDD VTRIM RSTB VSS
+//   ends dut_por_bor
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.8 \
+    vtrim_code=3 \
+    t_pre=0.2m \
+    t_ramp=10m \
+    t_hold=2m \
+    t_post=0.3m \
+    cload=1p \
+    temp_c=27
+
+// Slow symmetric triangular VDD ramp with flat plateau for clean I_q readout
+VSUP (VDD 0) vsource type=pwl wave=[ \
+    0                        0 \
+    t_pre                    0 \
+    (t_pre+t_ramp)           vdd_nom \
+    (t_pre+t_ramp+t_hold)    vdd_nom \
+    (t_pre+2*t_ramp+t_hold)  0 \
+    (t_pre+2*t_ramp+t_hold+t_post) 0 ]
+
+VGND  (VSS   0) vsource dc=0          type=dc
+VTRM  (VTRIM 0) vsource dc=vtrim_code type=dc
+
+I0 (VDD VTRIM RSTB VSS) dut_por_bor
+CL (RSTB VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran_hys tran stop=(t_pre+2*t_ramp+t_hold+t_post) \
+    errpreset=conservative maxstep=20u
+
+save VDD RSTB VSUP:p
+saveOptions options save=selected

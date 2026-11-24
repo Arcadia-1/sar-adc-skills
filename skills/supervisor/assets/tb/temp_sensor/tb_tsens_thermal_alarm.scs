@@ -1,0 +1,49 @@
+// =============================================================================
+// Process-Independent Temperature Sensor TB — Over-Temperature Shutdown (TSD)
+// =============================================================================
+// Sweeps die temperature UP (25 C -> 160 C) and DOWN (160 C -> 25 C) using
+// consecutive DC sweeps (preserving hysteretic comparator state via previous
+// operating point continuation) to extract:
+//   - T_trip_c    : rising over-temperature trip point (~135 C)
+//   - T_release_c : falling thermal recovery point (~120 C)
+//   - T_hys_c     : thermal hysteresis T_trip_c - T_release_c (~15 C)
+//
+// DUT interface contract (7-pin On-Chip Temperature Sensor + TSD):
+//   subckt dut_tsens VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS
+//   ends dut_tsens
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.8 \
+    v_chop=1.8 \
+    t_lo=25 \
+    t_hi=160 \
+    cload=1p \
+    temp_c=25
+
+VSUP  (VDD  0) vsource dc=vdd_in type=dc
+VCHOP (CHOP 0) vsource dc=v_chop type=dc
+VGND  (VSS  0) vsource dc=0      type=dc
+
+I0 (VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS) dut_tsens
+CL_T (VTEMP   VSS) capacitor c=cload
+CL_A (TSD_OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Rising thermal sweep: starts at 25 C (TSD_OUT=0) -> trips near 135 C
+dc_up dc param=temp start=t_lo stop=t_hi step=0.25 prevoppoint=yes
+
+// 2. Falling thermal sweep: starts at 160 C (TSD_OUT=VDD) -> releases near 120 C
+dc_dn dc param=temp start=t_hi stop=t_lo step=-0.25 prevoppoint=yes
+
+save TSD_OUT VTEMP VBE VPTAT VDD VSUP:p
+saveOptions options save=selected

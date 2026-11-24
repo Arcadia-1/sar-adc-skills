@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent Temperature Sensor TB — Supply Sensitivity, Noise & Chop
+// =============================================================================
+// Runs four precision checks in one Spectre simulation:
+//   1. `dc_chop1`    : local temp sweep (25..29 C) with CHOP=VDD -> VTEMP(27 C)
+//                      and exact local sensitivity dVTEMP/dT [mV/C]
+//   2. `dc_vdd`      : supply sweep (1.62..1.98 V) with CHOP=VDD -> supply
+//                      sensitivity [deg C / V]
+//   3. `noise_chop1` : output noise PSD (1 Hz..100 kHz) with CHOP=VDD ->
+//                      integrated RMS temperature resolution [mK_rms]
+//   4. `dc_chop0` & `noise_chop0` (via `alter` CHOP=0) -> unchopped offset
+//                      temperature error & 1/f noise degradation check
+//
+// DUT interface contract (7-pin On-Chip Temperature Sensor + TSD):
+//   subckt dut_tsens VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS
+//   ends dut_tsens
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.8 \
+    vdd_lo=1.62 \
+    vdd_hi=1.98 \
+    v_chop=1.8 \
+    cload=1p \
+    temp_c=27
+
+VSUP  (VDD  0) vsource dc=vdd_in type=dc
+VCHOP (CHOP 0) vsource dc=v_chop type=dc
+VGND  (VSS  0) vsource dc=0      type=dc
+
+I0 (VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS) dut_tsens
+CL_T (VTEMP   VSS) capacitor c=cload
+CL_A (TSD_OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Local temperature calibration slope at 27 C (CHOP = 1)
+dc_chop1 dc param=temp start=25 stop=29 step=1
+
+// 2. Supply sensitivity sweep VDD = 1.62..1.98 V at 27 C (CHOP = 1)
+dc_vdd dc param=vdd_in start=vdd_lo stop=vdd_hi step=0.02
+
+// 3. Integrated noise across 1 Hz .. 100 kHz (CHOP = 1)
+noise_chop1 (VTEMP VSS) noise start=1 stop=100k dec=20
+
+// 4. Disable chopping (CHOP = 0) to audit front-end V_os & 1/f noise
+alt_chop0 alter param=v_chop value=0
+dc_chop0 dc param=temp start=25 stop=29 step=1
+noise_chop0 (VTEMP VSS) noise start=1 stop=100k dec=20
+
+save VDD CHOP VTEMP VPTAT VBE VSUP:p
+saveOptions options save=selected

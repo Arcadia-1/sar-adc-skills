@@ -1,0 +1,134 @@
+// Process-independent Ratiometric BJT/CMOS On-Chip Temperature Sensor &
+// Over-Temperature Shutdown (TSD) Verilog-A Behavioral Model
+//
+// Models physical bandgap-referenced temperature sensing and thermal protection:
+//   - Real BJT V_BE(T) physics using live `$temperature` [K] with nonlinear
+//     Tsividis curvature -(eta - 1) * (kT/q) * ln(T / T_r) producing realistic
+//     2nd-order bow (+/-0.46 C centered, ~0.62 C LS max across -40..125 C)
+//   - PTAT core delta-V_BE = (kT/q) * ln(p_ratio), amplified by alpha to match
+//     CTAT slope so V_BG(T) = V_BE(T) + alpha * dV_BE(T) has zero 1st-order TC
+//   - Ratiometric temperature output:
+//       mu(T)    = alpha * dV_BE_eff / (V_BE + alpha * dV_BE_eff)
+//       VTEMP(T) = v_scale * mu(T)   (~2.0 mV/K, 0.600 V @ 27 C)
+//   - Configurable front-end opamp/ADC offset `v_os` and `1/f` corner:
+//       * CHOP = 0: full v_os appears on dV_BE (~+3.3 C error) + elevated 1/f
+//       * CHOP = 1: dynamic offset chopping suppresses v_os by `chop_atten` (>30x)
+//         and pushes 1/f corner down by `chop_atten^2`
+//   - Finite supply sensitivity (`psrr_deg_per_v` [C/V]) and white + 1/f noise
+//   - Hysteretic over-temperature shutdown comparator (`TSD_OUT`, active-high):
+//       default T_trip = 135 C, T_release = 120 C (15 C hysteresis)
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_temp_sensor_tsd(
+    input  electrical VDD,
+    input  electrical CHOP,
+    output electrical VPTAT,
+    output electrical VBE,
+    output electrical VTEMP,
+    output electrical TSD_OUT,
+    input  electrical VSS
+);
+
+parameter real vg0            = 1.205   from (0.9:1.5);    // extrapolated 0 K silicon bandgap [V]
+parameter real vbe_tr         = 0.650   from (0.3:0.9);    // BJT V_BE at 27 C [V]
+parameter real eta_minus_1    = 3.5     from [0.0:8.0);    // curvature exponent (eta - alpha_I)
+parameter real p_ratio        = 8.0     from (1.5:64.0);   // BJT emitter-area / current ratio p
+parameter real s_nom_v_per_k  = 2.0e-3  from (0.2e-3:20e-3); // nominal VTEMP scale [V/K]
+parameter real dv_be_proc     = 0.0;                       // optional untrimmed PTAT V_BE spread @ 27 C [V]
+
+parameter real v_os           = 1.2e-3;                    // front-end input offset voltage [V]
+parameter real chop_atten     = 0.03    from (0.0:1.0];    // residual offset factor when CHOP=1
+parameter real psrr_deg_per_v = 0.45;                      // supply sensitivity [deg C / V]
+parameter real vdd_nom        = 1.8     from (0.6:5.5);    // nominal supply voltage [V]
+parameter real vdd_min        = 1.1     from (0.3:4.5);    // minimum operating supply [V]
+
+parameter real v_n_white      = 115.0e-9 from [0.0:inf);   // VTEMP white noise density [V/sqrt(Hz)]
+parameter real f_corner_1f    = 2.0e3    from [0.0:inf);   // unchopped 1/f noise corner [Hz]
+
+parameter real t_trip_c       = 135.0   from (40.0:220.0); // TSD rising trip threshold [deg C]
+parameter real t_hys_c        = 15.0    from [0.0:60.0);   // TSD thermal hysteresis [deg C]
+parameter real t_soft_c       = 0.05    from (1e-3:2.0);   // TSD comparator softness [deg C]
+parameter real tau_tsd        = 1.0e-6  from (1e-9:inf);   // TSD comparator response tau [s]
+
+parameter real r_out          = 1.0e3   from (10.0:1e6);   // analog output resistance [ohm]
+parameter real i_q            = 4.5e-6  from [0.0:inf);    // nominal quiescent current [A]
+
+electrical n_tsd;
+real t_k, tr_k, temp_c, k_q, v_t, v_dd, g_vdd;
+real g_chop, chop_fac, v_os_eff;
+real v_dvbe, v_be, alpha, v_bg_r, v_scale;
+real v_ptat_val, v_bg_val, mu_val, v_dd_err, v_temp_tgt;
+real s_i_white, k_i_1f;
+real t_mid, r_sn, root_sn, s_sn, u_sn, t_corr, t_hys_int;
+real s_tsd, t_eff_th, tsd_tgt;
+
+analog begin
+    t_k    = $temperature;
+    tr_k   = 300.15;
+    temp_c = t_k - 273.15;
+    k_q    = `P_K / `P_Q;
+    v_t    = k_q * t_k;
+
+    v_dd  = V(VDD, VSS);
+    g_vdd = 0.5 * (1.0 + tanh((v_dd - vdd_min) / 0.05));
+
+    // Dynamic offset chopping control (CHOP > VDD/2 enables chopping)
+    g_chop   = 0.5 * (1.0 + tanh((V(CHOP, VSS) - 0.5 * vdd_nom) / 0.05));
+    chop_fac = 1.0 - (1.0 - chop_atten) * g_chop;
+    v_os_eff = v_os * chop_fac;
+
+    // First-principles BJT V_BE(T) with Tsividis 2nd-order curvature + PTAT dV_BE(T)
+    v_dvbe = v_t * ln(p_ratio);
+    v_be   = vg0 - (vg0 - vbe_tr) * (t_k / tr_k)
+             - eta_minus_1 * v_t * ln(t_k / tr_k)
+             + dv_be_proc * (t_k / tr_k);
+
+    // Zero-TC weighting alpha at T_r and ratiometric VTEMP output
+    alpha      = ((vg0 - vbe_tr) / tr_k + eta_minus_1 * k_q) / (k_q * ln(p_ratio));
+    v_bg_r     = vg0 + eta_minus_1 * k_q * tr_k;
+    v_scale    = s_nom_v_per_k * v_bg_r / (alpha * k_q * ln(p_ratio));
+
+    v_ptat_val = alpha * (v_dvbe + v_os_eff);
+    v_bg_val   = v_be + v_ptat_val;
+    if (v_bg_val < 0.2)
+        v_bg_val = 0.2;
+    mu_val     = v_ptat_val / v_bg_val;
+    v_dd_err   = (v_dd - vdd_nom) * psrr_deg_per_v * s_nom_v_per_k;
+    v_temp_tgt = (v_scale * mu_val + v_dd_err) * g_vdd;
+
+    // Analog outputs (VPTAT, VBE, VTEMP) with calibrated thermal + 1/f noise on VTEMP
+    I(VPTAT, VSS) <+ (V(VPTAT, VSS) - v_ptat_val * g_vdd) / r_out;
+    I(VBE,   VSS) <+ (V(VBE,   VSS) - v_be * g_vdd) / r_out;
+
+    s_i_white = pow(v_n_white / r_out, 2.0);
+    k_i_1f    = s_i_white * f_corner_1f * chop_fac * chop_fac;
+    I(VTEMP, VSS) <+ (V(VTEMP, VSS) - v_temp_tgt) / r_out
+                     + white_noise(s_i_white, "vtemp_white")
+                     + flicker_noise(k_i_1f, 1.0, "vtemp_1f");
+
+    // Hysteretic Over-Temperature Shutdown (TSD) comparator (active-high TSD_OUT)
+    t_mid = t_trip_c - 0.5 * t_hys_c;
+    if (t_hys_c > 2.2 * t_soft_c) begin
+        r_sn      = 2.0 * t_soft_c / t_hys_c;
+        root_sn   = sqrt(1.0 - r_sn);
+        s_sn      = 0.5 * (1.0 - root_sn);
+        u_sn      = 0.5 * ln((1.0 + root_sn) / (1.0 - root_sn));
+        t_corr    = t_hys_c * s_sn + t_soft_c * u_sn;
+        t_hys_int = t_hys_c + 2.0 * t_corr;
+    end else begin
+        t_hys_int = 0.0;
+    end
+
+    s_tsd    = V(n_tsd, VSS);
+    t_eff_th = t_mid + 0.5 * t_hys_int * (1.0 - 2.0 * s_tsd);
+    tsd_tgt  = 0.5 * (1.0 + tanh((temp_c - t_eff_th) / t_soft_c));
+    I(n_tsd, VSS)   <+ tau_tsd * ddt(s_tsd) + (s_tsd - tsd_tgt);
+    I(TSD_OUT, VSS) <+ (V(TSD_OUT, VSS) - v_dd * g_vdd * s_tsd) / r_out;
+
+    // Supply quiescent current
+    I(VDD, VSS) <+ i_q * g_vdd * (1.0 + 0.05 * (v_dd - vdd_nom)) + v_dd * 1e-10;
+end
+
+endmodule

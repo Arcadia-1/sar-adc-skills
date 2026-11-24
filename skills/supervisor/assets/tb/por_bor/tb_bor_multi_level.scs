@@ -1,0 +1,72 @@
+// =============================================================================
+// Process-Independent POR/BOR TB — Programmable 3-Bit BOR Multi-Level Sweep
+// =============================================================================
+// Steps the 3-bit BOR threshold select code `vtrim_code` across all 8 codes
+// (0..7) via `alter`, executing a clean triangular VDD up-down ramp per code
+// to extract V_BOR+(code), V_BOR-(code), hysteresis V_hys(code), average LSB
+// step size [mV/LSB], DNL, monotonicity, and steady-state quiescent current.
+//
+// DUT interface contract (4-pin POR/BOR Supervisor):
+//   subckt dut_por_bor VDD VTRIM RSTB VSS
+//   ends dut_por_bor
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.8 \
+    vtrim_code=0 \
+    t_pre=0.1m \
+    t_ramp=8m \
+    t_hold=1m \
+    t_post=0.1m \
+    cload=1p \
+    temp_c=27
+
+VSUP (VDD 0) vsource type=pwl wave=[ \
+    0                        0 \
+    t_pre                    0 \
+    (t_pre+t_ramp)           vdd_nom \
+    (t_pre+t_ramp+t_hold)    vdd_nom \
+    (t_pre+2*t_ramp+t_hold)  0 \
+    (t_pre+2*t_ramp+t_hold+t_post) 0 ]
+
+VGND (VSS   0) vsource dc=0          type=dc
+VTRM (VTRIM 0) vsource dc=vtrim_code type=dc
+
+I0 (VDD VTRIM RSTB VSS) dut_por_bor
+CL (RSTB VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran_c0 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c1 alter param=vtrim_code value=1
+tran_c1 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c2 alter param=vtrim_code value=2
+tran_c2 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c3 alter param=vtrim_code value=3
+tran_c3 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c4 alter param=vtrim_code value=4
+tran_c4 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c5 alter param=vtrim_code value=5
+tran_c5 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c6 alter param=vtrim_code value=6
+tran_c6 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+alt_c7 alter param=vtrim_code value=7
+tran_c7 tran stop=(t_pre+2*t_ramp+t_hold+t_post) errpreset=conservative maxstep=30u
+
+save VDD RSTB VTRIM VSUP:p
+saveOptions options save=selected

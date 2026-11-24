@@ -1,0 +1,7 @@
+interface:
+  display_name: "Supervisor (POR/BOR & Temp Sensor/TSD)"
+  short_description: "Process-independent POR/BOR supervisor, on-chip temperature sensor & TSD design and Spectre X TBs"
+  default_prompt: "Use $supervisor to design, budget, debug, or verify a POR/BOR supervisor, on-chip temperature sensor, or over-temperature shutdown (TSD) circuit in Spectre X."
+
+policy:
+  allow_implicit_invocation: true

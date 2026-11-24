@@ -1,0 +1,46 @@
+// =============================================================================
+// Process-Independent Temperature Sensor TB — -40..125 C Linearity & Curvature
+// =============================================================================
+// Sweeps die temperature from -40 C to +125 C in 1 C steps with dynamic
+// chopping enabled (CHOP = VDD) to characterize:
+//   - V_BE(T) CTAT voltage & slope [mV/C]
+//   - V_PTAT(T) amplified delta-V_BE voltage & slope [mV/C]
+//   - V_TEMP(T) ratiometric temperature output & sensitivity [mV/C]
+//   - Raw uncalibrated error, 1-point trimmed (@ 27 C) error, and 2-point
+//     trimmed residual 2nd-order curvature bow (+/- deg C)
+//
+// DUT interface contract (7-pin On-Chip Temperature Sensor + TSD):
+//   subckt dut_tsens VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS
+//   ends dut_tsens
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_in=1.8 \
+    v_chop=1.8 \
+    cload=1p \
+    temp_c=27
+
+VSUP  (VDD  0) vsource dc=vdd_in type=dc
+VCHOP (CHOP 0) vsource dc=v_chop type=dc
+VGND  (VSS  0) vsource dc=0      type=dc
+
+I0 (VDD CHOP VPTAT VBE VTEMP TSD_OUT VSS) dut_tsens
+CL_T (VTEMP   VSS) capacitor c=cload
+CL_P (VPTAT   VSS) capacitor c=cload
+CL_B (VBE     VSS) capacitor c=cload
+CL_A (TSD_OUT VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_temp dc param=temp start=-40 stop=125 step=1
+
+save VBE VPTAT VTEMP TSD_OUT VSUP:p
+saveOptions options save=selected

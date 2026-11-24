@@ -13,6 +13,7 @@ Every subdirectory under `skills/` is an **independently installable AI agent sk
 | **Analog Core** | [`opamp-ota/`](opamp-ota/SKILL.md) | Single-Ended & Fully Differential OpAmp/OTA | `single_ended` & `fully_diff` (16 Spectre X signoff decks covering 29 items: `stb`/Tian DM+CM, CMRR/4R-bridge/PSRR±/noise, ICMR/swing-vs-$R_L$/VIDR, $Z_{\text{out,DM}}$/$Z_{\text{out,CM}}$/OTA $g_m$, slew/THD/$\text{BW}_{\text{full}}$, power-ramp & surge) |
 | **Power & Reference** | [`ldo/`](ldo/SKILL.md) | PMOS-Pass, Capless (OCL), & NMOS-Pass LDO | DC reg/dropout, `iprobe` `stb`, PSRR/`|Zout|`/`noise`, load/line step transients |
 | **Power & Reference** | [`bandgap/`](bandgap/SKILL.md) | Kuijk/Brokaw & Banba Sub-1 V Bandgap Reference | Temp/line sweeps (`TC [ppm/C]`), dead-state startup, `iprobe` core-loop `stb`, PSRR/noise |
+| **Power & Reference** | [`supervisor/`](supervisor/SKILL.md) | Nano-Power POR/BOR & On-Chip Temp Sensor / TSD | `por_bor` (thresholds/hysteresis/low-VDD clamp/`I_q`, 3-decade ramp-rate `t_rst`, negative-VDD glitch immunity, 3-bit programmable BOR) & `temp_sensor` (`-40..125 C` 1-pt/2-pt curvature, `deg C/V` PSRR, `mK_rms` noise & chopping, hysteretic TSD — 7 TB decks, 2 VA) |
 
 ## Canonical Skill Layout Contract
 

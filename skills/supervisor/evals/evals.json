@@ -1,0 +1,77 @@
+{
+  "skill_name": "supervisor",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Why does a naive passive RC-delay + inverter Power-On Reset circuit fail on slow battery or energy-harvesting supply ramps, and what architecture should replace it?",
+      "expected_output": "Should explain that when t_ramp >> tau_RC the capacitor tracks VDD directly so no reset hold delay is generated (and shallow brown-outs go undetected), and recommend a voltage-referenced V_th-clamp or bandgap-referenced hysteretic comparator paired with a constant-current release delay timer.",
+      "files": ["references/por-bor-design.md"]
+    },
+    {
+      "id": 2,
+      "prompt": "How do I size the minimum POR/BOR hysteresis V_hys to prevent reset chattering during SoC cold boot?",
+      "expected_output": "Should give V_hys >= Delta_I_inrush * R_PDN + V_rip_pp + V_margin (typically 60-150 mV on a 1.8 V rail) while keeping V_ret_max < V_POR- < V_POR+ < V_DD_min across PVT corners, and explain how switching a ladder tap or feedback pull-down NMOS creates clean hysteresis.",
+      "files": ["references/por-bor-design.md"]
+    },
+    {
+      "id": 3,
+      "prompt": "What causes a spurious active-low RSTB high glitch during cold boot when VDD is between 0 V and 0.5 V, and how do I prevent and verify it in Spectre?",
+      "expected_output": "Should explain that below V_thn standard NMOS pull-downs are off while PMOS C_gd or ESD coupling pulls RSTB upward, recommend a passive bleed resistor clamp, native/zero-V_th NMOS clamp, or asymmetric driver sizing, and point to assets/tb/por_bor/tb_por_thresholds_hys.scs and analyze_por_bor.py thresholds (auditing max_glitch_low_vdd_mv and n_rise_edges below V_POR+).",
+      "files": ["references/por-bor-design.md", "references/simulation-and-verification.md", "assets/tb/por_bor/tb_por_thresholds_hys.scs"]
+    },
+    {
+      "id": 4,
+      "prompt": "How do I design an asymmetric brown-out glitch filter so short 0.5-1.5 us VDD spikes are rejected while true >= 5 us brown-outs assert RSTB reliably, and how do I verify the glitch immunity curve in Spectre?",
+      "expected_output": "Should size tau_glitch via T_min_detect ~= tau_glitch * ln(2) (e.g. tau_glitch = 3.5 us -> 2.43 us threshold) with fast rising recovery to avoid ratcheting, explain why normalized RSTB/VDD (< 0.5) distinguishes true reset assertion from rail tracking during rejected dips, and reference assets/tb/por_bor/tb_por_glitch_immunity.scs and analyze_por_bor.py glitch.",
+      "files": ["references/por-bor-design.md", "references/simulation-and-verification.md", "assets/tb/por_bor/tb_por_glitch_immunity.scs"]
+    },
+    {
+      "id": 5,
+      "prompt": "How should I verify that a POR release delay timer t_rst remains consistent across fast (10 us), medium (200 us), and slow (4 ms) cold-boot supply ramps?",
+      "expected_output": "Should point to assets/tb/por_bor/tb_por_ramp_rates.scs and analyze_por_bor.py ramps using alter-multiplexed PWL ramps across 2.5+ decades, checking v_release_v, t_rst_delay_us, t_rst_spread_us, low_vdd_glitch_mv, and single-edge clean_release across all three speeds.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/por_bor/tb_por_ramp_rates.scs", "assets/tb/por_bor/analyze_por_bor.py"]
+    },
+    {
+      "id": 6,
+      "prompt": "How do I verify a 3-bit programmable BOR threshold ladder (codes 0..7) for step size, DNL, INL, monotonicity, and steady-state quiescent current in Spectre?",
+      "expected_output": "Should point to assets/tb/por_bor/tb_bor_multi_level.scs and analyze_por_bor.py bor_levels: sweep vtrim_code 0..7 via alter with a flat-plateau triangle ramp per code, detect trip points via relative RSTB - 0.5*VDD = 0 crossings (never a fixed 0.9 V threshold), and measure I_q on the flat VDD plateau to avoid C_L * dV/dt inflation.",
+      "files": ["references/por-bor-design.md", "references/simulation-and-verification.md", "assets/tb/por_bor/tb_bor_multi_level.scs"]
+    },
+    {
+      "id": 7,
+      "prompt": "Derive why a ratiometric BJT temperature sensor exhibits +/-0.4 to +/-0.8 C residual 2nd-order curvature across -40..125 C even after 2-point linear calibration, and explain why subthreshold CMOS sensors bow more.",
+      "expected_output": "Should write V_BE(T) = V_G0 - (V_G0 - V_BE(T_r))*(T/T_r) - (eta - alpha_I)*(kT/q)*ln(T/T_r), show that mu(T) = alpha*dV_BE / (V_BE + alpha*dV_BE) inherits parabolic droop in the V_BG(T) denominator producing ~ +/-0.46 C bow across -40..125 C, and explain that subthreshold MOS V_GS/dV_GS adds temperature-dependent subthreshold slope n(T) and mobility curvature (~ +/-2-3 C bow).",
+      "files": ["references/temperature-sensor-and-tsd.md"]
+    },
+    {
+      "id": 8,
+      "prompt": "Why does a single room-temperature (1-point @ 27 C) multiplicative gain trim eliminate BJT saturation-current process spread across the entire -40..125 C range?",
+      "expected_output": "Should show that I_S -> I_S*(1+delta) shifts V_BE = (kT/q)*ln(I_C/I_S) by -(kT/q)*ln(1+delta), which is purely proportional to absolute temperature (PTAT), so a single multiplicative scale calibration at 27 C cancels it over temperature, leaving mainly 2nd-order curvature bow.",
+      "files": ["references/temperature-sensor-and-tsd.md", "assets/tb/temp_sensor/tb_tsens_linearity.scs"]
+    },
+    {
+      "id": 9,
+      "prompt": "Calculate the temperature error caused by a 1.2 mV unchopped front-end opamp offset on a p=8 BJT temperature sensor, and explain how to verify dynamic chopping and thermal noise resolution in Spectre.",
+      "expected_output": "Should compute d(dV_BE)/dT = (k/q)*ln(8) = 0.1792 mV/C so 1.2 mV offset produces ~3.3 C ratiometric error (with 1-mu ~= 0.5 factor), show that CHOP=1 slashes DC offset > 10-30x and pushes down the 1/f corner, and point to assets/tb/temp_sensor/tb_tsens_psrr_noise.scs and analyze_temp_sensor.py psrr_noise.",
+      "files": ["references/temperature-sensor-and-tsd.md", "references/simulation-and-verification.md", "assets/tb/temp_sensor/tb_tsens_psrr_noise.scs"]
+    },
+    {
+      "id": 10,
+      "prompt": "How do I measure supply sensitivity [deg C/V] and integrated RMS temperature resolution [mK_rms] of an on-chip temperature sensor in Spectre?",
+      "expected_output": "Should point to assets/tb/temp_sensor/tb_tsens_psrr_noise.scs and analyze_temp_sensor.py psrr_noise: measure local sensitivity dVTEMP/dT around 27 C, sweep VDD over +/-10% (1.62..1.98 V) to compute |dVTEMP/dVDD| / |dVTEMP/dT|, and integrate VTEMP output noise PSD from 1 Hz to 100 kHz divided by |dVTEMP/dT| to report temp_noise_mk_rms.",
+      "files": ["references/temperature-sensor-and-tsd.md", "references/simulation-and-verification.md", "assets/tb/temp_sensor/tb_tsens_psrr_noise.scs"]
+    },
+    {
+      "id": 11,
+      "prompt": "Why is 15-20 C of thermal hysteresis mandatory in an Over-Temperature Shutdown (TSD) circuit, and how do I verify T_trip and T_release hysteresis in Spectre using native temperature sweeps?",
+      "expected_output": "Should explain that T_hys = 0 causes destructive high-frequency thermal cycling/chattering right at T_trip once the power stage turns off and cools slightly, and point to assets/tb/temp_sensor/tb_tsens_thermal_alarm.scs using consecutive dc_up (25->160 C) and dc_dn (160->25 C) sweeps with prevoppoint=yes analyzed by analyze_temp_sensor.py tsd.",
+      "files": ["references/temperature-sensor-and-tsd.md", "references/simulation-and-verification.md", "assets/tb/temp_sensor/tb_tsens_thermal_alarm.scs"]
+    },
+    {
+      "id": 12,
+      "prompt": "Which behavioral Verilog-A models let me test both nominal behavior and fault-injection negative tests (disabled glitch filter, cold-boot low-VDD glitch, zero TSD hysteresis) before designing transistors?",
+      "expected_output": "Should reference assets/va/va_por_bor.va (tau_glitch=10n, fault_low_vdd_glitch=1, 3-bit VTRIM, t_rst, i_q) and assets/va/va_temp_sensor_tsd.va (t_hys_c=0, v_os, CHOP, psrr_deg_per_v, v_n_white, eta_minus_1).",
+      "files": ["SKILL.md", "assets/va/va_por_bor.va", "assets/va/va_temp_sensor_tsd.va"]
+    }
+  ]
+}
