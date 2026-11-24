@@ -1,0 +1,36 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — AC PSRR(f) & Output Noise
+// =============================================================================
+// Extracts PSRR(f) = -20*log10(|V(VREF)/V(VDD)|) from 1 Hz to 100 MHz and
+// integrated output RMS noise from 10 Hz to 10 MHz in one fast run.
+//
+// DUT interface contract:
+//   subckt dut_bandgap VDD VREF VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.0 \
+    cload=1p \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd_nom mag=1 type=dc
+VGND (VSS 0) vsource dc=0             type=dc
+
+I0 (VDD VREF VSS) dut_bandgap
+CL (VREF VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+ac    ac start=1 stop=100M dec=20 annotate=status
+noise (VREF 0) noise start=10 stop=10M dec=20 annotate=status
+
+save VREF VDD
+saveOptions options save=selected

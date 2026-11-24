@@ -1,0 +1,63 @@
+// =============================================================================
+// Process-Independent LDO Testbench — Load-Step & Line-Step Transient
+// =============================================================================
+// Measures sequentially in one transient run:
+//   - [t_ld1 .. t_ld2]: sharp load current step iload_lo -> iload_hi -> iload_lo
+//     (undershoot, overshoot, static load regulation)
+//   - [t_ln1 .. t_stop]: input supply line step vdd_lo -> vdd_hi
+//     (dynamic line rejection peak glitch)
+//
+// DUT interface contract:
+//   subckt dut_ldo VDD VREF VOUT FB_IN VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_lo=1.2 \
+    vdd_hi=1.4 \
+    vref=0.9 \
+    iload_lo=0.2m \
+    iload_hi=5m \
+    cload=100p \
+    resr=0.5 \
+    t_ld1=1u \
+    t_ld2=3u \
+    t_ln1=5u \
+    t_stop=7u \
+    tr=10n \
+    tf=10n \
+    temp_c=27
+
+VSUP  (VDD 0) vsource type=pwl wave=[ \
+    0           vdd_lo \
+    t_ln1       vdd_lo \
+    (t_ln1+tr)  vdd_hi \
+    t_stop      vdd_hi ]
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVREF (VREF 0) vsource dc=vref type=dc
+
+I0 (VDD VREF VOUT VOUT VSS) dut_ldo
+
+ILOAD (VOUT VSS) isource type=pwl wave=[ \
+    0           iload_lo \
+    t_ld1       iload_lo \
+    (t_ld1+tr)  iload_hi \
+    t_ld2       iload_hi \
+    (t_ld2+tf)  iload_lo \
+    t_stop      iload_lo ]
+RESR  (VOUT V_CESR) resistor r=resr
+CLOAD (V_CESR VSS)  capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative
+
+save VOUT VDD
+saveOptions options save=selected

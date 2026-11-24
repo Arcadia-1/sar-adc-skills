@@ -1,0 +1,93 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Simultaneous DM + CM `stb`
+// =============================================================================
+// Uses an inline lossless reciprocal Tian balun (`diff_stb_probe`) built purely
+// from standard Spectre primitives (`vcvs`, `cccs`, `iprobe` — zero analogLib
+// dependency!) to extract BOTH loop gains in one simulation at identical DC bias:
+//   - `stb_dm`: Differential-Mode loop gain T_DM(s) -> A0_DM, UGF_DM, PM_DM, GM_DM
+//   - `stb_cm`: Common-Mode (CMFB) loop gain T_CM(s) -> A0_CM, UGF_CM, PM_CM, GM_CM
+//
+// DUT interface contract (8-pin fully differential OTA with breakable VCM_FB):
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+//   (In closed-loop use, connect VCM_FB to a matched R_cm/C_cm divider on VOP/VON;
+//    placing that divider AFTER `diff_stb_probe` puts BOTH DM and CMFB loops
+//    cleanly through IPRB_DM and IPRB_CM!)
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    cload=2p \
+    rf=100k \
+    rcm=500k \
+    temp_c=27
+
+// ── Lossless reciprocal Tian differential + common-mode stability probe ──────
+// Splits (INP, INN) into DM & CM paths across native iprobes IPRB_DM / IPRB_CM
+// and reconstructs (OUTP, OUTN) with exact voltage and current continuity.
+subckt diff_stb_probe INP INN OUTP OUTN
+    // Input side: V(D_IN) = V(INP) - V(INN), V(C_IN) = 0.5*(V(INP) + V(INN))
+    ED1  (D_INT N_D1 INP 0) vcvs gain=1.0
+    ED2  (N_D1  0    INN 0) vcvs gain=-1.0
+    VS_D (D_INT D_IN)       vsource dc=0
+    EC1  (C_INT N_C1 INP 0) vcvs gain=0.5
+    EC2  (N_C1  0    INN 0) vcvs gain=0.5
+    VS_C (C_INT C_IN)       vsource dc=0
+    FP_D (INP 0) cccs probe=VS_D gain=1.0
+    FN_D (INN 0) cccs probe=VS_D gain=-1.0
+    FP_C (INP 0) cccs probe=VS_C gain=0.5
+    FN_C (INN 0) cccs probe=VS_C gain=0.5
+
+    // Native Spectre stability probes for DM and CM loops
+    IPRB_DM (D_IN D_OUT) iprobe
+    IPRB_CM (C_IN C_OUT) iprobe
+
+    // Output side: V(OUTP) = V(C_OUT) + 0.5*V(D_OUT), V(OUTN) = V(C_OUT) - 0.5*V(D_OUT)
+    EP1  (OP_INT N_OP C_OUT 0) vcvs gain=1.0
+    EP2  (N_OP   0    D_OUT 0) vcvs gain=0.5
+    VS_P (OP_INT OUTP)         vsource dc=0
+    EN1  (ON_INT N_ON C_OUT 0) vcvs gain=1.0
+    EN2  (N_ON   0    D_OUT 0) vcvs gain=-0.5
+    VS_N (ON_INT OUTN)         vsource dc=0
+    FD_P (D_OUT 0) cccs probe=VS_P gain=0.5
+    FD_N (D_OUT 0) cccs probe=VS_N gain=-0.5
+    FC_P (C_OUT 0) cccs probe=VS_P gain=1.0
+    FC_N (C_OUT 0) cccs probe=VS_N gain=1.0
+ends diff_stb_probe
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+I0    (VIP VIN VOCM VCM_FB VOP_OTA VON_OTA VDD VSS) dut_fd_ota
+I_PRB (VOP_OTA VON_OTA VOP VON) diff_stb_probe
+
+// Common-mode sensing divider placed AFTER diff_stb_probe so stb_cm breaks CMFB cleanly!
+RCM_P (VOP VCM_FB) resistor r=rcm
+RCM_N (VON VCM_FB) resistor r=rcm
+
+// Inverting gain = -1 negative DM feedback
+RF_P (VOP VIN)  resistor r=rf
+RF_N (VON VIP)  resistor r=rf
+RG_P (VIN VOCM) resistor r=rf
+RG_N (VIP VOCM) resistor r=rf
+
+CL_P (VOP VSS) capacitor c=cload
+CL_N (VON VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc     dc
+stb_dm stb start=1 stop=10G dec=20 probe=I_PRB.IPRB_DM annotate=status
+stb_cm stb start=1 stop=10G dec=20 probe=I_PRB.IPRB_CM annotate=status
+
+save VOP VON VSUP:p
+saveOptions options save=selected

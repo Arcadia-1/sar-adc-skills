@@ -1,0 +1,89 @@
+// Process-independent 2-stage Miller-compensated single-ended OpAmp macro-model
+//
+// Models:
+//   - DC open-loop gain a0 = (gm1*ro1)*(gm2*ro2), dominant pole, non-dominant pole,
+//     and Miller compensation (c_c) + nulling resistor (r_z)
+//   - Large-signal slew-rate current limit (i_tail via smooth tanh differential pair)
+//   - Soft rail-to-rail output swing clamping (v_headroom from VDD/VSS)
+//   - Finite CMRR (cmrr_db) and PSRR (psrr_db)
+//   - Input-referred thermal white noise (vn_th) + 1/f flicker noise (vn_1f_1khz)
+//     for Spectre `noise` analysis
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_ota_2stage(
+    input  electrical VIP,
+    input  electrical VIN,
+    output electrical VOUT,
+    input  electrical VDD,
+    input  electrical VSS
+);
+
+parameter real gm1        = 200e-6 from (0:inf);   // 1st-stage transconductance [S]
+parameter real ro1        = 500e3  from (0:inf);   // 1st-stage output resistance [ohm]
+parameter real cp1        = 50f    from (0:inf);   // 1st-stage parasitic cap [F]
+parameter real i_tail     = 20e-6  from (0:inf);   // 1st-stage tail current (sets SR = i_tail/c_c) [A]
+parameter real gm2        = 2e-3   from (0:inf);   // 2nd-stage transconductance [S]
+parameter real ro2        = 50e3   from (0:inf);   // 2nd-stage output resistance [ohm]
+parameter real i_out_max  = 200e-6 from (0:inf);   // 2nd-stage max output current [A]
+parameter real c_c        = 1p     from (0:inf);   // Miller compensation cap [F]
+parameter real r_z        = 500.0  from [0:inf);   // Nulling resistor [ohm] (1/gm2 = 500 cancels RHP zero)
+parameter real cmrr_db    = 80.0   from (0:200);   // DC CMRR [dB]
+parameter real psrr_db    = 75.0   from (0:200);   // DC PSRR+ [dB]
+parameter real v_headroom = 0.10   from (0:0.4);   // output swing headroom from rails [V]
+parameter real vn_th      = 15e-9  from [0:inf);   // input-referred white noise [V/sqrt(Hz)]
+parameter real vn_1f_1khz = 50e-9  from [0:inf);   // input-referred 1/f noise at 1 kHz [V/sqrt(Hz)]
+parameter real i_q        = 100e-6 from [0:inf);   // quiescent supply current [A]
+
+electrical n1, nm_mid;
+real vmid_rail, vid, vcm_err, vdd_err, v_eff;
+real i_stg1, i_stg2, v_lin1, v_lin2;
+real inv_cmrr, inv_psrr, v_hi_lim, v_lo_lim;
+
+analog begin
+    vmid_rail = 0.5 * (V(VDD) + V(VSS));
+    inv_cmrr  = pow(10.0, -cmrr_db / 20.0);
+    inv_psrr  = pow(10.0, -psrr_db / 20.0);
+
+    vid     = V(VIP, VIN);
+    vcm_err = 0.5 * (V(VIP) + V(VIN)) - vmid_rail;
+    vdd_err = V(VDD, VSS) - 0.9;
+    v_eff   = vid + inv_cmrr * vcm_err + inv_psrr * vdd_err;
+
+    // 1st stage: tanh slew-limited differential transconductor (inverting onto n1)
+    v_lin1 = i_tail / gm1;
+    i_stg1 = i_tail * tanh(v_eff / v_lin1);
+    I(n1, VSS) <+ i_stg1
+                  + (V(n1) - vmid_rail) / ro1
+                  + cp1 * ddt(V(n1, VSS))
+                  + white_noise((gm1 * vn_th) * (gm1 * vn_th), "ota_thermal")
+                  + flicker_noise((gm1 * vn_1f_1khz) * (gm1 * vn_1f_1khz) * 1e3, 1.0, "ota_flicker");
+
+    // Miller compensation branch between n1 and VOUT through nulling resistor r_z
+    if (r_z > 0.0) begin
+        I(n1, nm_mid)   <+ V(n1, nm_mid) / r_z;
+        I(nm_mid, VOUT) <+ c_c * ddt(V(nm_mid, VOUT));
+    end else begin
+        V(nm_mid, n1)   <+ 0.0;
+        I(n1, VOUT)     <+ c_c * ddt(V(n1, VOUT));
+    end
+
+    // 2nd stage: inverting common-source gain stage (so total VIP -> VOUT is non-inverting!)
+    // n1 falls when VIP > VIN -> (V(n1) - vmid_rail) < 0 -> i_stg2 < 0 -> sources current into VOUT!
+    v_lin2 = i_out_max / gm2;
+    i_stg2 = i_out_max * tanh((V(n1) - vmid_rail) / v_lin2);
+
+    // Soft output rail clamp
+    v_hi_lim = V(VDD) - v_headroom;
+    v_lo_lim = V(VSS) + v_headroom;
+    I(VOUT, VSS) <+ i_stg2
+                    + (V(VOUT) - vmid_rail) / ro2
+                    + 1e-2 * max(V(VOUT) - v_hi_lim, 0.0)
+                    - 1e-2 * max(v_lo_lim - V(VOUT), 0.0);
+
+    // Quiescent supply current draw
+    I(VDD, VSS) <+ i_q;
+end
+
+endmodule

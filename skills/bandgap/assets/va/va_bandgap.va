@@ -1,0 +1,68 @@
+// Process-independent behavioral Bandgap Voltage Reference (BGR) macro-model
+//
+// Models:
+//   - Realistic Tsividis/Brokaw 2nd-order temperature curvature using Spectre's
+//     live `$temperature` [K]:
+//       V_ref(T) = vref_nom - c_curv * (T - T0 - T * ln(T / T0))
+//     producing a physical concave parabola peaking at t0_c (~12-18 ppm/C over -40..125 C!)
+//   - Smooth supply turn-on headroom (vdd_min) and finite DC/HF PSRR
+//   - Realistic 1-pole startup time constant (tau_start) & output resistance
+//   - White + 1/f output noise density for Spectre `noise` analysis
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_bandgap(
+    input  electrical VDD,
+    output electrical VREF,
+    input  electrical VSS
+);
+
+parameter real vref_nom   = 0.60   from (0.1:2.0);  // nominal output (e.g. 0.6 V Banba or 1.22 V Brokaw)
+parameter real t0_c       = 35.0;                   // zero-TC peak temperature [deg C]
+parameter real c_curv     = 1.1e-4 from [0:inf);    // 2nd-order curvature coeff [V/K] (~15 ppm/C)
+parameter real tc1_ppm    = 0.0;                    // residual 1st-order linear TC error [ppm/C]
+parameter real vdd_min    = 0.78   from (0.1:5.0);  // minimum supply headroom [V]
+parameter real psrr_dc_db = 70.0   from (0:160);    // DC PSRR [dB]
+parameter real f_psrr_p   = 50e3   from (1:inf);    // PSRR roll-off pole [Hz]
+parameter real tau_start  = 2e-6   from (1e-9:inf); // startup settling time constant [s]
+parameter real r_out      = 1e3    from (1:inf);    // output impedance [ohm]
+parameter real vn_th      = 40e-9  from [0:inf);    // output white noise [V/sqrt(Hz)]
+parameter real vn_1f_1khz = 120e-9 from [0:inf);    // output 1/f noise at 1 kHz [V/sqrt(Hz)]
+parameter real i_q        = 15e-6  from [0:inf);    // quiescent supply current [A]
+
+electrical n_core, n_psrr;
+real t_k, t0_k, v_temp, v_turnon, v_tgt, inv_psrr, c_psrr, g_psrr;
+
+analog begin
+    t_k  = $temperature;
+    t0_k = t0_c + 273.15;
+
+    // Exact 2nd-order bandgap curvature parabola peaking at t0_k:
+    //   f(T) = T - T0 - T*ln(T/T0) <= 0, with f(T0) = 0, f'(T0) = 0, f''(T0) = -1/T0
+    v_temp = vref_nom * (1.0 + tc1_ppm * 1e-6 * (t_k - t0_k))
+             + c_curv * (t_k - t0_k - t_k * ln(t_k / t0_k));
+
+    // Smooth supply turn-on transition around vdd_min
+    v_turnon = 0.5 * (1.0 + tanh((V(VDD, VSS) - vdd_min) / 0.04));
+    v_tgt    = v_temp * v_turnon;
+
+    // Startup RC dynamics on internal core node (R=1 ohm, C=tau_start)
+    I(n_core, VSS) <+ (V(n_core, VSS) - v_tgt) + tau_start * ddt(V(n_core, VSS));
+
+    // Frequency-dependent supply feedthrough (flat at DC = 10^(-psrr_dc/20), rises at +20 dB/dec above f_psrr_p)
+    inv_psrr = pow(10.0, -psrr_dc_db / 20.0);
+    c_psrr   = inv_psrr / (2.0 * `M_PI * f_psrr_p);
+    g_psrr   = inv_psrr;
+    // AC high-pass coupling from VDD into n_psrr (1 ohm shunt to VSS)
+    I(n_psrr, VSS) <+ V(n_psrr, VSS) - g_psrr * (V(VDD, VSS) - 1.0) - c_psrr * ddt(V(VDD, VSS));
+
+    // Output stage with finite r_out + white/1f noise
+    I(VREF, VSS) <+ (V(VREF, VSS) - (V(n_core, VSS) + V(n_psrr, VSS))) / r_out
+                    + white_noise((vn_th / r_out) * (vn_th / r_out), "bgr_white")
+                    + flicker_noise((vn_1f_1khz / r_out) * (vn_1f_1khz / r_out) * 1e3, 1.0, "bgr_1f");
+
+    I(VDD, VSS) <+ i_q * v_turnon;
+end
+
+endmodule

@@ -1,0 +1,83 @@
+// Process-independent PMOS-pass LDO regulator macro-model
+//
+// Exposes breakable feedback pin FB_IN so Spectre `stb` can insert `iprobe`:
+//   - Closed-loop use : tie FB_IN directly to VOUT
+//   - Stability (`stb`): connect `IPRB (VOUT FB_IN) iprobe`
+//
+// Models:
+//   - Error amp DC gain (a_ea), pole (ro_ea, c_ea), and white + 1/f noise
+//   - Miller compensation (c_m) + nulling resistor (r_z)
+//   - PMOS pass stage with realistic dropout resistance (r_on_min) when VDD -> VOUT
+//     so DC dropout sweeps produce a physical V_DO knee!
+//   - Quiescent bias current (i_q) drawn from VDD to VSS
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_ldo_pmos(
+    input  electrical VDD,
+    input  electrical VREF,
+    output electrical VOUT,
+    input  electrical FB_IN,
+    input  electrical VSS
+);
+
+parameter real a_ea        = 100.0   from (1:inf);    // EA DC gain [V/V] (40 dB)
+parameter real ro_ea       = 100e3   from (0:inf);    // EA output resistance [ohm]
+parameter real c_ea        = 200f    from (0:inf);    // EA output parasitic cap [F]
+parameter real c_m         = 2p      from [0:inf);    // Miller cap [F]
+parameter real r_z         = 500.0   from [0:inf);    // nulling resistor [ohm]
+parameter real gm_pass     = 20e-3   from (0:inf);    // PMOS pass gm [S]
+parameter real ro_pass     = 500.0   from (0:inf);    // PMOS pass rds [ohm]
+parameter real r_on_min    = 15.0    from (0:inf);    // minimum triode Ron in dropout [ohm]
+parameter real vsg0        = 0.5     from (0:inf);    // quiescent PMOS Vsg bias [V]
+parameter real i_q         = 50e-6   from [0:inf);    // quiescent bias current [A]
+parameter real vn_ea_th    = 20e-9   from [0:inf);    // EA white noise [V/sqrt(Hz)]
+parameter real vn_ea_1f    = 60e-9   from [0:inf);    // EA 1/f noise at 1 kHz [V/sqrt(Hz)]
+
+electrical vg, vm_mid;
+real gm_ea, v_err, vsg_eff, vds_p, i_sat, i_max_triode, i_pass;
+
+analog begin
+    gm_ea = a_ea / ro_ea;
+    v_err = V(VREF, VSS) - V(FB_IN, VSS);
+
+    // PMOS-mirror EA stage referenced to VDD (negative feedback: v_err > 0 -> vg drops -> Vsg rises)
+    I(vg, VSS) <+ gm_ea * v_err
+                  + c_ea * ddt(V(vg, VSS))
+                  + white_noise((gm_ea * vn_ea_th) * (gm_ea * vn_ea_th), "ldo_ea_th")
+                  + flicker_noise((gm_ea * vn_ea_1f) * (gm_ea * vn_ea_1f) * 1e3, 1.0, "ldo_ea_1f");
+    // Clamp vg above VSS softly so pass gate cannot go negative in dropout
+    I(vg, VDD) <+ (V(vg, VDD) + vsg0) / ro_ea;
+    I(vg, VSS) <+ -1e-2 * max(V(VSS) - V(vg), 0.0);
+
+    // Miller compensation branch
+    if (c_m > 0.0) begin
+        if (r_z > 0.0) begin
+            I(vg, vm_mid)   <+ V(vg, vm_mid) / r_z;
+            I(vm_mid, VOUT) <+ c_m * ddt(V(vm_mid, VOUT));
+        end else begin
+            V(vm_mid, vg)   <+ 0.0;
+            I(vg, VOUT)     <+ c_m * ddt(V(vg, VOUT));
+        end
+    end else begin
+        V(vm_mid, VSS) <+ 0.0;
+    end
+
+    // Pass transistor with smooth saturation -> triode dropout transition (tanh limiter)
+    vsg_eff = V(VDD, vg) - vsg0;
+    vds_p   = max(V(VDD, VOUT), 0.0);
+    i_sat   = gm_pass * vsg_eff + V(VDD, VOUT) / ro_pass;
+    i_max_triode = vds_p / r_on_min;
+    // Smooth minimum between saturated current and triode ceiling i_max_triode
+    if (i_max_triode > 1e-9) begin
+        i_pass = i_max_triode * tanh(max(i_sat, 0.0) / i_max_triode);
+    end else begin
+        i_pass = 0.0;
+    end
+
+    I(VDD, VOUT) <+ i_pass;
+    I(VDD, VSS)  <+ i_q * tanh(max(V(VDD, VSS), 0.0) / 0.2);
+end
+
+endmodule
