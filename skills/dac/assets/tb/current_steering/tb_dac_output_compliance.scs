@@ -1,0 +1,92 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — Output Compliance & Load Mismatch
+// =============================================================================
+// Characterizes output voltage compliance headroom, effective array output
+// resistance, and differential load-resistor asymmetry HD2 conversion:
+//   1. `dc_comp`         : Sweeps termination bias `v_term` at midscale (code 512)
+//                          to trace I_outp(V_outp) up to VDD -> extracts 1%-drop
+//                          compliance limit `v_comp_max_v` and `r_out_eff_kohm`.
+//   2. `tran_matched`    : Coherent single-tone sine with matched loads
+//                          (`dr_load = 0%`) -> baseline `hd2_matched_dbc`.
+//   3. `tran_mismatched` : `alter` introduces `dr_mis = 2%` P/N load mismatch ->
+//                          proves R_load asymmetry converts even-order CM ripple
+//                          into differential `hd2_mismatched_dbc`!
+//
+// DUT interface contract (10-bit differential Current-Steering DAC):
+//   subckt dut_cs_dac DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_sine_gen_10b.va"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    dr_load=0.0 \
+    dr_mis=0.02 \
+    v_term=0.0 \
+    v_term_start=-0.3 \
+    v_term_dyn=0.0 \
+    fs=200M \
+    n_fft=256 \
+    m_bin=29 \
+    amp_fs=0.98 \
+    n_warmup=8 \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    t_stop=(n_warmup+n_fft+1)*ts
+
+VSUP  (VDD   0)   vsource dc=vdd    type=dc
+VGND  (VSS   0)   vsource dc=0      type=dc
+VTERM (VTERM VSS) vsource dc=v_term type=dc
+
+VCLK (CLK 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_GEN (CLK VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_sine_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig sig_mode=0 \
+    n_fft=n_fft m_bin=m_bin amp_fs=amp_fs tr=tr
+
+I0 (DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    VDD VSS IOUTP IOUTN) dut_cs_dac
+
+// Zero-volt current probes measure exact sourcing currents I(IOUTP), I(IOUTN)
+VPROBEP (IOUTP IOUTP_L) vsource dc=0 type=dc
+VPROBEN (IOUTN IOUTN_L) vsource dc=0 type=dc
+
+RLP (IOUTP_L VTERM) resistor  r=rload*(1 + 0.5*dr_load)
+RLN (IOUTN_L VTERM) resistor  r=rload*(1 - 0.5*dr_load)
+CLP (IOUTP   VSS)   capacitor c=cload
+CLN (IOUTN   VSS)   capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) DC output compliance sweep (V_outp swept from ~0 V up to VDD)
+dc_comp dc param=v_term start=v_term_start stop=vdd step=10m annotate=status
+
+// 2) Dynamic matched-load baseline (dr_load = 0%)
+alt_vt_dyn alter param=v_term value=v_term_dyn
+tran_matched tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.80*ts strobeoutput=strobeonly
+
+// 3) Dynamic mismatched-load test (dr_load = 2% P/N asymmetry)
+alt_rmis alter param=dr_load value=dr_mis
+tran_mismatched tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.80*ts strobeoutput=strobeonly
+
+save IOUTP IOUTN VTERM VPROBEP:p VPROBEN:p
+saveOptions options save=selected

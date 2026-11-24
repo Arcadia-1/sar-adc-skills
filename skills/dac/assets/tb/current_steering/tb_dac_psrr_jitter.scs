@@ -1,0 +1,104 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — Dynamic Supply PSRR & Jitter
+// =============================================================================
+// Three-stage dynamic sensitivity verification via Spectre `alter`:
+//   1. `tran_psrr`   : 50 mVpp coherent VDD ripple (m_rip=17) + tone (m_bin=67)
+//                      -> dynamic psrr_db, f_rip spur & f_out +/- f_rip sidebands.
+//   2. `tran_clean`  : Clean reference (v_rip_pp=0, t_jitter_rms=0).
+//   3. `tran_jitter` : Calibrated RMS clock jitter (t_jitter_rms=5p) via
+//                      va_dac_clk_jitter -> verifies -20*log10(2*pi*f_out*t_j).
+//
+// DUT contract:
+//   subckt dut_cs_dac_clk DIN9..DIN0 CLK VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_sine_gen_10b.va"
+ahdl_include "../../va/va_dac_clk_jitter.va"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    fs=200M \
+    n_fft=256 \
+    m_bin=67 \
+    m_rip=17 \
+    amp_fs=0.98 \
+    v_rip_pp=50m \
+    t_jitter_rms=0 \
+    t_jit_target=5p \
+    jitter_seed=19 \
+    n_warmup=16 \
+    osr=8 \
+    fc_lpf=0.65*fs \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    f_rip=fs*m_rip/n_fft \
+    t_strobe=ts/osr \
+    t_stop=(n_warmup+n_fft+2)*ts \
+    wc_lpf=2*3.141592653589793*fc_lpf
+
+VSUP (VDD 0) vsource type=sine sinedc=vdd ampl=0.5*v_rip_pp freq=f_rip
+VGND (VSS 0) vsource dc=0 type=dc
+
+// Stimulus updates DIN half a cycle ahead of CLK_DAC for ample setup/hold margin
+VCLK_GEN (CLK_GEN 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=0.5*ts rise=tr fall=tf width=0.5*ts
+VCLK_REF (CLK_REF 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_JIT (CLK_REF VSS CLK_DAC) va_dac_clk_jitter \
+    vdd=vdd_dig t_jitter_rms=t_jitter_rms seed=jitter_seed tr=tr tf=tf
+
+I_GEN (CLK_GEN VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_sine_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig sig_mode=0 \
+    n_fft=n_fft m_bin=m_bin amp_fs=amp_fs tr=tr
+
+I0 (DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CLK_DAC VDD VSS IOUTP IOUTN) dut_cs_dac_clk
+
+RLP (IOUTP VSS) resistor  r=rload
+RLN (IOUTN VSS) resistor  r=rload
+CLP (IOUTP VSS) capacitor c=cload
+CLN (IOUTN VSS) capacitor c=cload
+
+// Unity-gain 3rd-order Butterworth anti-aliasing filter (doubly terminated 1 ohm)
+E_FILT (FILT_SRC 0 IOUTP IOUTN) vcvs gain=2.0
+R_F1   (FILT_SRC FILT_N1) resistor  r=1
+C_F1   (FILT_N1  0)       capacitor c=1/wc_lpf
+L_F2   (FILT_N1  V_FILT)  inductor  l=2/wc_lpf
+C_F3   (V_FILT   0)       capacitor c=1/wc_lpf
+R_F2   (V_FILT   0)       resistor  r=1
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Part A: Dynamic supply PSRR (50 mVpp coherent ripple on VDD, zero jitter)
+tran_psrr tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+// 2) Clean baseline (zero ripple, zero clock jitter)
+alt_rip0 alter param=v_rip_pp value=0
+tran_clean tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+// 3) Part B: Calibrated RMS clock jitter sensitivity (t_jitter_rms = 5 ps)
+alt_jit alter param=t_jitter_rms value=t_jit_target
+tran_jitter tran stop=t_stop errpreset=conservative \
+    strobeperiod=t_strobe strobedelay=0.5*t_strobe strobeoutput=strobeonly
+
+save IOUTP IOUTN V_FILT VDD
+saveOptions options save=selected

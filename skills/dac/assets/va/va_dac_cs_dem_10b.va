@@ -1,0 +1,234 @@
+// Process-independent 10-bit Segmented Current-Steering DAC with DWA / DEM
+//
+// 4-bit thermometer MSB (15 unit cells x 64 LSB) + 6-bit binary LSB (0..63 LSB)
+// totaling 1023 LSB full-scale differential current into external load resistors:
+//   - Deterministic overflow-free Park-Miller per-cell mismatch array (`sigma_cell`,
+//     `seed`) across the 15 thermometer MSB current cells (zero-mean, exact RMS).
+//   - Switchable first-order Data-Weighted Averaging (`DEM_EN` pin or `dem_en=1`):
+//       dem_en=0 -> static thermometer selection [0 .. k_msb-1] (HD2/HD3 spurs)
+//       dem_en=1 -> rotating DWA pointer ptr <- (ptr + k_msb) mod 15 (1st-order
+//                   (1 - z^-1) high-pass mismatch shaping!)
+//   - Charge-conserving code-dependent unit output impedance (`r_cell`, `c_cell`):
+//       reproduces high-frequency Lin & Bult Z_out(f) HD3/SFDR roll-off!
+//   - Smooth output compliance compression knee at `v_comp_max` (1% current drop
+//     at V_out = v_comp_max at nominal VDD, tracking VDD headroom).
+//   - Supply modulation (`psrr_g`, `psrr_asym`) producing both direct feedthrough
+//     spurs at f_rip and AM sidebands at f_out +/- f_rip.
+//   - Internal rising-edge clock sampling (`clk_en=1`) so clock jitter and clock
+//     duty-cycle error (`duty_hd2_k`) directly impact dynamic SNR and HD2.
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module va_dac_cs_dem_10b(
+    input  electrical [9:0] DIN,
+    input  electrical       CLK,
+    input  electrical       DEM_EN,
+    input  electrical       VDD,
+    input  electrical       VSS,
+    output electrical       IOUTP,
+    output electrical       IOUTN
+);
+
+parameter real    vth         = 0.50    from (0:inf);     // digital threshold [V]
+parameter real    i_lsb       = 10e-6   from (1e-9:1.0);  // unit LSB current [A]
+parameter real    r_cell      = 500e3   from (1e3:inf);   // unit-cell output resistance [ohm]
+parameter real    c_cell      = 0.0     from [0:inf);     // unit-cell output capacitance [F]
+parameter real    sigma_cell  = 0.0     from [0:0.5);     // MSB thermometer cell RMS mismatch
+parameter integer seed        = 53      from [1:2147483646]; // deterministic mismatch seed
+parameter integer dem_en      = 0       from [0:1];       // 0=static therm, 1=DWA (ORed w/ DEM_EN pin)
+parameter integer clk_en      = 1       from [0:1];       // 1=latch on CLK rising edge, 0=transparent
+parameter real    vdd_nom     = 1.2     from (0.1:5.0);   // nominal analog supply [V]
+parameter real    v_comp_max  = 0.65    from (0.05:5.0);  // 1%-drop output compliance limit [V] at vdd_nom
+parameter real    v_comp_soft = 0.04    from (0.005:0.5); // smooth triode knee softness [V]
+parameter real    psrr_g      = 0.12    from [0:10.0);    // fractional I_unit sensitivity to VDD [1/V]
+parameter real    psrr_asym   = 0.05    from [0:2.0);     // P/N differential supply coupling asymmetry
+parameter real    duty_hd2_k  = 0.02    from [0:1.0);     // HD2 sensitivity to CLK duty error
+parameter real    t_edge      = 35e-12  from (1e-12:inf); // switch transition time [s]
+parameter real    in_lsb      = 0.0     from [0:inf);     // white current noise per LSB [A/sqrt(Hz)]
+
+integer b_in[0:9];
+integer cur_code, k_msb, k_lsb, dwa_ptr, dem_act;
+integer j, idx, rng_s, hi, lo, has_rise, has_fall;
+real m_err[0:14];
+real u1, u2, rad, mean_m, var_m, std_m;
+real sum_p, sum_n, kp_tgt, kn_tgt, kp_eff, kn_eff;
+real t_last_rise, t_last_fall, t_per, duty_err, x_norm, hd2_duty;
+real vdd_v, dvdd, vp, vn, v_comp_eff, v_knee, arg_p, arg_n;
+real comp_p, comp_n, sup_p, sup_n, ip_src, in_src;
+genvar g;
+
+analog begin
+    // Unrolled bit decoding (safe across all Verilog-A compilers)
+    for (g = 0; g < 10; g = g + 1) begin
+        b_in[g] = (V(DIN[g], VSS) > vth) ? 1 : 0;
+    end
+
+    @(initial_step) begin
+        // Deterministic overflow-free Park-Miller MINSTD PRNG -> Box-Muller
+        rng_s = seed;
+        for (j = 0; j < 3; j = j + 1) begin
+            hi = rng_s / 127773;
+            lo = rng_s % 127773;
+            rng_s = 16807 * lo - 2836 * hi;
+            if (rng_s <= 0) rng_s = rng_s + 2147483647;
+        end
+
+        for (j = 0; j < 15; j = j + 2) begin
+            hi = rng_s / 127773;
+            lo = rng_s % 127773;
+            rng_s = 16807 * lo - 2836 * hi;
+            if (rng_s <= 0) rng_s = rng_s + 2147483647;
+            u1 = rng_s / 2147483647.0;
+            if (u1 < 1e-12) u1 = 1e-12;
+
+            hi = rng_s / 127773;
+            lo = rng_s % 127773;
+            rng_s = 16807 * lo - 2836 * hi;
+            if (rng_s <= 0) rng_s = rng_s + 2147483647;
+            u2 = rng_s / 2147483647.0;
+
+            rad = sqrt(-2.0 * ln(u1));
+            m_err[j] = rad * cos(2.0 * `M_PI * u2);
+            if (j + 1 < 15)
+                m_err[j + 1] = rad * sin(2.0 * `M_PI * u2);
+        end
+
+        // Normalize to exact zero mean and exact RMS = sigma_cell
+        mean_m = 0.0;
+        for (j = 0; j < 15; j = j + 1)
+            mean_m = mean_m + m_err[j];
+        mean_m = mean_m / 15.0;
+
+        var_m = 0.0;
+        for (j = 0; j < 15; j = j + 1) begin
+            m_err[j] = m_err[j] - mean_m;
+            var_m = var_m + m_err[j] * m_err[j];
+        end
+        std_m = sqrt(var_m / 15.0);
+        for (j = 0; j < 15; j = j + 1) begin
+            if (std_m > 1e-15 && sigma_cell > 0.0)
+                m_err[j] = m_err[j] / std_m * sigma_cell;
+            else
+                m_err[j] = 0.0;
+        end
+
+        dwa_ptr     = 0;
+        has_rise    = 0;
+        has_fall    = 0;
+        t_last_rise = 0.0;
+        t_last_fall = 0.0;
+        duty_err    = 0.0;
+
+        // Initial code decode from DIN at t=0
+        cur_code = 0;
+        for (j = 9; j >= 0; j = j - 1)
+            cur_code = cur_code * 2 + b_in[j];
+        k_msb = cur_code / 64;
+        k_lsb = cur_code % 64;
+        sum_p = 0.0;
+        for (j = 0; j < k_msb; j = j + 1)
+            sum_p = sum_p + 64.0 * (1.0 + m_err[j]);
+        kp_tgt = sum_p + k_lsb;
+        kn_tgt = 1023.0 - kp_tgt;
+    end
+
+    // Clock-edge sampling & DWA rotating pointer update
+    @(cross(V(CLK, VSS) - vth, +1)) begin
+        if (clk_en != 0) begin
+            if (has_rise && has_fall && ($abstime > t_last_rise)) begin
+                t_per = $abstime - t_last_rise;
+                if (t_per > 1e-15)
+                    duty_err = (t_last_fall - t_last_rise) / t_per - 0.5;
+            end
+            t_last_rise = $abstime;
+            has_rise    = 1;
+
+            cur_code = 0;
+            for (j = 9; j >= 0; j = j - 1)
+                cur_code = cur_code * 2 + b_in[j];
+            k_msb   = cur_code / 64;
+            k_lsb   = cur_code % 64;
+            dem_act = ((dem_en != 0) || (V(DEM_EN, VSS) > vth)) ? 1 : 0;
+
+            sum_p = 0.0;
+            if (dem_act == 0) begin
+                for (j = 0; j < k_msb; j = j + 1)
+                    sum_p = sum_p + 64.0 * (1.0 + m_err[j]);
+            end else begin
+                for (j = 0; j < k_msb; j = j + 1) begin
+                    idx   = (dwa_ptr + j) % 15;
+                    sum_p = sum_p + 64.0 * (1.0 + m_err[idx]);
+                end
+                dwa_ptr = (dwa_ptr + k_msb) % 15;
+            end
+
+            x_norm   = (cur_code - 511.5) / 511.5;
+            hd2_duty = duty_hd2_k * duty_err * (x_norm * x_norm - 0.5) * 511.5;
+            kp_tgt   = max(sum_p + k_lsb + hd2_duty, 0.0);
+            sum_n    = max(1023.0 - (sum_p + k_lsb) - hd2_duty, 0.0);
+            kn_tgt   = sum_n;
+        end
+    end
+
+    @(cross(V(CLK, VSS) - vth, -1)) begin
+        if (clk_en != 0) begin
+            t_last_fall = $abstime;
+            has_fall    = 1;
+        end
+    end
+
+    // Transparent mode (clk_en == 0) or DC analysis: track DIN directly
+    if (analysis("dc") || (clk_en == 0)) begin
+        cur_code = 0;
+        for (j = 9; j >= 0; j = j - 1)
+            cur_code = cur_code * 2 + b_in[j];
+        k_msb = cur_code / 64;
+        k_lsb = cur_code % 64;
+        sum_p = 0.0;
+        for (j = 0; j < k_msb; j = j + 1)
+            sum_p = sum_p + 64.0 * (1.0 + m_err[j]);
+        kp_tgt = max(sum_p + k_lsb, 0.0);
+        kn_tgt = max(1023.0 - kp_tgt, 0.0);
+    end
+
+    kp_eff = transition(kp_tgt, 0.0, t_edge, t_edge);
+    kn_eff = transition(kn_tgt, 0.0, t_edge, t_edge);
+
+    vdd_v = V(VDD, VSS);
+    dvdd  = vdd_v - vdd_nom;
+    vp    = V(IOUTP, VSS);
+    vn    = V(IOUTN, VSS);
+
+    // Smooth compliance compression: exact 1% current drop at V_out = v_comp_eff
+    v_comp_eff = v_comp_max + dvdd;
+    v_knee     = v_comp_eff + 4.59511985 * v_comp_soft;
+
+    arg_p = (vp - v_knee) / v_comp_soft;
+    if (arg_p >  40.0) arg_p =  40.0;
+    if (arg_p < -40.0) arg_p = -40.0;
+    comp_p = 1.0 / (1.0 + exp(arg_p));
+
+    arg_n = (vn - v_knee) / v_comp_soft;
+    if (arg_n >  40.0) arg_n =  40.0;
+    if (arg_n < -40.0) arg_n = -40.0;
+    comp_n = 1.0 / (1.0 + exp(arg_n));
+
+    // Supply current modulation with finite P/N differential supply matching
+    sup_p = max(1.0 + psrr_g * (1.0 + 0.5 * psrr_asym) * dvdd, 0.01);
+    sup_n = max(1.0 + psrr_g * (1.0 - 0.5 * psrr_asym) * dvdd, 0.01);
+
+    ip_src = kp_eff * (i_lsb * sup_p * comp_p - vp / r_cell);
+    in_src = kn_eff * (i_lsb * sup_n * comp_n - vn / r_cell);
+
+    I(VDD, IOUTP) <+ ip_src + white_noise(in_lsb * in_lsb * max(kp_eff, 1.0), "cs_p_th");
+    I(VDD, IOUTN) <+ in_src + white_noise(in_lsb * in_lsb * max(kn_eff, 1.0), "cs_n_th");
+
+    // Charge-conserving code-dependent parallel unit-cell output capacitance
+    if (c_cell > 0.0) begin
+        I(IOUTP, VSS) <+ ddt(kp_eff * c_cell * V(IOUTP, VSS));
+        I(IOUTN, VSS) <+ ddt(kn_eff * c_cell * V(IOUTN, VSS));
+    end
+end
+
+endmodule

@@ -1,0 +1,85 @@
+// =============================================================================
+// Process-Independent Current-Steering DAC TB — DEM / DWA Mismatch Linearization
+// =============================================================================
+// Evaluates the identical mismatched segmented CS-DAC (`sigma_cell = 0.8%` MSB
+// thermometer cell mismatch) across two Spectre `alter` runs:
+//   1. `tran_static` (`DEM_EN = 0`)       : Static thermometer selection -> large
+//                                           HD2/HD3 mismatch distortion spurs.
+//   2. `tran_dem`    (`DEM_EN = vdd_dig`) : First-order Data-Weighted Averaging
+//                                           (DWA) rotates thermometer cells every
+//                                           clock -> suppresses HD2/HD3 and shapes
+//                                           mismatch into +20 dB/dec high-pass noise!
+//
+// Uses `m_bin = 19` / `n_fft = 512` so fundamental, HD2, and HD3 all lie inside
+// the OSR = 4 signal band [0, fs/8], quantifying both in-band (OSR=4) and full-
+// Nyquist SFDR / SNDR improvement.
+//
+// DUT interface contract (10-bit clocked DEM Current-Steering DAC):
+//   subckt dut_cs_dac_dem DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 CLK DEM_EN VDD VSS IOUTP IOUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+ahdl_include "../../va/va_dac_sine_gen_10b.va"
+
+parameters \
+    vdd=1.2 \
+    vdd_dig=1.0 \
+    rload=50 \
+    cload=100f \
+    fs=200M \
+    n_fft=512 \
+    m_bin=19 \
+    amp_fs=0.98 \
+    v_dem_en=0 \
+    n_warmup=16 \
+    tr=20p \
+    tf=20p \
+    temp_c=27
+
+parameters \
+    ts=1/fs \
+    t_stop=(n_warmup+n_fft+2)*ts
+
+VSUP (VDD    0)   vsource dc=vdd      type=dc
+VGND (VSS    0)   vsource dc=0        type=dc
+VDEM (DEM_EN VSS) vsource dc=v_dem_en type=dc
+
+// Stimulus updates DIN half a cycle before CLK_DAC rising edge
+VCLK_GEN (CLK_GEN 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=0.5*ts rise=tr fall=tf width=0.5*ts
+VCLK_DAC (CLK_DAC 0) vsource type=pulse val0=0 val1=vdd_dig \
+    period=ts delay=ts rise=tr fall=tf width=0.5*ts
+
+I_GEN (CLK_GEN VSS \
+    DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CODE_MON) va_dac_sine_gen_10b \
+    vdd=vdd_dig vth=0.5*vdd_dig sig_mode=0 \
+    n_fft=n_fft m_bin=m_bin amp_fs=amp_fs tr=tr
+
+I0 (DIN9 DIN8 DIN7 DIN6 DIN5 DIN4 DIN3 DIN2 DIN1 DIN0 \
+    CLK_DAC DEM_EN VDD VSS IOUTP IOUTN) dut_cs_dac_dem
+
+RLP (IOUTP VSS) resistor  r=rload
+RLN (IOUTN VSS) resistor  r=rload
+CLP (IOUTP VSS) capacitor c=cload
+CLN (IOUTN VSS) capacitor c=cload
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1) Static thermometer baseline (DEM_EN = 0)
+tran_static tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.80*ts strobeoutput=strobeonly
+
+// 2) First-order DWA dynamic element matching enabled (DEM_EN = vdd_dig)
+alt_dem_on alter param=v_dem_en value=vdd_dig
+tran_dem tran stop=t_stop errpreset=conservative \
+    strobeperiod=ts strobedelay=0.80*ts strobeoutput=strobeonly
+
+save IOUTP IOUTN CODE_MON
+saveOptions options save=selected
