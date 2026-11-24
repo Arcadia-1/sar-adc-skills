@@ -1,0 +1,86 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — Brownout Dip, Glitch & Slow Ramp
+// =============================================================================
+// Runs two stress transients on the same DUT with explicit `ic VREF=0`:
+//   1. `tran_dip` (0..140 us):
+//        - Fast cold-boot (0 -> 1.2 V in 0.2 us) into regulated operation
+//        - Deep mid-operation brownout dip (1.2 V -> 0.35 V -> 1.2 V, 10 us rise)
+//        - Short negative supply glitch (1.2 V -> 0.80 V -> 1.2 V, 2 us hold)
+//   2. `tran_slow` (0..600 us, switched via `alter`):
+//        - Ultra-slow 500 us power-up ramp (0 -> 1.2 V) exposing capacitor-only
+//          or missing startup circuits that lock into the zero-current dead state
+//
+// DUT interface contract (8-pin signoff Bandgap Reference):
+//   subckt dut_bandgap_signoff VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS
+//   ends dut_bandgap_signoff
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vdd_dip=0.35 \
+    vdd_glitch=0.80 \
+    vtrim_code=16 \
+    v_bias_load=0.6 \
+    vos_inj=0 \
+    en_dip=1 \
+    en_slow=0 \
+    cload=1p \
+    temp_c=27
+
+// Waveform 1: fast boot -> deep brownout dip -> recovery -> short supply glitch
+VSUP_DIP (vdd_dip_n 0) vsource type=pwl wave=[ \
+    0      0 \
+    0.2u   vdd_nom \
+    25u    vdd_nom \
+    30u    vdd_dip \
+    45u    vdd_dip \
+    55u    vdd_nom \
+    100u   vdd_nom \
+    100.5u vdd_glitch \
+    102.5u vdd_glitch \
+    103u   vdd_nom \
+    140u   vdd_nom ]
+
+// Waveform 2: ultra-slow 500 us power-up ramp from 0 V
+VSUP_SLOW (vdd_slow_n 0) vsource type=pwl wave=[ \
+    0    0 \
+    10u  0 \
+    510u vdd_nom \
+    600u vdd_nom ]
+
+// Switchable supply multiplexer + 0 V ammeter (EN tracks VDD during power events)
+ESUP_D   (vdd_drv  vdd_mid vdd_dip_n  0) vcvs gain=en_dip
+ESUP_S   (vdd_mid  0       vdd_slow_n 0) vcvs gain=en_slow
+VSUP_MON (vdd_drv  VDD) vsource dc=0 type=dc
+VGND     (VSS      0)   vsource dc=0 type=dc
+EEN      (EN       0       VDD        0) vcvs gain=1
+VTRM     (VTRIM    0)   vsource dc=vtrim_code  type=dc
+VIPTAT   (IPTAT    0)   vsource dc=v_bias_load type=dc
+VIZTC    (IZTC     0)   vsource dc=v_bias_load type=dc
+VISTART  (ISTART_MON 0) vsource dc=0           type=dc
+
+I0 (VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS) dut_bandgap_signoff
+CL (VREF VSS) capacitor c=cload
+
+ic VREF=0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// 1. Mid-operation deep brownout dip + short negative supply glitch
+tran_dip  tran stop=140u errpreset=conservative
+
+// 2. Switch supply source to ultra-slow 500 us power-up ramp
+alt_s1 alter param=en_dip  value=0
+alt_s2 alter param=en_slow value=1
+tran_slow tran stop=600u errpreset=conservative
+
+save VDD VREF VSUP_MON:p VISTART:p
+saveOptions options save=selected

@@ -22,8 +22,8 @@
     {
       "id": 4,
       "prompt": "How should I verify a bandgap startup circuit in Spectre so it neither gets stuck in the zero-current state nor ruins TC at ff/125 C?",
-      "expected_output": "Should reference assets/tb/tb_bgr_startup.scs: test both fast (100 ns) and slow (1 ms) VDD ramps from 0 V with ic VREF=0 across ss/ff and -40/125 C, and confirm startup current shuts completely off in steady state so leakage does not degrade TC.",
-      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_startup.scs"]
+      "expected_output": "Should reference assets/tb/tb_bgr_startup.scs, tb_bgr_brownout_glitch.scs, and tb_bgr_en_startup_leak.scs: test fast, slow (500 us), and mid-operation brownout dips with ic VREF=0 across PVT, and confirm startup current shuts completely off (< 10 nA) in steady state so leakage does not degrade TC.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_startup.scs", "assets/tb/tb_bgr_brownout_glitch.scs", "assets/tb/tb_bgr_en_startup_leak.scs"]
     },
     {
       "id": 5,
@@ -60,6 +60,36 @@
       "prompt": "How can I generate PTAT, CTAT, and zero-TC (ZTC) analog bias currents from a Banba bandgap core, and where is each type most useful?",
       "expected_output": "Should derive I_PTAT = (V_T*ln(M))/R1 (ideal for constant-gm biasing of OTAs/diff pairs), I_CTAT = V_BE/R2, and I_ZTC = I_PTAT + I_CTAT = V_ref/R_ext (useful for constant-current DACs and relaxation oscillators, limited by R_ext TC).",
       "files": ["references/bandgap-fundamentals.md"]
+    },
+    {
+      "id": 11,
+      "prompt": "How do I verify a 5-bit bandgap trim DAC for monotonicity, DNL/INL, and +/-3 sigma process-shift centering in Spectre?",
+      "expected_output": "Should point to assets/tb/tb_bgr_trim_range.scs, analyze_bandgap.py trim, and assets/va/va_bgr_signoff.va: sweep trim codes 0..31 at nominal and +/-3 sigma offset corners via alter, extract trim_span_mv, lsb_step_mv, dnl_max_lsb, inl_max_lsb, monotonic, and confirm worst-case trimmed_err_mv < 0.5 LSB.",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_trim_range.scs", "assets/va/va_bgr_signoff.va"]
+    },
+    {
+      "id": 12,
+      "prompt": "My bandgap passes a 1 us fast power-up simulation, so why do I still need a mid-operation brownout dip and 500 us slow-ramp test?",
+      "expected_output": "Should explain that fast VDD ramps can accidentally kick a broken or capacitor-only startup circuit via parasitic C*dVDD/dt coupling, masking dead-state bugs; point to assets/tb/tb_bgr_brownout_glitch.scs and analyze_bandgap.py brownout to verify deep brownout recovery (1.2 V -> 0.35 V -> 1.2 V), short glitch survival, and 500 us slow-ramp startup (dead_state_free).",
+      "files": ["references/bandgap-fundamentals.md", "references/simulation-and-verification.md", "assets/tb/tb_bgr_brownout_glitch.scs"]
+    },
+    {
+      "id": 13,
+      "prompt": "How do I audit bandgap EN power-down leakage, re-enable wakeup time, and prove the startup branch shuts completely off in steady state?",
+      "expected_output": "Should point to assets/tb/tb_bgr_en_startup_leak.scs, analyze_bandgap.py en_leak, and assets/va/va_bgr_signoff.va: cycle EN OFF->ON->OFF->ON while monitoring VSUP:p and ISTART_MON (0 V ammeter VISTART), extract i_shdn_na, t_en_wakeup_1pct_us, t_re_enable_us, i_startup_peak_ua, and i_startup_steady_na (< 10 nA; fault_startup_leak=1 triggers startup_turnoff_pass=false).",
+      "files": ["references/simulation-and-verification.md", "assets/tb/tb_bgr_en_startup_leak.scs", "assets/va/va_bgr_signoff.va"]
+    },
+    {
+      "id": 14,
+      "prompt": "How do I test DC load regulation and transient switched-cap load-step droop/recovery of a buffered bandgap reference driving a 50 pF decoupling cap?",
+      "expected_output": "Should point to assets/tb/tb_bgr_load_cap_step.scs and analyze_bandgap.py load_step: sweep bipolar DC sink/source load current (-100 uA..+100 uA) for load_reg_mv_per_ma and r_out_dc_ohm, plus a transient load-current pulse step into C_L = 50 pF for step_droop_mv, step_overshoot_mv, and t_recover_0p5pct_us.",
+      "files": ["references/bandgap-fundamentals.md", "references/simulation-and-verification.md", "assets/tb/tb_bgr_load_cap_step.scs"]
+    },
+    {
+      "id": 15,
+      "prompt": "How do I verify companion IPTAT and IZTC bias current mirrors (temperature slope, compliance headroom, output impedance, PSRR) and opamp Vos TC sensitivity in one Spectre testbench?",
+      "expected_output": "Should point to assets/tb/tb_bgr_bias_currents.scs and analyze_bandgap.py bias_currents: run -40..125 C temp sweep (~+3300 ppm/C IPTAT, < 100 ppm/C IZTC), 0..1.2 V compliance sweep (compliance_min_v, r_o), AC PSRR (bias_psrr_dc_db), and +/-3 mV opamp offset alter sweeps (vos_tc_sensitivity_ppm_per_mv).",
+      "files": ["references/bandgap-fundamentals.md", "references/simulation-and-verification.md", "assets/tb/tb_bgr_bias_currents.scs", "assets/va/va_bgr_signoff.va"]
     }
   ]
 }

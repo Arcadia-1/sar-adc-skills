@@ -1,0 +1,63 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — EN Cycling & Startup-Leakage Audit
+// =============================================================================
+// Drives `EN` through OFF -> ON -> OFF -> ON cycles while monitoring supply
+// current `VSUP:p`, reference output `VREF`, and startup-branch current
+// `VISTART:p` via `ISTART_MON`:
+//   - Shutdown leakage `i_shdn_na` during EN=0 windows
+//   - Cold enable wakeup time `t_en_wakeup_1pct_us` and re-enable time
+//   - Startup kick peak current `i_startup_peak_ua`
+//   - Steady-state startup leakage `i_startup_steady_na` (must shut off cleanly!)
+//
+// DUT interface contract (8-pin signoff Bandgap Reference):
+//   subckt dut_bandgap_signoff VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS
+//   ends dut_bandgap_signoff
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vtrim_code=16 \
+    v_bias_load=0.6 \
+    vos_inj=0 \
+    cload=1p \
+    t_stop=130u \
+    temp_c=27
+
+VSUP (VDD 0) vsource dc=vdd_nom type=dc
+VGND (VSS 0) vsource dc=0       type=dc
+
+// EN cycle: OFF (0..10u) -> ON (10.1u..55u) -> OFF (55.1u..85u) -> ON (85.1u..130u)
+VEN (EN 0) vsource type=pwl wave=[ \
+    0     0 \
+    10u   0 \
+    10.1u vdd_nom \
+    55u   vdd_nom \
+    55.1u 0 \
+    85u   0 \
+    85.1u vdd_nom \
+    t_stop vdd_nom ]
+
+VTRM    (VTRIM      0) vsource dc=vtrim_code  type=dc
+VIPTAT  (IPTAT      0) vsource dc=v_bias_load type=dc
+VIZTC   (IZTC       0) vsource dc=v_bias_load type=dc
+VISTART (ISTART_MON 0) vsource dc=0           type=dc
+
+I0 (VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS) dut_bandgap_signoff
+CL (VREF VSS) capacitor c=cload
+
+ic VREF=0
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-4 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+tran tran stop=t_stop errpreset=conservative
+
+save VDD EN VREF VSUP:p VISTART:p
+saveOptions options save=selected

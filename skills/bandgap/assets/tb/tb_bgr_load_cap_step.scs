@@ -1,0 +1,60 @@
+// =============================================================================
+// Process-Independent Bandgap Reference TB — Load Regulation & Cap-Kick Step
+// =============================================================================
+// Runs two analyses on the buffered Bandgap reference output driving `C_L`:
+//   1. `dc_load`: sweeps DC sink/source load current from -100 uA to +100 uA
+//      to extract `load_reg_mv_per_ma` and `r_out_dc_ohm`
+//   2. `tran_step`: applies a fast 0 -> +100 uA -> 0 load-current pulse into
+//      `C_L = 50 pF` to extract dynamic droop, release overshoot, and 0.5%
+//      recovery time (`t_recover_0p5pct_us`)
+//
+// DUT interface contract (8-pin signoff Bandgap Reference):
+//   subckt dut_bandgap_signoff VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS
+//   ends dut_bandgap_signoff
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd_nom=1.2 \
+    vtrim_code=16 \
+    v_bias_load=0.6 \
+    vos_inj=0 \
+    cload=50p \
+    iload_dc=0 \
+    iload_step=100u \
+    t_step=10u \
+    t_pulse=15u \
+    t_edge=50n \
+    t_stop=40u \
+    temp_c=27
+
+VSUP    (VDD        0) vsource dc=vdd_nom     type=dc
+VGND    (VSS        0) vsource dc=0           type=dc
+VEN     (EN         0) vsource dc=vdd_nom     type=dc
+VTRM    (VTRIM      0) vsource dc=vtrim_code  type=dc
+VIPTAT  (IPTAT      0) vsource dc=v_bias_load type=dc
+VIZTC   (IZTC       0) vsource dc=v_bias_load type=dc
+VISTART (ISTART_MON 0) vsource dc=0           type=dc
+
+I0 (VDD EN VTRIM VREF IPTAT IZTC ISTART_MON VSS) dut_bandgap_signoff
+CL (VREF VSS) capacitor c=cload
+
+// 0 V series ammeter + dual-mode DC/pulse load current (positive = sourcing out of VREF)
+VLOAD_MON (VREF    vload_n) vsource dc=0 type=dc
+ILOAD     (vload_n VSS)     isource dc=iload_dc type=pulse \
+    val0=0 val1=iload_step delay=t_step rise=t_edge fall=t_edge width=t_pulse
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+dc_load   dc   param=iload_dc start=-100u stop=100u step=5u
+tran_step tran stop=t_stop errpreset=conservative
+
+save VREF VLOAD_MON:p VSUP:p
+saveOptions options save=selected
