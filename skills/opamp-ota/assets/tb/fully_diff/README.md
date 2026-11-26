@@ -14,7 +14,9 @@ Standalone, zero-`analogLib` Spectre X (`+preset=cx`) signoff testbenches and PS
 | `tb_fd_ota_thd_fpbw.scs` | Coherently strobed differential sine `tran` | `thd_db`, `thd_pct`, `hd2_dbc`, `hd3_dbc`, `sfdr_db`, `sndr_db`, `v_od_pp_v`, `pass_thd_1pct` (`BW_full`) |
 | `tb_fd_ota_power_ramp.scs` | `5 ms`/`10 ms` VDD ramp-up/down `tran` | `settled_vocm_err_mv`, `settled_vdiff_err_mv`, `oscillation_detected`, `pass` |
 | `tb_fd_ota_supply_surge_cmstep.scs` | `±50 mV` VDD surge + `0.2 V` CM step `tran` | `surge_vocm/vdiff_peak_mv`, `cm_step_vocm/vdiff_peak_mv`, `cm_step_vocm_settle_1mv_ns` |
-| `analyze_fd_ota.py` | Standalone PSF ASCII analyzer (8 subcommands) | JSON summary |
+| `tb_fd_ota_sc_closed_loop.scs` | Switched-capacitor gain stage (`-cs/cf`, `cl`), 3 replicas: `stb_dm`/`stb_cm`, step `tran`, `noise` with a noiseless 10 MΩ summing-node DC path | In-circuit `T0`/`UGF`/`PM` of both loops, settling to a band around the actual final value, dynamic error at `t_eval`, static error `1/(1+T0)` (reported apart), integrated output/input noise, per-device noise shares |
+| `tb_fd_ota_gain_swing.scs` | Resistive closed loop (`-rf/rs`) DC sweep of the input | Local open-loop gain `A(Vod)` from the summing nodes, swing where `A >= (1-err)/(err*beta)` (`199/beta` at 0.5 %), and the -6 dB-from-peak swing |
+| `analyze_fd_ota.py` | Standalone PSF ASCII analyzer (10 subcommands) | JSON summary |
 
 ## DUT Interface Contract
 

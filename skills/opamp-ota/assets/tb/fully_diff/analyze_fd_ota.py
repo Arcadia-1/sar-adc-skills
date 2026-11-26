@@ -10,6 +10,8 @@ Usage:
   python analyze_fd_ota.py thd_fpbw <psf_dir> [--m-bin 3] [--f-in 10e3]
   python analyze_fd_ota.py power_ramp <psf_dir> [--vdd 0.9] [--t-ramp 5e-3] [--t-hold 2e-3]
   python analyze_fd_ota.py supply_surge_cmstep <psf_dir> [--vocm 0.45] [--t-cm-rise 2e-6] [--t-cm-fall 10e-6]
+  python analyze_fd_ota.py sc_closed_loop <psf_dir> [--cs 1e-12] [--cf 250e-15] [--vstep-in 0.0625] [--tol 0.005]
+  python analyze_fd_ota.py gain_swing <psf_dir> [--rs 250e3] [--rf 1e6] [--err 0.005]
 """
 
 from __future__ import annotations
@@ -582,6 +584,122 @@ def analyze_supply_surge_cmstep(
     }
 
 
+def _noise_contributions(path: Path, prefix: str) -> dict[str, float]:
+    """Integrate per-device output noise power from a psfascii `noise` file.
+
+    Spectre writes one struct per noisy instance; its last field is the total
+    noise power spectral density [V^2/Hz] of that instance at each frequency.
+    """
+    text = Path(path).read_text(encoding="utf-8", errors="replace").split("\nVALUE\n", 1)[-1]
+    freq = np.array([float(x) for x in re.findall(r'^"freq" ([-+0-9.eE]+)', text, re.M)])
+    per: dict[str, list[float]] = {}
+    for m in re.finditer(r'^"(' + re.escape(prefix) + r'[^"]+)" \(\n(.*?)\n\)', text, re.S | re.M):
+        per.setdefault(m.group(1), []).append(float(m.group(2).split("\n")[-1]))
+    out: dict[str, float] = {}
+    for inst, vals in per.items():
+        if len(vals) >= len(freq) > 1:
+            out[inst[len(prefix):]] = trapz(np.asarray(vals[: len(freq)]), freq)
+    return out
+
+
+def analyze_sc_closed_loop(
+    psf_dir: Path,
+    *,
+    cs: float,
+    cf: float,
+    vstep_in: float,
+    t1: float,
+    t2: float,
+    t3: float,
+    t_eval: float,
+    tol: float,
+    noise_prefix: str,
+) -> dict[str, object]:
+    dm = _extract_stb_file(find_single(psf_dir, ["stb_dm.stb", "*dm*.stb"]))
+    cm = _extract_stb_file(find_single(psf_dir, ["stb_cm.stb", "*cm*.stb"]))
+
+    d = parse_psf_ascii(find_single(psf_dir, ["tran.tran*", "*.tran"]))
+    t = d["time"]
+    vo = d["VOP_B"] - d["VON_B"]
+    vcm = 0.5 * (d["VOP_B"] + d["VON_B"])
+    vstep_out = 2.0 * vstep_in * cs / cf  # each edge swings the output by twice the step
+
+    def edge(ta: float, tb: float) -> dict[str, float]:
+        m = (t >= ta) & (t <= tb)
+        tw, vw = t[m], vo[m]
+        v_fin = float(np.interp(tb - 0.01 * (tb - ta), t, vo))  # actual final value of this edge
+        out = np.where(np.abs(vw - v_fin) > tol * vstep_out)[0]
+        if len(out) == 0:
+            ts = 0.0
+        elif out[-1] + 1 < len(tw):
+            ts = float(tw[out[-1] + 1] - ta)
+        else:
+            ts = float("nan")
+        dyn = abs(float(np.interp(ta + t_eval, t, vo)) - v_fin) / vstep_out * 100.0
+        return {"t_settle_ns": ts * 1e9, "dynamic_err_pct_at_t_eval": dyn, "final_vod_v": v_fin}
+
+    second = edge(t2, t3)
+    first = edge(t1, t2)
+    static_err = 100.0 / (1.0 + 10.0 ** (dm["t0_db"] / 20.0))
+    m_on = t >= t1
+    vocm_ref = float(np.interp(t1, t, vcm))
+
+    res: dict[str, object] = {
+        "differential_mode_loop": dm,
+        "common_mode_loop": cm,
+        "ideal_gain": -cs / cf,
+        "vstep_out_v": vstep_out,
+        "settling_tol_pct": tol * 100.0,
+        "edge_at_t1": first,
+        "edge_at_t2": second,
+        "static_gain_err_pct": static_err,
+        "total_err_bound_pct_at_t_eval": static_err
+        + max(first["dynamic_err_pct_at_t_eval"], second["dynamic_err_pct_at_t_eval"]),
+        "vocm_max_disturbance_mv": float(np.max(np.abs(vcm[m_on] - vocm_ref)) * 1e3),
+    }
+
+    n = parse_psf_ascii(find_single(psf_dir, ["noise.noise", "*.noise"]))
+    fn = np.real(n["freq"])
+    s_out = np.abs(n["out"])
+    p_tot = trapz(s_out**2, fn)
+    res["noise_out_rms_uv"] = math.sqrt(p_tot) * 1e6
+    res["noise_in_rms_uv"] = math.sqrt(p_tot) * 1e6 * cf / cs
+    contrib = _noise_contributions(find_single(psf_dir, ["noise.noise", "*.noise"]), noise_prefix)
+    if contrib:
+        tot = sum(contrib.values())
+        top = sorted(contrib.items(), key=lambda kv: -kv[1])[:12]
+        res["noise_contributors_pct"] = {k: v / tot * 100.0 for k, v in top}
+    return res
+
+
+def analyze_gain_swing(psf_dir: Path, *, rs: float, rf: float, err: float) -> dict[str, float]:
+    d = parse_psf_ascii(find_single(psf_dir, ["dc_vid.dc", "*vid*.dc"]))
+    vod = d["VOP"] - d["VON"]
+    vsum = d["VIP"] - d["VIN"]
+    a = np.abs(np.gradient(vod) / np.where(np.abs(np.gradient(vsum)) > 0, np.gradient(vsum), np.nan))
+    beta = rs / (rs + rf)
+    a_req = (1.0 - err) / (err * beta)
+
+    def span(mask: np.ndarray) -> tuple[float, float]:
+        if not np.any(mask):
+            return float("nan"), float("nan")
+        return float(np.min(vod[mask])), float(np.max(vod[mask]))
+
+    lo, hi = span(a >= a_req)
+    lo6, hi6 = span(a >= np.nanmax(a) / 2.0)
+    return {
+        "beta": beta,
+        "a_peak_db": float(20.0 * np.log10(np.nanmax(a))),
+        "a_required_db": float(20.0 * np.log10(a_req)),
+        "vod_min_v": lo,
+        "vod_max_v": hi,
+        "swing_diff_vpp": hi - lo,
+        "vod_min_6db_v": lo6,
+        "vod_max_6db_v": hi6,
+        "swing_diff_6db_vpp": hi6 - lo6,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze fully differential OTA Spectre outputs.")
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -625,6 +743,24 @@ def main(argv: list[str] | None = None) -> int:
     p_sg.add_argument("--t-cm-rise", type=float, default=2e-6)
     p_sg.add_argument("--t-cm-fall", type=float, default=10e-6)
 
+    p_sc = sub.add_parser("sc_closed_loop")
+    p_sc.add_argument("psf_dir", type=Path)
+    p_sc.add_argument("--cs", type=float, default=1e-12)
+    p_sc.add_argument("--cf", type=float, default=250e-15)
+    p_sc.add_argument("--vstep-in", type=float, default=0.0625)
+    p_sc.add_argument("--t1", type=float, default=30e-9)
+    p_sc.add_argument("--t2", type=float, default=70e-9)
+    p_sc.add_argument("--t3", type=float, default=110e-9)
+    p_sc.add_argument("--t-eval", type=float, default=10e-9, help="time after each edge for the dynamic error")
+    p_sc.add_argument("--tol", type=float, default=0.005, help="settling band as a fraction of the output step")
+    p_sc.add_argument("--noise-prefix", default="I_C.")
+
+    p_gs = sub.add_parser("gain_swing")
+    p_gs.add_argument("psf_dir", type=Path)
+    p_gs.add_argument("--rs", type=float, default=250e3)
+    p_gs.add_argument("--rf", type=float, default=1e6)
+    p_gs.add_argument("--err", type=float, default=0.005, help="allowed closed-loop gain error")
+
     args = ap.parse_args(argv)
     if args.mode == "dm_cm_stb":
         res: object = analyze_dm_cm_stb(args.psf_dir)
@@ -642,6 +778,14 @@ def main(argv: list[str] | None = None) -> int:
         res = analyze_power_ramp(
             args.psf_dir, vdd=args.vdd, t_ramp=args.t_ramp, t_hold=args.t_hold
         )
+    elif args.mode == "sc_closed_loop":
+        res = analyze_sc_closed_loop(
+            args.psf_dir, cs=args.cs, cf=args.cf, vstep_in=args.vstep_in,
+            t1=args.t1, t2=args.t2, t3=args.t3, t_eval=args.t_eval,
+            tol=args.tol, noise_prefix=args.noise_prefix,
+        )
+    elif args.mode == "gain_swing":
+        res = analyze_gain_swing(args.psf_dir, rs=args.rs, rf=args.rf, err=args.err)
     else:
         res = analyze_supply_surge_cmstep(
             args.psf_dir, vocm=args.vocm, t_cm_rise=args.t_cm_rise, t_cm_fall=args.t_cm_fall

@@ -120,6 +120,24 @@
       "prompt": "How do I avoid a factor-of-2 error when measuring differential input-referred noise of a fully differential OTA with Spectre noise analysis?",
       "expected_output": "Should reference assets/tb/fully_diff/tb_fd_ota_cmrr_psrr_noise.scs: drive a single AC source VSRC_DM through +0.5 and -0.5 VCVS splitters onto VIP and VIN (with a purely differential DC servo) and set `iprobe=VSRC_DM` in `noise (VOP_DM VON_DM)` so Spectre computes exact differential input-referred noise `in` = vn_out_diff / |A_DM(f)|.",
       "files": ["references/simulation-and-verification.md", "assets/tb/fully_diff/tb_fd_ota_cmrr_psrr_noise.scs"]
+    },
+    {
+      "id": 21,
+      "prompt": "How do I simulate stability, settling and noise of a fully differential OTA inside its switched-capacitor gain stage in Spectre, given the summing nodes have no DC path?",
+      "expected_output": "Should reference assets/tb/fully_diff/tb_fd_ota_sc_closed_loop.scs: three replicas of the -cs/cf stage with load cl; emulate the reset switch by pinning the summing-node CM to the reset level and letting the DM follow the output DM (unity DC feedback) through l=1e16 inductors for stb and tran; use diff_stb_probe for DM and CM loops; measure settling to a band around the actual final value and report the static error 1/(1+T0) separately; for noise use noiseless (isnoisy=no) 10 Mohm resistors instead of 1 Gohm because gate leakage of thin-oxide input devices shifts the bias and adds shot noise.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/fully_diff/tb_fd_ota_sc_closed_loop.scs", "assets/tb/fully_diff/analyze_fd_ota.py"]
+    },
+    {
+      "id": 22,
+      "prompt": "How should I define the usable output swing of a closed-loop fully differential OTA, and why does my gain-vs-output DC sweep show a dip near zero output?",
+      "expected_output": "Should reference assets/tb/fully_diff/tb_fd_ota_gain_swing.scs and the gain_swing analyzer: compute the local open-loop gain A(Vod) = dVod/d(VIP-VIN) from the summing nodes of a resistive loop and take the swing where A >= (1-err)/(err*beta), i.e. 199/beta for 0.5 % error; a dc wrapped in sweep{} must carry restart=no or a high-gain loop can converge to another solution near Vod = 0 and show a false dip.",
+      "files": ["references/signoff-testbench-methodology.md", "assets/tb/fully_diff/tb_fd_ota_gain_swing.scs"]
+    },
+    {
+      "id": 23,
+      "prompt": "How do I run 5 corners x 2 supplies x 3 temperatures plus a 200-run Monte Carlo for an OTA in Spectre and check every transistor stays in saturation?",
+      "expected_output": "Should reference ../../common/tb/tb_pvt_mc_wrapper_template.scs: one netlist per corner with sweep vdd { sweep temp { dc restart=no; info what=oppoint where=rawfile } }, audit all *.info files with analyze_op_region.py (flags region off/triode/breakdown and |Vds|-|Vdsat| below e.g. 50 mV), and split Monte Carlo into batches with the same seed and firstrun=1, 51, 101, 151 (numruns=50) pooled by analyze_mc.py.",
+      "files": ["references/simulation-and-verification.md", "references/signoff-testbench-methodology.md"]
     }
   ]
 }

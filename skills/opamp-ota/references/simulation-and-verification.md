@@ -26,7 +26,9 @@ Run all decks with **Spectre X** (`spectre +preset=cx +mt=2 -format psfascii`; a
 - `tb_fd_ota_thd_fpbw.scs` — Coherently strobed differential sine wave $\to$ THD, HD2 (even-harmonic suppression), HD3, SFDR, SNDR, and $\text{BW}_{\text{full}}$.
 - `tb_fd_ota_power_ramp.scs` — `5 ms` / `10 ms` FD power-up/down ramp stability checking both $V_{\text{OD}}$ and $V_{\text{OCM}}$.
 - `tb_fd_ota_supply_surge_cmstep.scs` — `±50 mV` supply surge and `0.2 V` input CM step measuring both CMFB kick and differential glitch.
-- `analyze_fd_ota.py` — Zero-dependency PSF ASCII analyzer (`dm_cm_stb`, `slew_settle`, `cmrr_psrr_noise`, `dc_signoff`, `cl_zout_gm`, `thd_fpbw`, `power_ramp`, `supply_surge_cmstep`).
+- `tb_fd_ota_sc_closed_loop.scs` — The OTA inside its switched-capacitor gain stage (`-cs/cf`, load `cl`), amplify phase, 3 replicas: DM + CM `stb` with the real $\beta$ and load, up/down step `tran` (settling to a band around the actual final value, dynamic error, static error $1/(1+T_0)$ kept separate), and output `noise` with noiseless $10\text{ M}\Omega$ summing-node DC paths and per-device shares.
+- `tb_fd_ota_gain_swing.scs` — Resistive closed-loop DC sweep $\to$ local open-loop gain $A(V_{od})$ and the differential swing over which $A \ge (1-\varepsilon)/(\varepsilon\beta)$ ($199/\beta$ at $\varepsilon = 0.5\%$).
+- `analyze_fd_ota.py` — Zero-dependency PSF ASCII analyzer (`dm_cm_stb`, `slew_settle`, `cmrr_psrr_noise`, `dc_signoff`, `cl_zout_gm`, `thd_fpbw`, `power_ramp`, `supply_surge_cmstep`, `sc_closed_loop`, `gain_swing`).
 
 ## 2. Quick Pitfall Checklist
 
@@ -35,3 +37,7 @@ Run all decks with **Spectre X** (`spectre +preset=cx +mt=2 -format psfascii`; a
 3. **Never trust a 4-resistor CMRR bridge blindly on high-$R_{\text{out}}$ OTAs** — compare `cmrr_dc_db` against `cmrr_4r_dc_db`.
 4. **Input-referred noise in FD setups:** Drive a single AC source `VSRC_DM` through `±0.5` `vcvs` splitters and set `iprobe=VSRC_DM` so Spectre's `in` trace equals exact differential input-referred noise without a $2\times$ factor error.
 5. **Statistical mismatch offset:** Pair these deterministic signoff decks with [`../../../common/tb/tb_mc_offset_template.scs`](../../../common/tb/tb_mc_offset_template.scs) for 100-run Monte Carlo $\sigma_{V_{\text{OS}}}$.
+6. **No 1 GΩ DC path in a noise run of a thin-oxide input pair.** Tens of pA of gate leakage drop tens of mV across 1 GΩ (the bias of the noise replica shifts) and add gate shot noise on a floating node. Use a noiseless (`isnoisy=no`) $10\text{ M}\Omega$ path, as `tb_fd_ota_sc_closed_loop.scs` does, and keep the 1 GΩ servo for AC rejection only.
+7. **A `dc` inside `sweep { }` needs `restart=no`.** Otherwise each point restarts from scratch and a high-gain loop can land on another solution near $V_{od} = 0$, showing a false dip in gain or swing. Native `dc param=...` sweeps already continue from the previous point.
+8. **Settling error against the actual final value.** Measure the dynamic error to the value the output really settles to, and report the static error $1/(1+T_0)$ separately; adding them gives a bound on the total error at a given time.
+9. **PVT and saturation at every point.** Nest `sweep vdd { sweep temp { ... } }` in one netlist per corner, dump `info what=oppoint` per point, and audit all points with [`../../../common/tb/analyze_op_region.py`](../../../common/tb/analyze_op_region.py); split long Monte Carlo jobs into reproducible batches with `seed` + `firstrun` ([`../../../common/tb/tb_pvt_mc_wrapper_template.scs`](../../../common/tb/tb_pvt_mc_wrapper_template.scs)).
