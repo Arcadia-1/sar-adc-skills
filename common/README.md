@@ -10,6 +10,7 @@ Shared, process-independent helper assets and universal device/statistical chara
 - **[`tb/`](tb/README.md)** — Universal foundry-free Spectre X utility decks:
   - `tb_gmid_nmos_pmos.scs` + `analyze_gmid.py` — Simultaneous NMOS/PMOS $g_m/I_D$ lookup tables (`Id/W`, `gm*ro`, `fT`, `Vov`)
   - `tb_mc_offset_template.scs` + `analyze_mc.py` — Spectre `montecarlo` mismatch offset statistics (`mean`, `1σ`, `3σ`, parametric `yield`)
+  - `tb_pvt_mc_wrapper_template.scs` + `analyze_op_region.py` (+ `analyze_mc.py`) — nested `vdd` × `temp` sweep with an operating-point dump per point, MOS saturation audit, and reproducible Monte Carlo batches (`firstrun`)
   - `tb_ring_process_mon.scs` + `analyze_ring_mon.py` — 5-stage CMOS ring-oscillator PVT speed & power monitor
 
 ## Running Standalone Decks with Spectre X

@@ -1,0 +1,71 @@
+// =============================================================================
+// Universal Process-Independent Spectre X PVT Sweep + Batched Monte Carlo Template
+// =============================================================================
+// Shows the three wrappers a signoff run needs around ANY analysis list:
+//   1. Supply x temperature in ONE netlist: `sweep vdd { sweep temp { ... } }`
+//      (5 corners x 2 supplies x 3 temperatures = 30 points means 5 netlists,
+//      one per corner section, each with the 6 vdd/temp points inside).
+//   2. Saturation audit at every PVT point: `info what=oppoint where=rawfile`
+//      writes one `*.info` file per point; `analyze_op_region.py` reads them all
+//      and lists every MOS that left saturation or has too little Vds - Vdsat.
+//   3. Monte Carlo split into reproducible batches: the same `seed` with
+//      `firstrun=1, 51, 101, 151` and `numruns=50` gives exactly the samples of
+//      one 200-run job, but as 4 jobs that fit a queue slot or a disk quota and
+//      can run in parallel. Run each batch in its own output directory and pass
+//      all directories to `analyze_mc.py`.
+//
+// Corners cannot be swept inside one netlist (each is a different `include ...
+// section=`), so generate one netlist per corner and keep vdd/temp inside it.
+// Inside a `sweep { }` every `dc` that starts from the previous point should
+// carry `restart=no` (see `tb_fd_ota_gain_swing.scs` for why).
+//
+// For real PDK signoff: replace the `section=` and use your PDK's global+local
+// (process + mismatch) statistical section for the Monte Carlo netlists.
+//
+// DUT interface contract (6-pin differential block, as tb_mc_offset_template):
+//   subckt dut_mc_offset INP INN VDD VSS OUTP OUTN
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vcm_frac=0.5 \
+    mc_batch=0 \
+    mc_batch_runs=50 \
+    mc_seed=12345
+
+VSUP (VDD 0) vsource dc=vdd type=dc
+VGND (VSS 0) vsource dc=0   type=dc
+VINP (INP VSS) vsource dc=vcm_frac*vdd type=dc
+VINN (INN VSS) vsource dc=vcm_frac*vdd type=dc
+
+I0 (INP INN VDD VSS OUTP OUTN) dut_mc_offset
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-8 iabstol=1e-13 \
+    temp=27 tnom=27 gmin=1e-12 rforce=1 maxnotes=5 maxwarns=5
+
+// ── 1 + 2. Supply x temperature, with an operating-point dump per point ──────
+swv sweep param=vdd values=[0.81 0.99] {
+    swt sweep param=temp values=[-40 27 125] {
+        dcOp   dc restart=no
+        opinfo info what=oppoint where=rawfile
+    }
+}
+
+// ── 3. One Monte Carlo batch: one netlist copy per batch, mc_batch = 0..3 ────
+// (Spectre takes no parameter override on the command line, so generate the
+//  copies, e.g. sed "s/mc_batch=0 /mc_batch=1 /". Verified: run 51 of batch 1
+//  is bit-identical to run 51 of a single numruns=100 job with the same seed.)
+mc1 montecarlo variations=mismatch seed=mc_seed numruns=mc_batch_runs \
+    firstrun=1+mc_batch*mc_batch_runs savefamilyplots=yes {
+    mcOp dc
+}
+
+save OUTP OUTN VSUP:p
+saveOptions options save=selected

@@ -1,0 +1,166 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Switched-Capacitor Closed Loop
+// =============================================================================
+// Characterizes the OTA inside the capacitive gain stage it is designed for
+// (gain = -cs/cf, load cl), in the amplify phase, with three identical replicas:
+//   A. `stb_dm` / `stb_cm` through `diff_stb_probe`  -> T0, UGF, PM of BOTH loops
+//      with the real feedback factor beta = cf/(cs+cf+cin) and the real load
+//   B. Differential up/down/up input step (`tran`)   -> settling time to a band
+//      around the ACTUAL final value, dynamic error at t_eval, VOCM disturbance;
+//      the static error 1/(1+T0) is reported separately (do not mix the two)
+//   C. Output `noise` with the summing nodes held by NOISELESS 10 Mohm resistors
+//      -> integrated output noise and per-device contributions
+//
+// Summing-node DC path. A capacitive stage has no DC path to the OTA inputs; in
+// silicon a reset switch sets it every cycle. Here an ideal source emulates the
+// reset level: the input CM is pinned to vcm_sum and the input DM follows the
+// output DM (unity DC feedback), so the bias equals the amplify-phase bias.
+//   - Replicas A and B reach it through l=1e16 inductors (open at every
+//     frequency and time of interest).
+//   - Replica C must NOT use an inductor or a 1 Gohm resistor: the gate leakage
+//     of thin-oxide input devices (tens of pA) would drop tens of mV across
+//     1 Gohm and shift the bias, and its shot noise would be integrated on a
+//     floating node. A noiseless 10 Mohm resistor keeps the drop < 1 mV and
+//     places its pole well below the band of interest.
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    vcm_sum=0.45 \
+    cs=1p \
+    cf=250f \
+    cl=250f \
+    rcm=10M \
+    ccm=50f \
+    vstep_in=0.0625 \
+    t0=5n \
+    t1=30n \
+    t2=70n \
+    t3=110n \
+    tr=10p \
+    lbig=1e16 \
+    rdc_noise=10M \
+    temp_c=27
+
+// ── Lossless reciprocal Tian differential + common-mode stability probe ──────
+subckt diff_stb_probe INP INN OUTP OUTN
+    ED1  (D_INT N_D1 INP 0) vcvs gain=1.0
+    ED2  (N_D1  0    INN 0) vcvs gain=-1.0
+    VS_D (D_INT D_IN)       vsource dc=0
+    EC1  (C_INT N_C1 INP 0) vcvs gain=0.5
+    EC2  (N_C1  0    INN 0) vcvs gain=0.5
+    VS_C (C_INT C_IN)       vsource dc=0
+    FP_D (INP 0) cccs probe=VS_D gain=1.0
+    FN_D (INN 0) cccs probe=VS_D gain=-1.0
+    FP_C (INP 0) cccs probe=VS_C gain=0.5
+    FN_C (INN 0) cccs probe=VS_C gain=0.5
+    IPRB_DM (D_IN D_OUT) iprobe
+    IPRB_CM (C_IN C_OUT) iprobe
+    EP1  (OP_INT N_OP C_OUT 0) vcvs gain=1.0
+    EP2  (N_OP   0    D_OUT 0) vcvs gain=0.5
+    VS_P (OP_INT OUTP)         vsource dc=0
+    EN1  (ON_INT N_ON C_OUT 0) vcvs gain=1.0
+    EN2  (N_ON   0    D_OUT 0) vcvs gain=-0.5
+    VS_N (ON_INT OUTN)         vsource dc=0
+    FD_P (D_OUT 0) cccs probe=VS_P gain=0.5
+    FD_N (D_OUT 0) cccs probe=VS_N gain=-0.5
+    FC_P (C_OUT 0) cccs probe=VS_P gain=1.0
+    FC_N (C_OUT 0) cccs probe=VS_N gain=1.0
+ends diff_stb_probe
+
+// ── Reset-level emulation: V(SN) = vcm_sum + vod/2, V(SP) = vcm_sum - vod/2 ──
+// (SN drives the inverting input VIN, which is fed back from VOP through cf)
+subckt sum_dc_ref OP ON QP QN
+    parameters vref=0.45
+    EDP (DP 0 OP ON) vcvs gain=0.5
+    EDN (DN 0 ON OP) vcvs gain=0.5
+    VR  (R 0) vsource dc=vref
+    EQP (QP DN R 0) vcvs gain=1
+    EQN (QN DP R 0) vcvs gain=1
+ends sum_dc_ref
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+// ── A. Stability replica ─────────────────────────────────────────────────────
+VIN_A  (IN_A 0) vsource dc=vocm type=dc
+CS_AP  (IN_A SN_A) capacitor c=cs
+CS_AN  (IN_A SP_A) capacitor c=cs
+CF_AP  (SN_A VOP_A) capacitor c=cf
+CF_AN  (SP_A VON_A) capacitor c=cf
+XQ_A   (VOP_A VON_A QP_A QN_A) sum_dc_ref vref=vcm_sum
+L_AP   (SP_A QP_A) inductor l=lbig
+L_AN   (SN_A QN_A) inductor l=lbig
+I_A    (SP_A SN_A VOCM VCMFB_A VOP_A0 VON_A0 VDD VSS) dut_fd_ota
+I_PRB  (VOP_A0 VON_A0 VOP_A VON_A) diff_stb_probe
+RCM_AP (VOP_A VCMFB_A) resistor r=rcm
+RCM_AN (VON_A VCMFB_A) resistor r=rcm
+CCM_AP (VOP_A VCMFB_A) capacitor c=ccm
+CCM_AN (VON_A VCMFB_A) capacitor c=ccm
+CL_AP  (VOP_A VSS) capacitor c=cl
+CL_AN  (VON_A VSS) capacitor c=cl
+
+// ── B. Step replica: 0 -> +step at t1, -> -step at t2 (two full swings) ──────
+VIN_BP (IN_BP 0) vsource type=pwl wave=[ \
+    0 vocm  t0 vocm  (t0+tr) (vocm+0.5*vstep_in) \
+    t1 (vocm+0.5*vstep_in)  (t1+tr) (vocm-0.5*vstep_in) \
+    t2 (vocm-0.5*vstep_in)  (t2+tr) (vocm+0.5*vstep_in)  t3 (vocm+0.5*vstep_in) ]
+VIN_BN (IN_BN 0) vsource type=pwl wave=[ \
+    0 vocm  t0 vocm  (t0+tr) (vocm-0.5*vstep_in) \
+    t1 (vocm-0.5*vstep_in)  (t1+tr) (vocm+0.5*vstep_in) \
+    t2 (vocm+0.5*vstep_in)  (t2+tr) (vocm-0.5*vstep_in)  t3 (vocm-0.5*vstep_in) ]
+CS_BP  (IN_BP SN_B) capacitor c=cs
+CS_BN  (IN_BN SP_B) capacitor c=cs
+CF_BP  (SN_B VOP_B) capacitor c=cf
+CF_BN  (SP_B VON_B) capacitor c=cf
+XQ_B   (VOP_B VON_B QP_B QN_B) sum_dc_ref vref=vcm_sum
+L_BP   (SP_B QP_B) inductor l=lbig
+L_BN   (SN_B QN_B) inductor l=lbig
+I_B    (SP_B SN_B VOCM VCMFB_B VOP_B VON_B VDD VSS) dut_fd_ota
+RCM_BP (VOP_B VCMFB_B) resistor r=rcm
+RCM_BN (VON_B VCMFB_B) resistor r=rcm
+CCM_BP (VOP_B VCMFB_B) capacitor c=ccm
+CCM_BN (VON_B VCMFB_B) capacitor c=ccm
+CL_BP  (VOP_B VSS) capacitor c=cl
+CL_BN  (VON_B VSS) capacitor c=cl
+
+// ── C. Noise replica: noiseless 10 Mohm DC path (see header) ─────────────────
+VIN_C  (IN_C 0) vsource dc=vocm type=dc
+CS_CP  (IN_C SN_C) capacitor c=cs
+CS_CN  (IN_C SP_C) capacitor c=cs
+CF_CP  (SN_C VOP_C) capacitor c=cf
+CF_CN  (SP_C VON_C) capacitor c=cf
+XQ_C   (VOP_C VON_C QP_C QN_C) sum_dc_ref vref=vcm_sum
+RN_CP  (SP_C QP_C) resistor r=rdc_noise isnoisy=no
+RN_CN  (SN_C QN_C) resistor r=rdc_noise isnoisy=no
+I_C    (SP_C SN_C VOCM VCMFB_C VOP_C VON_C VDD VSS) dut_fd_ota
+RCM_CP (VOP_C VCMFB_C) resistor r=rcm isnoisy=no
+RCM_CN (VON_C VCMFB_C) resistor r=rcm isnoisy=no
+CCM_CP (VOP_C VCMFB_C) capacitor c=ccm
+CCM_CN (VON_C VCMFB_C) capacitor c=ccm
+CL_CP  (VOP_C VSS) capacitor c=cl
+CL_CN  (VON_C VSS) capacitor c=cl
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-5 vabstol=1e-7 iabstol=1e-13 \
+    temp=temp_c tnom=27 gmin=1e-15 rforce=1 maxnotes=5 maxwarns=5
+
+dcOp   dc
+stb_dm stb start=1 stop=10G dec=20 probe=I_PRB.IPRB_DM annotate=status
+stb_cm stb start=1 stop=10G dec=20 probe=I_PRB.IPRB_CM annotate=status
+noise  (VOP_C VON_C) noise start=1 stop=10G dec=20 annotate=status
+tran   tran stop=t3 errpreset=conservative maxstep=20p strobeperiod=5p
+
+save VOP_A VON_A VOP_B VON_B IN_BP IN_BN VOP_C VON_C SP_C SN_C VSUP:p
+saveOptions options save=selected

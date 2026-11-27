@@ -2,7 +2,9 @@
 """Analyze Spectre PSF ASCII Monte Carlo mismatch offset outputs.
 
 Usage:
-  python analyze_mc.py <psf_dir> [--spec-mv 15.0]
+  python analyze_mc.py <psf_dir> [<psf_dir> ...] [--spec-mv 15.0]
+
+Several directories pool the runs of batched jobs (same seed, firstrun=1, 51, ...).
 """
 
 from __future__ import annotations
@@ -21,12 +23,18 @@ if str(COMMON_DIR) not in sys.path:
 from psf_utils import parse_psf_ascii
 
 
-def analyze_mc(psf_dir: Path, *, spec_mv: float) -> dict[str, float]:
+def _run_files(psf_dir: Path) -> list[Path]:
     files = sorted(psf_dir.glob("mc1-*_dcOp.dc"))
     if not files:
         files = sorted(p for p in psf_dir.glob("mc*-*.dc") if p.is_file())
+    return files
+
+
+def analyze_mc(psf_dir: Path | list[Path], *, spec_mv: float) -> dict[str, float]:
+    dirs = psf_dir if isinstance(psf_dir, list) else [psf_dir]
+    files = [f for d in dirs for f in _run_files(Path(d))]
     if not files:
-        raise FileNotFoundError(f"No per-run Monte Carlo dc PSF files found in {psf_dir}")
+        raise FileNotFoundError(f"No per-run Monte Carlo dc PSF files found in {[str(d) for d in dirs]}")
 
     vals = []
     for f in files:
@@ -57,7 +65,7 @@ def analyze_mc(psf_dir: Path, *, spec_mv: float) -> dict[str, float]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Analyze Spectre Monte Carlo DC offset runs.")
-    ap.add_argument("psf_dir", type=Path)
+    ap.add_argument("psf_dir", type=Path, nargs="+")
     ap.add_argument("--spec-mv", type=float, default=15.0)
     args = ap.parse_args(argv)
     print(json.dumps(analyze_mc(args.psf_dir, spec_mv=args.spec_mv), indent=2))

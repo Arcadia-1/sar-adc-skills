@@ -27,6 +27,9 @@ An amplifier fits either the **single-ended** or **fully differential** interfac
 | **Limits** | Operating $V_{\text{DD}}$ & $T_A$ range sweeps | `tb_ota_dc_signoff.scs` (`dc_vdd`, `dc_temp`) | `tb_fd_ota_dc_signoff.scs` (`dc_vdd`, `dc_temp`) |
 | **Integrity** | Power-up / power-down ramp stability (`5 ms`, `10 ms`) | `tb_ota_power_ramp.scs` (`power_ramp`) | `tb_fd_ota_power_ramp.scs` (`power_ramp`) |
 | **Integrity** | Supply surge ringing (`±50 mV`, `100k/300k/1M`) & CM step | `tb_ota_supply_surge_cmstep.scs` (`supply_surge_cmstep`) | `tb_fd_ota_supply_surge_cmstep.scs` (`supply_surge_cmstep`) |
+| **In-circuit** | Switched-capacitor stage `stb` (DM + CM), settling/dynamic vs. static error, output noise & device shares | — | `tb_fd_ota_sc_closed_loop.scs` (`sc_closed_loop`) |
+| **DC & Bias** | Accuracy-defined swing: $V_{od}$ range with $A \ge (1-\varepsilon)/(\varepsilon\beta)$ | — | `tb_fd_ota_gain_swing.scs` (`gain_swing`) |
+| **PVT** | `vdd` × `temp` sweep per corner, MOS saturation audit at every point | [`common/tb/tb_pvt_mc_wrapper_template.scs`](../../../common/tb/tb_pvt_mc_wrapper_template.scs) | [`common/tb/tb_pvt_mc_wrapper_template.scs`](../../../common/tb/tb_pvt_mc_wrapper_template.scs) |
 | **Statistical** | Mismatch random offset $\sigma_{V_{\text{OS}}}$ (Monte Carlo) | [`common/tb/tb_mc_offset_template.scs`](../../../common/tb/tb_mc_offset_template.scs) | [`common/tb/tb_mc_offset_template.scs`](../../../common/tb/tb_mc_offset_template.scs) |
 
 ---
@@ -83,6 +86,15 @@ In a perfectly symmetric FD transistor netlist:
 ### 2.9 Power-Up/Down Ramps & Supply Surge Stability
 - **Keep slow and fast integrity tests in separate decks:** Power-up/down ramps span milliseconds (`5 ms` and `10 ms` edges), whereas supply-surge square waves switch in nanoseconds (`±50 mV`, `10 ns` edges at `100 kHz / 300 kHz / 1 MHz`). Separating `tb_*_power_ramp.scs` and `tb_*_supply_surge_cmstep.scs` keeps every Spectre X run fast and tightly controlled.
 - **Track `VCM = 0.5*VDD` during ramps:** Driving `VIP` or `VOCM` from a fixed `0.45 V` source while `VDD = 0 V` forward-biases ESD/substrate junctions and causes fake startup failures; use `vcvs gain=0.5` from `VDD` so references scale cleanly with the rail.
+
+### 2.10 Switched-Capacitor Closed Loop, Accuracy-Defined Swing & PVT Bookkeeping
+- **Measure the OTA in its own stage:** A resistive $-1$ loop hides the feedback factor $\beta = C_F/(C_S + C_F + C_{\text{in}})$ and the real load $C_L + C_F(C_S + C_{\text{in}})/(C_S + C_F + C_{\text{in}})$ that set PM and settling. `tb_fd_ota_sc_closed_loop.scs` runs `stb`, the step and the noise in the capacitive stage itself.
+- **Emulate the reset switch at DC:** The summing nodes have no DC path. Pin their CM to the reset level and let their DM follow the output DM (unity DC feedback) through an ideal source; reach it with `l=1e16` inductors in `stb` and `tran`, so the bias equals the amplify-phase bias without loading the loop.
+- **Noise needs a real, small, noiseless DC path:** An inductor or a $1\text{ G}\Omega$ resistor leaves the input gates nearly floating. Thin-oxide input devices leak tens of pA, which drops tens of mV across $1\text{ G}\Omega$ (a different bias than the other replicas) and integrates gate shot noise. A $10\text{ M}\Omega$ `isnoisy=no` resistor keeps the drop below 1 mV and its pole far below the band.
+- **Settling error has two parts; keep them apart:** Settle to a band around the value the output actually reaches (dynamic error), and report the static gain error $1/(1+T_0)$ on its own. Their sum bounds the total error at a given time; a band around the ideal final value would mix the two and change with $T_0$.
+- **Define swing by accuracy, not clipping:** The closed-loop gain error stays below $\varepsilon$ while $\beta A \ge (1-\varepsilon)/\varepsilon$, i.e. $A \ge 199/\beta$ for $0.5\%$. `tb_fd_ota_gain_swing.scs` forms $A(V_{od}) = dV_{od}/d(V_{IP}-V_{IN})$ from the summing nodes of a resistive loop and reports that range next to the $-6\text{ dB}$-from-peak range.
+- **Continuation in wrapped DC sweeps:** A `dc` inside `sweep { }` restarts from scratch unless it carries `restart=no`; a high-gain loop can then converge to another solution near $V_{od} = 0$ and show a false gain dip.
+- **PVT and Monte Carlo bookkeeping:** Corners are different `include ... section=` lines, so write one netlist per corner and nest `sweep vdd { sweep temp { ... } }` inside it (5 corners × 2 supplies × 3 temperatures = 5 netlists, 30 points). Dump `info what=oppoint where=rawfile` per point and audit every point with `common/tb/analyze_op_region.py` (off, triode, breakdown, or $|V_{ds}|-|V_{dsat}|$ below a margin). Split long Monte Carlo jobs into batches with one `seed` and `firstrun = 1, 51, 101, ...`; the pooled batches reproduce the single job sample for sample.
 
 ---
 

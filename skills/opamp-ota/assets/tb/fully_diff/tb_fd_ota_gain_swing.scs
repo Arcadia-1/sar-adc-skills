@@ -1,0 +1,70 @@
+// =============================================================================
+// Process-Independent Fully Differential OTA TB — Gain vs. Output Swing
+// =============================================================================
+// Defines the usable differential output swing by the ACCURACY the closed loop
+// still delivers, not by where the output clips. A resistive inverting stage
+// (gain -rf/rs, beta = rs/(rs+rf)) is driven across its whole range with a DC
+// sweep, and the analyzer forms the local open-loop gain
+//     A(Vod) = dVod / d(V(VIP) - V(VIN))
+// from the summing-node difference. The output is "in swing" while the loop
+// gain beta*A keeps the closed-loop gain error below err:
+//     A >= (1 - err) / (err * beta)       (err = 0.5 %  ->  A >= 199 / beta)
+// The analyzer also reports the -6 dB-from-peak range for comparison.
+//
+// Continuation. A DC sweep must start each point from the previous solution.
+// A native `dc param=...` sweep does this already. When you wrap a `dc` in a
+// `sweep { }` block (to nest it under vdd/temp or to save one file per point),
+// give the inner dc `restart=no`; otherwise each point restarts from scratch,
+// can land on another solution of a high-gain loop near Vod = 0, and shows a
+// false dip in A(Vod).
+//
+// DUT interface contract:
+//   subckt dut_fd_ota VIP VIN VOCM VCM_FB VOP VON VDD VSS
+// =============================================================================
+
+simulator lang=spectre
+global 0
+
+include "models_corner.scs"
+include "dut_subckt.scs"
+
+parameters \
+    vdd=0.9 \
+    vocm=0.45 \
+    vcm_in=0.45 \
+    rs=250k \
+    rf=1M \
+    rcm=10M \
+    cl=250f \
+    vid=0 \
+    vid_span=0.5 \
+    vid_step=2m \
+    temp_c=27
+
+VSUP  (VDD 0)  vsource dc=vdd  type=dc
+VGND  (VSS 0)  vsource dc=0    type=dc
+VVOCM (VOCM 0) vsource dc=vocm type=dc
+
+// Input CM chosen so the summing nodes sit at vcm_in:
+//   V(sum) = vcm_in  ->  V(in,cm) = vocm + (1 + rs/rf) * (vcm_in - vocm)
+VIP_S (IN_P 0) vsource dc=vocm+(1+rs/rf)*(vcm_in-vocm)+0.5*vid
+VIN_S (IN_N 0) vsource dc=vocm+(1+rs/rf)*(vcm_in-vocm)-0.5*vid
+RS_P  (IN_P VIN) resistor r=rs
+RS_N  (IN_N VIP) resistor r=rs
+RF_P  (VOP  VIN) resistor r=rf
+RF_N  (VON  VIP) resistor r=rf
+
+I0    (VIP VIN VOCM VCM_FB VOP VON VDD VSS) dut_fd_ota
+RCM_P (VOP VCM_FB) resistor r=rcm
+RCM_N (VON VCM_FB) resistor r=rcm
+CL_P  (VOP VSS) capacitor c=cl
+CL_N  (VON VSS) capacitor c=cl
+
+simulatorOptions options psfversion="1.4.0" \
+    reltol=1e-6 vabstol=1e-9 iabstol=1e-14 \
+    temp=temp_c tnom=27 gmin=1e-15 rforce=1 maxnotes=5 maxwarns=5
+
+dc_vid dc param=vid start=-vid_span stop=vid_span step=vid_step
+
+save VOP VON VIP VIN IN_P IN_N VSUP:p
+saveOptions options save=selected

@@ -6,7 +6,7 @@ description: >
   cascode, folded cascode, two-stage Miller with nulling resistor Rz, CMFB
   continuous-time & switched-cap loops), exact pole/zero & slew-rate/settling
   equations, thermal & 1/f noise budgeting, FoM_S/FoM_L, 2 behavioral Verilog-A
-  models, and 16 standalone Spectre X testbenches covering a full 29-item
+  models, and 18 standalone Spectre X testbenches covering a full 29-item
   industrial characterization matrix (iprobe & lossless Tian diff_stb_probe
   DM+CM stb, 5-replica DC-servo CMRR/4R-bridge/PSRR+/PSRR-/noise, multi-method
   ICMR & swing-vs-RL & VIDR phase reversal, closed-loop AC/group-delay/Zout/
@@ -35,7 +35,7 @@ A process-independent engineering guide and **Spectre X (`+preset=cx`)** signoff
 ### Spectre X Signoff Testbenches (`assets/tb/`)
 Plug in external `models_corner.scs` + `dut_subckt.scs` (or smoke-test with repo-root `common/models_generic_bsim4.scs` / bundled Verilog-A models):
 - `assets/tb/single_ended/` — 8 `.scs` decks (`tb_ota_stb_ac.scs`, `tb_ota_cmrr_psrr_noise.scs`, `tb_ota_dc_signoff.scs`, `tb_ota_cl_zout_gm.scs`, `tb_ota_slew_settle.scs`, `tb_ota_thd_fpbw.scs`, `tb_ota_power_ramp.scs`, `tb_ota_supply_surge_cmstep.scs`) + `analyze_ota.py`
-- `assets/tb/fully_diff/` — 8 `.scs` decks (`tb_fd_ota_dm_cm_stb.scs`, `tb_fd_ota_cmrr_psrr_noise.scs`, `tb_fd_ota_dc_signoff.scs`, `tb_fd_ota_cl_zout_gm.scs`, `tb_fd_ota_slew_settle.scs`, `tb_fd_ota_thd_fpbw.scs`, `tb_fd_ota_power_ramp.scs`, `tb_fd_ota_supply_surge_cmstep.scs`) + `analyze_fd_ota.py`
+- `assets/tb/fully_diff/` — 10 `.scs` decks (`tb_fd_ota_dm_cm_stb.scs`, `tb_fd_ota_cmrr_psrr_noise.scs`, `tb_fd_ota_dc_signoff.scs`, `tb_fd_ota_cl_zout_gm.scs`, `tb_fd_ota_slew_settle.scs`, `tb_fd_ota_thd_fpbw.scs`, `tb_fd_ota_power_ramp.scs`, `tb_fd_ota_supply_surge_cmstep.scs`, `tb_fd_ota_sc_closed_loop.scs`, `tb_fd_ota_gain_swing.scs`) + `analyze_fd_ota.py`
 
 ### Verilog-A Behavioral Models (`assets/va/`)
 - `assets/va/va_ota_2stage.va` — 2-stage Miller opamp with `r_z`, slew limiting, smooth rail clamp, finite ICMR & VDD turn-on, offset/tempco, CMRR/PSRR+/PSRR−, input capacitance, and white + $1/f$ noise
